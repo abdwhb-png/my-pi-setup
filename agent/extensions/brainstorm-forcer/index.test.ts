@@ -10,6 +10,7 @@ import {
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Value } from "typebox/value";
 import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import {
@@ -67,6 +68,7 @@ function createMockAPI(sessionManager?: SessionManager) {
       };
     },
     emit(event: string, data: unknown) {
+      if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) data = { sessionId: "test-session-id", ...(data as object) };
       for (const handler of [...(eventListeners.get(event) ?? [])]) handler(data);
     },
   };
@@ -75,14 +77,15 @@ function createMockAPI(sessionManager?: SessionManager) {
   events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
     const request = value as Record<string, any>;
     subagentRpcRequests.push(request);
-    const asyncId = `native-test-run-${++subagentRunSequence}`;
+    if (request.method === "spawn") subagentRunSequence++;
+    const asyncId = `native-test-run-${subagentRunSequence}`;
     queueMicrotask(() =>
       events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
         version: 1,
         requestId: request.requestId,
         method: request.method,
         success: true,
-        data: {
+        data: request.method === "ping" ? { session: { sessionId: "test-session-id" } } : request.method === "status" ? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: request.params?.id, state: "running" }] } } : {
           text: request.method === "spawn" ? `Async started: ${asyncId}` : "ok",
           details: request.method === "spawn" ? { asyncId } : {},
         },
@@ -161,6 +164,7 @@ function createMockContext(
     cwd,
     hasUI: true,
     isIdle: () => true,
+    isProjectTrusted: () => false,
     signal: undefined as any,
     ui: {
       theme: {
@@ -323,6 +327,7 @@ describe("brainstorm-forcer redesign", () => {
     const agentsDir = join(root, ".pi", "agents");
     const manager = createCapabilityCeilingManager();
     await mkdir(agentsDir, { recursive: true });
+    await writeFile(join(isolatedAgentDir!, "settings.json"), JSON.stringify({ packages: [dirname(fileURLToPath(import.meta.resolve("pi-subagents")))] }));
     await writeFile(
       join(agentsDir, "code-analysis.scout.md"),
       "---\nname: scout\npackage: code-analysis\ndescription: Colliding project scout\ntools: '@inspect'\n---\n",
@@ -378,6 +383,22 @@ describe("brainstorm-forcer redesign", () => {
 
     await handlers.get("session_shutdown")!({}, ctx);
     expect(await readdir(join(isolatedAgentDir!, "agents"))).toEqual([]);
+  });
+
+  it("registers and preflights the verifier ceiling under a persisted session file rather than its UUID", async () => {
+    const api = createMockAPI();
+    const sessionFile = join(isolatedAgentDir!, "persisted.jsonl");
+    const ctx = createMockContext([], isolatedAgentDir!, "ceiling-uuid", sessionFile);
+    const preflightOwners: string[] = [];
+    brainstormForcer(api.pi, { preflight: async (owner, _cwd, agents) => { preflightOwners.push(owner); return agents.map(agent => ({ agent, ok: true })); } });
+    try {
+      await enterLocalCodeClaim(api, ctx);
+      expect(resolveSubagentCapabilityCeiling(sessionFile)?.allowedAgents).toContain("brainstorm-scout");
+      await api.tools.get("brainstorm_run_verification")!.execute("verification", { claimIds: ["CL-001"] }, undefined, undefined, ctx);
+      expect(preflightOwners).toEqual([sessionFile]);
+      expect(resolveSubagentCapabilityCeiling("ceiling-uuid")).toBeUndefined();
+    } finally { await api.handlers.get("session_shutdown")!({}, ctx); }
+    expect(resolveSubagentCapabilityCeiling(sessionFile)).toBeUndefined();
   });
 
   it("registers command, hooks, and renderer", () => {
@@ -499,11 +520,11 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       ),
     ).rejects.toThrow("Injected pending-state persistence failure.");
-    expect(api.subagentRpcRequests.map(({ method }) => method)).toEqual([
+    expect(api.subagentRpcRequests.filter(({ method }) => method !== "ping").map(({ method }) => method)).toEqual([
       "spawn",
       "stop",
     ]);
-    expect(api.subagentRpcRequests[1]).toMatchObject({
+    expect(api.subagentRpcRequests.find(({ method }) => method === "stop")).toMatchObject({
       method: "stop",
       params: { id: "native-test-run-1" },
     });
@@ -567,7 +588,7 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       ),
     ).rejects.toThrow("launch ownership changed");
-    expect(api.subagentRpcRequests.map(({ method }) => method)).toEqual([
+    expect(api.subagentRpcRequests.filter(({ method }) => method !== "ping").map(({ method }) => method)).toEqual([
       "spawn",
       "stop",
     ]);
@@ -2686,6 +2707,7 @@ describe("brainstorm-forcer redesign", () => {
         { type: "session_start" },
         restoredContext,
       );
+      await Bun.sleep(10);
       restored.completeSubagentRun(nativeRunId, nativeCompletion);
       await Bun.sleep(0);
 
@@ -2769,10 +2791,10 @@ describe("brainstorm-forcer redesign", () => {
         firstContext,
       );
       const nativeRunId = "native-test-run-1";
-      expect(first.subagentRpcRequests[0]?.params.workflowScript).toContain(
+      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
         "verify_local_code_supported",
       );
-      expect(first.subagentRpcRequests[0]?.params.workflowScript).toContain(
+      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
         "verify_external_supported",
       );
 
@@ -2842,6 +2864,7 @@ describe("brainstorm-forcer redesign", () => {
         { type: "session_start" },
         firstReloadContext,
       );
+      await Bun.sleep(10);
       firstReload.completeSubagentRun(nativeRunId, nativeCompletion);
       await Bun.sleep(0);
 
@@ -2866,6 +2889,7 @@ describe("brainstorm-forcer redesign", () => {
         { type: "session_start" },
         secondReloadContext,
       );
+      await Bun.sleep(10);
 
       const failureReviews = sessionManager
         .getBranch()
@@ -3080,7 +3104,7 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
-    expect(api.subagentRpcRequests[0]?.params.workflowScript).toContain(
+    expect(api.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
       "architect_advisory",
     );
     api.completeSubagentRun("native-test-run-1", {
@@ -3488,14 +3512,14 @@ describe("brainstorm-forcer redesign", () => {
     brainstormForcer(pi);
     await commands.get("brainstorm")!.handler("topic", ctx);
 
-    const ceiling = resolveSubagentCapabilityCeiling("ceiling-lifecycle-session");
+    const ceiling = resolveSubagentCapabilityCeiling(ctx.sessionManager.getSessionFile()!);
     expect(ceiling).toBeDefined();
     expect(ceiling!.denyExtensions).toBe(false);
     expect(ceiling!.sources).toContain("brainstorm-forcer");
 
     await handlers.get("session_shutdown")!({}, ctx);
     expect(
-      resolveSubagentCapabilityCeiling("ceiling-lifecycle-session"),
+      resolveSubagentCapabilityCeiling(ctx.sessionManager.getSessionFile()!),
     ).toBeUndefined();
   });
 

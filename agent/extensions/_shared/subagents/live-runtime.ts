@@ -137,7 +137,7 @@ export class SubagentsLiveRuntime {
         if (action === "steer" && !steeringMessage) {
             throw new Error("Steer requires a non-empty message.");
         }
-        return this.client.request(action, {
+        return this.client[action]({
             id: run.controlId,
             ...(action === "steer" ? { message: steeringMessage } : {}),
         });
@@ -174,7 +174,7 @@ export class SubagentsLiveRuntime {
     private async negotiateAndRefresh(): Promise<void> {
         if (this.disposed) return;
         try {
-            const ping = await this.client.request("ping");
+            const ping = await this.client.ping();
             const capabilities =
                 isRecord(ping) && isRecord(ping.capabilities)
                     ? ping.capabilities
@@ -192,7 +192,7 @@ export class SubagentsLiveRuntime {
     private async refreshNow(): Promise<void> {
         if (this.fleetStatusSupported) {
             try {
-                const status = await this.client.request("status");
+                const status = await this.client.status();
                 const fleet =
                     isRecord(status) && status.fleet !== undefined
                         ? parseFleetStatus(status.fleet)

@@ -274,16 +274,18 @@ async function installStructuredProviderFixture(
 
 function installRuntimeFixtures(pi: ExtensionAPI): void {
   let nativeRunSequence = 0;
+  let sessionManager: import("@earendil-works/pi-coding-agent").ExtensionContext["sessionManager"];
+  pi.on("session_start", (_event, ctx) => { sessionManager = ctx.sessionManager; });
   pi.events.on(SUBAGENT_RPC_REQUEST_EVENT, (raw) => {
-    const request = raw as { requestId: string; method: string };
-    const asyncId = `native-runtime-${++nativeRunSequence}`;
+    const request = raw as { requestId: string; method: string; params?: { id?: string } };
+    const asyncId = request.method === "spawn" ? `native-runtime-${++nativeRunSequence}` : undefined;
     queueMicrotask(() =>
       pi.events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
         version: 1,
         requestId: request.requestId,
         method: request.method,
         success: true,
-        data: {
+        data: request.method === "ping" ? { session: { sessionId: sessionManager?.getSessionId(), sessionFile: sessionManager?.getSessionFile() } } : request.method === "status" ? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: request.params?.id, state: "running" }] } } : {
           text: request.method === "spawn" ? `Async started: ${asyncId}` : "ok",
           details: request.method === "spawn" ? { asyncId } : {},
         },
@@ -368,6 +370,39 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         await rm(integrationAgentDir, { recursive: true, force: true });
       }
       integrationAgentDir = undefined;
+    });
+
+    it("restores pending verification before a later native session_start handler initializes its identity", async () => {
+      const codingAgent = await import("@earendil-works/pi-coding-agent");
+      const { getBuiltinModel } = await import("@earendil-works/pi-ai/providers/all");
+      const { default: brainstormForcer } = await import("./index");
+      const root = await mkdtemp(join(tmpdir(), "brainstorm-startup-order-"));
+      const cwd = join(root, "project"), sessionDir = join(root, "sessions");
+      await mkdir(cwd);
+      const model = getBuiltinModel("openai", "gpt-4o");
+      const manager = codingAgent.SessionManager.create(cwd, sessionDir);
+      persistRuntimeSession(manager, model);
+      const first = await createBoundRuntime(codingAgent, model, cwd, manager, [installRuntimeFixtures, pi => brainstormForcer(pi, { preflight: async (_id, _cwd, agents) => agents.map(agent => ({ agent, ok: true })) })]);
+      let second: Awaited<ReturnType<typeof createBoundRuntime>> | undefined;
+      let restoredEvents: ExtensionAPI["events"] | undefined;
+      try {
+        await launchRuntimeVerification(first.session, cwd);
+        const pending = (manager.getBranch().findLast(entry => entry.type === "custom" && entry.customType === "brainstorm-forcer") as any).data.pendingVerification;
+        expect(pending).not.toBeNull();
+        await first.session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });
+        first.session.dispose();
+        const reopened = codingAgent.SessionManager.open(manager.getSessionFile()!, sessionDir, cwd);
+        second = await createBoundRuntime(codingAgent, model, cwd, reopened, [pi => brainstormForcer(pi), pi => { restoredEvents = pi.events; installRuntimeFixtures(pi); }]);
+        expect(second.errors).toHaveLength(0);
+        await Bun.sleep(20);
+        restoredEvents!.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+          id: pending.runId, sessionId: reopened.getSessionFile(), success: false, summary: "fixture terminal", results: [{ workflowKey: pending.expectedSteps[0].outputName, success: false, status: "failed", error: "fixture terminal" }],
+        });
+        await waitForRuntime(() => (reopened.getBranch().findLast(entry => entry.type === "custom" && entry.customType === "brainstorm-forcer") as any).data.pendingVerification === null, "Restored verification did not consume its terminal.", 1000);
+      } finally {
+        if (second) { await second.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); second.session.dispose(); }
+        first.session.dispose(); await rm(root, { recursive: true, force: true });
+      }
     });
 
     it("blocks a pending-verification question through the real Pi tool pipeline", async () => {
@@ -684,11 +719,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         import("@earendil-works/pi-coding-agent"),
         import("@earendil-works/pi-ai/compat"),
       ]);
-      const subagentsExtensionPath = join(
-        dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
-        "src",
-        "extension",
-        "index.js",
+      const subagentsExtensionPath = fileURLToPath(
+        import.meta.resolve("pi-subagents"),
       );
       const { default: brainstormForcer } = await import("./index");
       await mkdir(join(isolatedAgentDir, "agents"), { recursive: true });
@@ -783,7 +815,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
             ),
           "Native pi-subagents completion was not audited.",
         );
-        expect(rpcRequests[0]).toMatchObject({
+        const spawn = rpcRequests.find((request: any) => request.method === "spawn");
+        expect(spawn).toMatchObject({
           method: "spawn",
           source: { extension: "brainstorm-forcer" },
           params: {
@@ -794,7 +827,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           },
         });
         expect(
-          (rpcRequests[0] as any).params.workflowScript,
+          (spawn as any).params.workflowScript,
         ).toContain("verify_local_code_supported");
         expect(asyncCompletions.find((completion) => completion.id === naturalRunId)).toMatchObject({
           id: naturalRunId,
@@ -872,7 +905,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           "test",
           "--preload",
           join(extensionDir, "runtime-harness.preload.ts"),
-          "--isolate",
+          // This single-file child already isolates globals. Bun 1.3.14's
+          // --isolate invokes pi-subagents before its top-level await settles.
           fileURLToPath(import.meta.url),
         ],
         {
@@ -894,7 +928,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       if (exitCode !== 0)
         throw new Error(`Nested pi-test-harness runtime failed (${exitCode}).\n${output}`);
 
-      expect(output).toContain("3 pass");
+      expect(output).toContain("4 pass");
       expect(output).toContain("0 fail");
     }, 35_000);
   });

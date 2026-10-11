@@ -6,11 +6,11 @@ import {
     SUBAGENT_DELEGATION_UPDATE_EVENT,
 } from "pi-subagents/delegation";
 import {
-    type SddDelegationRequest,
-    type SddDelegationResponse,
-    type SddDelegationStarted,
-    type SddDelegationUpdate,
-} from "./delegation-contract.ts";
+    type DelegationRequest,
+    type DelegationResponse,
+    type DelegationStarted,
+    type DelegationUpdate,
+} from "./contracts.ts";
 
 const noop = () => {};
 const terminalStatuses = [
@@ -25,7 +25,7 @@ const terminalStatuses = [
     "invalid_request",
     "unavailable_context",
     "duplicate_node",
-] as const satisfies ReadonlyArray<SddDelegationResponse["status"]>;
+] as const satisfies ReadonlyArray<DelegationResponse["status"]>;
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
     return typeof value === "object" && value !== null;
@@ -61,7 +61,37 @@ function isOptionalString(value: unknown): value is string | undefined {
 }
 
 function isOptionalNumber(value: unknown): value is number | undefined {
-    return value === undefined || typeof value === "number";
+    return (
+        value === undefined ||
+        (typeof value === "number" && Number.isFinite(value))
+    );
+}
+
+function parseProgressUsage(value: unknown): DelegationUpdate["usage"] {
+    if (!isRecord(value)) return undefined;
+    const fields = [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "turns",
+    ] as const;
+    if (
+        fields.some(
+            (field) =>
+                typeof value[field] !== "number" ||
+                !Number.isFinite(value[field]) ||
+                (value[field] as number) < 0,
+        )
+    )
+        return undefined;
+    return {
+        input: value.input as number,
+        output: value.output as number,
+        cacheRead: value.cacheRead as number,
+        cacheWrite: value.cacheWrite as number,
+        turns: value.turns as number,
+    };
 }
 
 function isOptionalStringArray(value: unknown): value is string[] | undefined {
@@ -74,7 +104,7 @@ function isOptionalStringArray(value: unknown): value is string[] | undefined {
 
 function isOptionalRecentTools(
     value: unknown,
-): value is SddDelegationUpdate["recentTools"] {
+): value is DelegationUpdate["recentTools"] {
     return (
         value === undefined ||
         (Array.isArray(value) &&
@@ -87,10 +117,13 @@ function isOptionalRecentTools(
     );
 }
 
-function parseUpdate(value: unknown): SddDelegationUpdate | undefined {
+function parseUpdate(value: unknown): DelegationUpdate | undefined {
     const started = parseStarted(value);
     if (!started || !isRecord(value)) return undefined;
+    const usage = parseProgressUsage(value.usage);
     if (
+        !isOptionalString(value.runId) ||
+        (value.usage !== undefined && usage === undefined) ||
         !isOptionalString(value.currentTool) ||
         !isOptionalString(value.currentToolArgs) ||
         !isOptionalString(value.recentOutput) ||
@@ -104,7 +137,9 @@ function parseUpdate(value: unknown): SddDelegationUpdate | undefined {
         return undefined;
     }
 
-    const update: SddDelegationUpdate = started;
+    const update: DelegationUpdate = started;
+    if (value.runId !== undefined) update.runId = value.runId;
+    if (usage !== undefined) update.usage = usage;
     if (value.currentTool !== undefined) update.currentTool = value.currentTool;
     if (value.currentToolArgs !== undefined) {
         update.currentToolArgs = value.currentToolArgs;
@@ -129,11 +164,11 @@ function parseUpdate(value: unknown): SddDelegationUpdate | undefined {
 
 function isTerminalStatus(
     value: unknown,
-): value is SddDelegationResponse["status"] {
+): value is DelegationResponse["status"] {
     return terminalStatuses.some((status) => status === value);
 }
 
-function parseResult(value: unknown): SddDelegationResponse["result"] {
+function parseResult(value: unknown): DelegationResponse["result"] {
     if (value === undefined) return undefined;
     if (!isRecord(value)) return undefined;
     if (value.kind === "text" && typeof value.text === "string") {
@@ -145,7 +180,7 @@ function parseResult(value: unknown): SddDelegationResponse["result"] {
     return undefined;
 }
 
-function parseUsage(value: unknown): SddDelegationResponse["usage"] {
+function parseUsage(value: unknown): DelegationResponse["usage"] {
     if (value === undefined) return undefined;
     if (!isRecord(value)) return undefined;
     const fields = [
@@ -173,9 +208,7 @@ function parseUsage(value: unknown): SddDelegationResponse["usage"] {
     };
 }
 
-function parseTerminalResponse(
-    value: unknown,
-): SddDelegationResponse | undefined {
+function parseTerminalResponse(value: unknown): DelegationResponse | undefined {
     if (
         !isRecord(value) ||
         !isValidRequestId(value.requestId) ||
@@ -214,7 +247,7 @@ function parseTerminalResponse(
         return undefined;
     }
 
-    const response: SddDelegationResponse = {
+    const response: DelegationResponse = {
         requestId: value.requestId,
         ...(typeof value.ownerRunId === "string"
             ? { ownerRunId: value.ownerRunId }
@@ -245,7 +278,7 @@ export interface DelegationRunOptions {
     signal?: AbortSignal;
     deadlineMs?: number;
     onStarted?(event: DelegationStarted): void;
-    onUpdate?(event: SddDelegationUpdate): void;
+    onUpdate?(event: DelegationUpdate): void;
 }
 
 /** Injectable only to make deadline behavior deterministic at the boundary. */
@@ -253,16 +286,14 @@ export interface DelegationClientOptions {
     createDeadlineSignal?: (deadlineMs: number) => AbortSignal;
 }
 
-type DelegationStarted = SddDelegationStarted;
-
 interface PendingDelegation {
     identity: DelegationStarted;
     cancelEmitted: boolean;
     cleanup(): void;
     onStarted?(event: DelegationStarted): void;
-    onUpdate?(event: SddDelegationUpdate): void;
+    onUpdate?(event: DelegationUpdate): void;
     reject(error: Error): void;
-    resolve(response: SddDelegationResponse): void;
+    resolve(response: DelegationResponse): void;
 }
 
 export class DelegationDeadlineError extends Error {
@@ -329,9 +360,9 @@ export class DelegationClient {
     }
 
     run(
-        request: SddDelegationRequest,
+        request: DelegationRequest,
         options: DelegationRunOptions = {},
-    ): Promise<SddDelegationResponse> {
+    ): Promise<DelegationResponse> {
         if (this.disposed) return Promise.reject(new DelegationDisposedError());
         if (!isValidRequestId(request.requestId)) {
             return Promise.reject(
@@ -348,9 +379,9 @@ export class DelegationClient {
             );
         }
 
-        let resolveRun!: (response: SddDelegationResponse) => void;
+        let resolveRun!: (response: DelegationResponse) => void;
         let rejectRun!: (error: Error) => void;
-        const result = new Promise<SddDelegationResponse>((resolve, reject) => {
+        const result = new Promise<DelegationResponse>((resolve, reject) => {
             resolveRun = resolve;
             rejectRun = reject;
         });
@@ -441,10 +472,7 @@ export class DelegationClient {
 
     private matchesPending(
         pending: PendingDelegation,
-        event: Pick<
-            SddDelegationResponse,
-            "requestId" | "ownerRunId" | "nodeId"
-        >,
+        event: Pick<DelegationResponse, "requestId" | "ownerRunId" | "nodeId">,
     ): boolean {
         return (
             event.requestId === pending.identity.requestId &&

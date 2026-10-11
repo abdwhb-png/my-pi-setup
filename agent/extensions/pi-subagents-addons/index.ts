@@ -3,8 +3,8 @@ import {
     getAgentDir,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import { readExtensionConfig } from "../_shared/config-loader.ts";
+import { restrictSubagents } from "../_shared/subagents/index.ts";
 import { collectWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import {
     parseFallbackAdviceConfig,
@@ -58,11 +58,9 @@ export default function registerSubagentsAddons(
         loadError = error;
     }
     if (process.env.PI_SUBAGENT_CHILD !== "1") {
-        let denial:
-            | ReturnType<typeof registerSubagentCapabilityCeiling>
-            | undefined;
+        let denial: ReturnType<typeof restrictSubagents> | undefined;
         pi.on("session_start", async (event, ctx) => {
-            const gate = registerSubagentCapabilityCeiling({
+            const gate = restrictSubagents({
                 sessionId:
                     ctx.sessionManager.getSessionFile() ??
                     ctx.sessionManager.getSessionId(),

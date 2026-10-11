@@ -17,7 +17,7 @@ import type {
 import type { ApprovedManifest, ApprovedManifestTask } from './manifest.ts';
 import type { RunEvent, RunSnapshot, TaskVerification } from './state-machine.ts';
 import type { TransitionRecord } from './store.ts';
-import type { DelegationRunOptions } from './delegation-client.ts';
+import type { DelegationRunOptions } from '../_shared/subagents/index.ts';
 import type {
     SddDelegationActivityContext,
     SddWorkflowObserver,

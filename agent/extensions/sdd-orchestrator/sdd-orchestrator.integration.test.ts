@@ -17,7 +17,7 @@ import type {
     SddDelegationRequest as SubagentDelegationRequest,
     SddDelegationResponse,
 } from './delegation-contract.ts';
-import { DelegationClient, type EventBus } from './delegation-client.ts';
+import { DelegationClient, type EventBus } from '../_shared/subagents/index.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
 import { registerSddExtension } from './index.ts';
 import type { IsolatedWorkspace, RunSnapshot } from './state-machine.ts';

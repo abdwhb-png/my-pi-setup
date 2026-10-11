@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerSubagentsAddons from "../index.ts";
-import { resolvePiSubagentsPackageRoot } from "./package-path";
+import { fileURLToPath } from "node:url";
 
 const EXTENSIONS_DIR = path.resolve(import.meta.dir, "..", "..");
 const ADDONS_DIR = path.resolve(import.meta.dir, "..");
@@ -35,7 +35,7 @@ describe("pi-subagents-addons discovery contract", () => {
 
     // Installation source/version/provenance belong to official-package.smoke.test.ts.
     it("resolves the package exposing the overview fleetStatus contract", () => {
-        const packageRoot = resolvePiSubagentsPackageRoot();
+        const packageRoot = path.dirname(fileURLToPath(import.meta.resolve("pi-subagents")));
         const extensionApi = fs.readFileSync(
             path.join(packageRoot, "docs", "extension-api.md"),
             "utf8",

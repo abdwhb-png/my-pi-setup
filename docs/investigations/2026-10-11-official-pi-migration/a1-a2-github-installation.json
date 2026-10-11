@@ -1,0 +1,258 @@
+{
+  "date": "2026-10-11",
+  "source": "git:github.com/abdwhb-png/pi-subagents@v0.73.1-a1a2.1",
+  "packageVersion": "0.73.1",
+  "gitCommit": "c0ae7d70464d15eeac1944d7d5d8f2c4bcf00d5e",
+  "installedRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+  "importRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+  "coreRelease": "0.87.1-00c5e7e300ba-51024884e6e0",
+  "npmSourceRemoved": true,
+  "qualification": [
+    {
+      "path": "preflight",
+      "ok": true,
+      "packageRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+      "contract": {
+        "agent": {
+          "name": "scout",
+          "localName": "scout",
+          "source": "builtin",
+          "filePath": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/agents/scout.md",
+          "definitionProjectionVersion": 2,
+          "definitionDigest": "bf4ab42172aab195ddd2aee80d7219d8730e9c48f0d9b836ff1b54566a868bbf",
+          "shadowedCandidates": []
+        },
+        "model": "baseline-child/target:high",
+        "thinking": "high",
+        "tools": {
+          "requestedBuiltin": [
+            "read",
+            "contact_supervisor"
+          ],
+          "declaredBuiltin": [
+            "read",
+            "contact_supervisor"
+          ],
+          "effectiveAllowlist": [
+            "read",
+            "contact_supervisor"
+          ],
+          "explicitAllowlist": true,
+          "requiredChildTools": [
+            "read"
+          ],
+          "internalTools": [],
+          "mcp": [],
+          "effectiveMcpTools": [],
+          "toolExtensionPaths": [],
+          "runtimeExtensions": [
+            "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/runs/shared/subagent-prompt-runtime.ts"
+          ],
+          "configuredExtensions": [],
+          "requiredExtensionIds": [],
+          "extensionArgs": [
+            "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/runs/shared/subagent-prompt-runtime.ts"
+          ],
+          "disableAmbientExtensions": false,
+          "fanoutAuthorized": false
+        },
+        "roots": {
+          "cwd": "/tmp/pi-baseline-JgWJVb/project",
+          "artifactsDir": "/tmp/pi-baseline-JgWJVb/runs/artifacts",
+          "artifactPaths": {
+            "inputPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/preflight_scout_0_input.md",
+            "outputPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/preflight_scout_0_output.md",
+            "jsonlPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/preflight_scout_0.jsonl",
+            "transcriptPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/preflight_scout_0_transcript.jsonl",
+            "metadataPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/preflight_scout_0_meta.json"
+          },
+          "outputPath": "/tmp/pi-baseline-JgWJVb/runs/artifacts/outputs/preflight/context.md",
+          "lifecycle": {
+            "asyncDir": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-runs/preflight",
+            "resultPath": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-results/preflight.json",
+            "statusPath": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-runs/preflight/status.json",
+            "eventsPath": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-runs/preflight/events.jsonl",
+            "processTerminalPath": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-runs/preflight/process-terminal.json",
+            "processTerminalCandidatePath": "/tmp/pi-baseline-JgWJVb/runs/async-subagent-runs/preflight/process-terminal-candidate.json"
+          }
+        }
+      }
+    },
+    {
+      "path": "direct-builtin",
+      "providerObservations": [
+        {
+          "runtime": "bun",
+          "executable": "~/.bun/bin/bun",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "executable": "~/.bun/bin/bun",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ],
+      "receipt": null
+    },
+    {
+      "path": "builtin-foreground",
+      "providerObservations": [
+        {
+          "runtime": "bun",
+          "executable": "~/.bun/bin/bun",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "executable": "~/.bun/bin/bun",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ],
+      "receipt": {
+        "id": "qualification-builtin-foreground"
+      }
+    },
+    {
+      "path": "builtin-async",
+      "providerObservations": [
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ],
+      "receipt": {
+        "id": "qualification-builtin-async"
+      }
+    },
+    {
+      "path": "builtin-workflow",
+      "providerObservations": [
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ],
+      "receipt": {
+        "id": "qualification-builtin-workflow"
+      }
+    },
+    {
+      "path": "builtin-hold",
+      "providerObservations": [
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "executable": "/usr/bin/node",
+          "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+          "model": "baseline-child/target",
+          "reasoning": "high",
+          "tools": [
+            "read",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ],
+      "receipt": {
+        "id": "qualification-builtin-hold"
+      }
+    }
+  ],
+  "limits": [
+    "No remote paid provider call.",
+    "No launch baseline measurements repeated.",
+    "Package manifest version remains 0.73.1; fork revision is pinned by Git tag and commit.",
+    "Pi Git installation path does not include the tag."
+  ]
+}

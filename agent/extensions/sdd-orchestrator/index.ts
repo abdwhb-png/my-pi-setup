@@ -2,10 +2,10 @@ import {
     getAgentDir,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { DelegationClient } from "../_shared/subagents/index.ts";
 import { publishWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import { SddActivityStore } from "./activity-store.ts";
 import { openSddLive } from "./activity-ui.ts";
-import { DelegationClient } from "./delegation-client.ts";
 import { registerSddExtension, type SddRuntime } from "./extension-tools.ts";
 import { openManifestReview } from "./review-ui.ts";
 import { createSddAgentGate, getSddAgentEntries } from "./sdd-agents.ts";

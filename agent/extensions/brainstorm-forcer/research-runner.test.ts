@@ -18,6 +18,7 @@ function createEvents() {
             return () => handlers.delete(handler);
         },
         emit(event: string, data: unknown) {
+            if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) data = { sessionId: "fixture-session", ...(data as object) };
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
         },
@@ -31,14 +32,14 @@ function installRpc(events: ReturnType<typeof createEvents>): void {
             requestId: string;
             method: string;
         };
-        nextRun += 1;
+        if (request.method === "spawn") nextRun += 1;
         queueMicrotask(() =>
             events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
                 version: 1,
                 requestId: request.requestId,
                 method: request.method,
                 success: true,
-                data: {
+                data: request.method === "ping" ? { session: { sessionId: "fixture-session" } } : {
                     text: `started native-research-${nextRun}`,
                     details: { asyncId: `native-research-${nextRun}` },
                 },
@@ -75,7 +76,7 @@ describe("brainstorm research runner", () => {
         });
 
         const rpcRequest = events.emitted.find(
-            ({ event }) => event === SUBAGENT_RPC_REQUEST_EVENT,
+            ({ event, data }) => event === SUBAGENT_RPC_REQUEST_EVENT && (data as any).method === "spawn",
         )!.data as Record<string, any>;
         expect(rpcRequest).toMatchObject({
             method: "spawn",

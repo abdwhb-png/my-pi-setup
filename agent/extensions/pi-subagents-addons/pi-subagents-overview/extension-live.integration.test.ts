@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
@@ -10,11 +10,28 @@ import {
     SUBAGENT_DELEGATION_RESPONSE_EVENT,
     SUBAGENT_DELEGATION_STARTED_EVENT,
 } from 'pi-subagents/delegation';
-import registerSubagentsOverview from './index.ts';
+import * as os from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const realOs = { ...os };
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const fixtureHome = mkdtempSync(join(os.tmpdir(), 'overview-live-fixture-'));
+afterAll(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    mock.module('node:os', () => realOs);
+    rmSync(fixtureHome, { recursive: true, force: true });
+});
+const fixtureAgentDir = join(fixtureHome, '.pi', 'agent');
+mkdirSync(fixtureAgentDir, { recursive: true });
+writeFileSync(join(fixtureAgentDir, 'settings.json'), JSON.stringify({ packages: [dirname(fileURLToPath(import.meta.resolve('pi-subagents')))] }));
+process.env.PI_CODING_AGENT_DIR = fixtureAgentDir;
+mock.module('node:os', () => ({ ...realOs, homedir: () => fixtureHome }));
+const { default: registerSubagentsOverview } = await import('./index.ts');
 import {
     SUBAGENT_RPC_REPLY_EVENT_PREFIX,
     SUBAGENT_RPC_REQUEST_EVENT,
-} from './rpc-client.ts';
+} from '../../_shared/subagents/rpc-client.ts';
 
 describe('pi-subagents-overview live integration', () => {
     it('closes the overview and preserves legacy and Kitty Ctrl+Alt+F for the native inspector', async () => {
@@ -87,6 +104,7 @@ describe('pi-subagents-overview live integration', () => {
             bold: (text: string) => text,
         } as unknown as Theme;
         const ctx = {
+            cwd: fixtureHome, isProjectTrusted: () => false,
             mode: 'tui',
             hasUI: true,
             sessionManager: { getSessionId: () => 'session-1' },
@@ -215,6 +233,7 @@ describe('pi-subagents-overview live integration', () => {
         } as unknown as ExtensionAPI;
         registerSubagentsOverview(pi);
         const ctx = {
+            cwd: fixtureHome, isProjectTrusted: () => false,
             mode: 'tui',
             hasUI: true,
             sessionManager: { getSessionId: () => 'session-1' },
@@ -327,6 +346,7 @@ describe('pi-subagents-overview live integration', () => {
         } as unknown as ExtensionAPI;
         registerSubagentsOverview(pi);
         const ctx = {
+            cwd: fixtureHome, isProjectTrusted: () => false,
             mode: 'tui',
             hasUI: true,
             sessionManager: { getSessionId: () => 'session-1' },
@@ -450,6 +470,7 @@ describe('pi-subagents-overview live integration', () => {
             bold: (text: string) => text,
         } as unknown as Theme;
         const ctx = {
+            cwd: fixtureHome, isProjectTrusted: () => false,
             mode: 'tui',
             hasUI: true,
             sessionManager: { getSessionId: () => 'session-1' },

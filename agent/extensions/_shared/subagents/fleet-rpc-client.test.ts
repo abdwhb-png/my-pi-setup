@@ -61,7 +61,7 @@ describe('SubagentRpcClient', () => {
             requestId: () => 'request-1',
         });
 
-        const reply = await client.request('ping');
+        const reply = await client.ping();
 
         expect(reply).toEqual({ version: 1, methods: ['ping'] });
         expect(events.activeSubscriptions).toBe(0);
@@ -74,7 +74,7 @@ describe('SubagentRpcClient', () => {
             timeoutMs: 60_000,
         });
 
-        const pending = client.request('status');
+        const pending = client.status();
         client.dispose();
 
         await expect(pending).rejects.toMatchObject({ code: 'disposed' });
@@ -88,7 +88,7 @@ describe('SubagentRpcClient', () => {
             timeoutMs: 5,
         });
 
-        await expect(client.request('status')).rejects.toMatchObject({
+        await expect(client.status()).rejects.toMatchObject({
             code: 'timeout',
         });
         expect(events.activeSubscriptions).toBe(0);
@@ -100,8 +100,8 @@ describe('SubagentRpcClient', () => {
             requestId: () => 'malformed-request',
         });
 
-        await expect(client.request('ping')).rejects.toThrow(
-            'Mismatched RPC reply',
+        await expect(client.ping()).rejects.toThrow(
+            'Mismatched subagent RPC reply',
         );
         expect(events.activeSubscriptions).toBe(0);
     });
@@ -112,8 +112,8 @@ describe('SubagentRpcClient', () => {
             requestId: () => 'expected-request',
         });
 
-        await expect(client.request('ping')).rejects.toThrow(
-            'Mismatched RPC reply',
+        await expect(client.ping()).rejects.toThrow(
+            'Mismatched subagent RPC reply',
         );
         expect(events.activeSubscriptions).toBe(0);
     });

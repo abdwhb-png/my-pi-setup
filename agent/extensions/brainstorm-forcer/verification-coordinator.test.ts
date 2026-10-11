@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     SUBAGENT_ASYNC_COMPLETE_EVENT,
     SUBAGENT_RPC_REPLY_EVENT_PREFIX,
@@ -21,6 +24,7 @@ function createEvents() {
             return () => current.delete(handler);
         },
         emit(event, data) {
+            if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) data = { sessionId: "fixture-session", ...(data as object) };
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
         },
@@ -67,7 +71,7 @@ function installRpc(
     } = {},
 ): void {
     bridge.events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
-        const request = value as { requestId: string; method: string };
+        const request = value as { requestId: string; method: string; params?: { id?: string } };
         if (request.method === "stop") options.onStopRequest?.();
         queueMicrotask(() =>
             bridge.events.emit(
@@ -78,7 +82,7 @@ function installRpc(
                     method: request.method,
                     success: true,
                     data:
-                        request.method === "stop" && options.stopResult
+                        request.method === "ping" ? { session: { sessionId: "fixture-session" } } : request.method === "status" ? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: request.params?.id, state: "running" }] } } : request.method === "stop" && options.stopResult
                             ? options.stopResult
                             : {
                                   text: "started",
@@ -99,6 +103,57 @@ function spawnRequest(bridge: ReturnType<typeof createEvents>) {
 }
 
 describe("native verification coordinator", () => {
+    it("recovers an owned native terminal already published before restored attachment", async () => {
+        const root = mkdtempSync(join(tmpdir(), "verification-restored-terminal-"));
+        const bridge = createEvents(); installRpc(bridge);
+        const coordinator = createVerificationCoordinator(bridge.events, { integrationOptions: { artifactRoot: root } });
+        const completions: unknown[] = [];
+        coordinator.onComplete(completion => completions.push(completion));
+        try {
+            mkdirSync(join(root, "async-subagent-results"));
+            writeFileSync(join(root, "async-subagent-results", "restored.json"), JSON.stringify({ runId: "restored", sessionId: "fixture-session", success: true, results: [{ workflowKey: "first", success: true, structuredOutput: { outcome: "supported" } }] }));
+            await coordinator.attach("restored", [{ role: "verifier", outputName: "first" }]);
+            expect(completions).toMatchObject([{ terminal: { kind: "complete", structuredOutputs: { first: { outcome: "supported" } } } }]);
+        } finally { coordinator.dispose(); rmSync(root, { recursive: true, force: true }); }
+    });
+    it("retries attachment after a missing runtime session without leaving a stranded run", async () => {
+        const bridge = createEvents();
+        let ready = false;
+        bridge.events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
+            const request = value as { requestId: string; method: string; params?: { id?: string } };
+            bridge.events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
+                version: 1, ...request, success: true,
+                data: request.method === "status" ? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: request.params?.id, state: "running" }] } } : { session: ready ? { sessionId: "fixture-session" } : {} },
+            });
+        });
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const nodes = [{ role: "verifier" as const, outputName: "first" }];
+        const completions: unknown[] = [];
+        coordinator.onComplete(completion => completions.push(completion));
+        try {
+            await expect(coordinator.attach("restored", nodes)).rejects.toThrow("trusted session");
+            expect(coordinator.status("restored")).toBeUndefined();
+            ready = true;
+            await coordinator.attach("restored", nodes);
+            bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { id: "restored", success: true, results: [{ workflowKey: "first", success: true, structuredOutput: { outcome: "supported" } }] });
+            expect(completions).toHaveLength(1);
+            expect(coordinator.status("restored")?.state).toBe("completed");
+        } finally { coordinator.dispose(); }
+    });
+    it("retains parallel successes when a verifier fails and the advisory never launches", async () => {
+        const bridge = createEvents();
+        installRpc(bridge);
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const completions: any[] = [];
+        coordinator.onComplete(completion => completions.push(completion));
+        const { runId } = await coordinator.start({ ownerRunId: "owner", sessionId: "session-current", sessionFile: "/tmp/session-current.jsonl", cwd: "/repo", label: "Verify", nodes: [verifier("first"), verifier("second"), architect()] });
+        bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { id: runId, success: true, results: [
+            { workflowKey: "first", success: false, status: "failed", error: "provider unavailable" },
+            { workflowKey: "second", success: true, status: "completed", structuredOutput: { outcome: "supported" } },
+        ] });
+        expect(completions[0]?.terminal).toEqual({ kind: "failure", failureKind: "failed", reason: "provider unavailable", completedStructuredOutputs: { second: { outcome: "supported" } } });
+        coordinator.dispose();
+    });
     it("spawns one native async workflow with parallel verifiers then architect", async () => {
         const bridge = createEvents();
         installRpc(bridge);
@@ -128,7 +183,6 @@ describe("native verification coordinator", () => {
         const workflowScript = request.params.workflowScript as string;
         expect(typeof workflowScript).toBe("string");
         expect(workflowScript).toContain("runs.all");
-        expect(workflowScript).toContain("runs.run");
         expect(workflowScript).toContain("brainstorm-scout");
         expect(workflowScript).toContain("pi-expert");
         expect(workflowScript).toContain("architect");
@@ -136,9 +190,6 @@ describe("native verification coordinator", () => {
         expect(workflowScript).toContain('"tool-groups.policy/1"');
         expect(workflowScript).toContain('"allowedTools"');
         expect(workflowScript).toContain('"structured_output"');
-        expect(workflowScript.indexOf("runs.all")).toBeLessThan(
-            workflowScript.indexOf("runs.run"),
-        );
         coordinator.dispose();
     });
 
@@ -225,7 +276,7 @@ describe("native verification coordinator", () => {
             sessionFile: "/tmp/session-current.jsonl",
             cwd: "/repo",
             label: "Brainstorm verification",
-            nodes: [verifier("first"), architect()],
+            nodes: [verifier("first"), { ...architect(), task: "Assess {outputs.first}." }],
         });
         const first = { outcome: "supported" };
 
@@ -264,13 +315,14 @@ describe("native verification coordinator", () => {
         coordinator.dispose();
     });
 
-    it("reattaches persisted native workflow ownership after extension reload", () => {
+    it("reattaches persisted native workflow ownership after extension reload", async () => {
         const bridge = createEvents();
+        installRpc(bridge);
         const coordinator = createVerificationCoordinator(bridge.events);
         const completions: unknown[] = [];
         coordinator.onComplete((completion) => completions.push(completion));
 
-        coordinator.attach("native-restored-1", [
+        await coordinator.attach("native-restored-1", [
             { role: "verifier", outputName: "first" },
             { role: "architect", outputName: "architecture_advisory" },
         ]);

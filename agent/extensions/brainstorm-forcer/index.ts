@@ -21,13 +21,15 @@ import type {
     MessageRenderer,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
-import {
-    registerSubagentCapabilityCeiling,
-    resolveCurrentSubagentCapabilityCeiling,
-    type SubagentCapabilityCeilingHandle,
-} from "pi-subagents/capability-ceiling";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
+import {
+    preflightSubagent,
+    restrictSubagents,
+    currentSubagentRestriction,
+    subagentSessionKey,
+    type RestrictionHandle,
+} from "../_shared/subagents/index.ts";
 import { publishWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { createUiColors } from "../_shared/ui/ui-colors";
@@ -485,10 +487,10 @@ const brainstormMessageRenderer: MessageRenderer = (
  * Manages the read-only verifier capability ceiling for the active brainstorm
  * session. Source is stable ("brainstorm-forcer") so reload re-registration is
  * idempotent. Registers by exact session ID; disposes only this extension's
- * handle. Fail closed if session ID is unavailable.
+ * handle. The common owner supplies the file-first native session key.
  */
 export function createCapabilityCeilingManager() {
-    let handle: SubagentCapabilityCeilingHandle | null = null;
+    let handle: RestrictionHandle | null = null;
     return {
         register(sessionId: string): void {
             if (!sessionId || !sessionId.trim())
@@ -496,7 +498,7 @@ export function createCapabilityCeilingManager() {
                     "Cannot register verifier ceiling without a session ID.",
                 );
             if (handle) handle.dispose();
-            handle = registerSubagentCapabilityCeiling({
+            handle = restrictSubagents({
                 sessionId,
                 source: "brainstorm-forcer",
                 ceiling: buildVerifierCapabilityCeiling(),
@@ -514,14 +516,13 @@ export function createCapabilityCeilingManager() {
 /**
  * Preflight foundation: verifies each allowlisted routed verifier agent is
  * discoverable and launchable under the effective capability ceiling without
- * spawning. Uses public pi-subagents/preflight via dynamic import (the module
- * is heavy — agent discovery, model resolution). Slice B calls this before
- * every spawn.
+ * spawning. The shared boundary resolves the configured package's public API.
  */
 export async function preflightVerifierAgents(
     sessionId: string,
     cwd: string,
     agents: readonly string[],
+    projectTrusted?: boolean,
 ): Promise<
     ReadonlyArray<{
         agent: string;
@@ -539,10 +540,7 @@ export async function preflightVerifierAgents(
         throw new Error(
             "Verifier preflight agents must be a non-empty unique sequence.",
         );
-    const { resolveSubagentLaunchContract } =
-        await import("pi-subagents/preflight");
-    const capabilityCeiling =
-        resolveCurrentSubagentCapabilityCeiling(sessionId);
+    const capabilityCeiling = currentSubagentRestriction(sessionId);
     if (!capabilityCeiling)
         return agents.map((agent) => ({
             agent,
@@ -552,12 +550,15 @@ export async function preflightVerifierAgents(
     const results = await Promise.all(
         agents.map(async (agent) => {
             try {
-                const result = await resolveSubagentLaunchContract({
-                    agent,
-                    cwd,
-                    context: "fresh",
-                    capabilityCeiling,
-                });
+                const result = await preflightSubagent(
+                    {
+                        agent,
+                        cwd,
+                        context: "fresh",
+                        capabilityCeiling,
+                    },
+                    { projectTrusted },
+                );
                 return {
                     agent,
                     ok: result.ok,
@@ -739,9 +740,15 @@ export default function brainstormForcer(
                     "Delegated research requires an active Pi session.",
                 );
             const delegation = buildResearchDelegation(params);
-            const preflight = await runPreflight(sessionId, ctx.cwd, [
-                delegation.agent,
-            ]);
+            const preflight = await runPreflight(
+                subagentSessionKey(
+                    sessionId,
+                    ctx.sessionManager.getSessionFile(),
+                ),
+                ctx.cwd,
+                [delegation.agent],
+                ctx.isProjectTrusted(),
+            );
             if (runId !== launchRunId || activePhase !== launchPhase)
                 throw new Error(
                     "Research launch ownership changed during preflight.",
@@ -1751,8 +1758,8 @@ export default function brainstormForcer(
                 );
         };
         assertLaunchOwnership();
-        const capabilityCeiling =
-            resolveCurrentSubagentCapabilityCeiling(sessionId);
+        const ownerKey = subagentSessionKey(sessionId, sessionFile);
+        const capabilityCeiling = currentSubagentRestriction(ownerKey);
         if (!capabilityCeiling)
             throw new Error(
                 "Verifier capability ceiling is not active for this session.",
@@ -1762,9 +1769,10 @@ export default function brainstormForcer(
             ...new Set(expectedSteps.map((step) => step.agent)),
         ];
         const preflight = await runPreflight(
-            sessionId,
+            ownerKey,
             ctx.cwd,
             expectedAgents,
+            ctx.isProjectTrusted(),
         );
         assertLaunchOwnership();
         const returnedAgents = preflight.map((result) => result.agent);
@@ -2656,7 +2664,12 @@ export default function brainstormForcer(
                     );
                 }
             }
-            ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
+            ceilingManager.register(
+                subagentSessionKey(
+                    ctx.sessionManager.getSessionId(),
+                    ctx.sessionManager.getSessionFile(),
+                ),
+            );
             // Re-acquire the workflow lease after restoring an active phase
             // (resetState at the top released it). Without this, a reloaded
             // session would resume with brainstorm tools hidden.
@@ -2673,7 +2686,7 @@ export default function brainstormForcer(
             pendingVerification === pending && activeContext === ctx;
         if (!stillOwnsPending()) return;
         if (terminalRecoveryBlockedRunId === pending.runId) return;
-        verificationCoordinator.attach(
+        await verificationCoordinator.attach(
             pending.runId,
             pending.expectedSteps.map((step) => ({
                 role: step.role,
@@ -2718,7 +2731,12 @@ export default function brainstormForcer(
         artifactStore = null;
         artifacts = {};
         explorationLedger = createExplorationLedger({ runId });
-        ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
+        ceilingManager.register(
+            subagentSessionKey(
+                ctx.sessionManager.getSessionId(),
+                ctx.sessionManager.getSessionFile(),
+            ),
+        );
         releaseAgentGate();
         acquireAgentGate();
         refreshGroups();
@@ -3176,7 +3194,20 @@ export default function brainstormForcer(
         refreshGroups();
         restoreState(ctx);
         updateWidget(ctx);
-        await reconcilePendingVerification(ctx);
+        // Pi awaits session_start handlers in extension order. The package's
+        // later handler must initialize its session before restored attachment.
+        setTimeout(() => {
+            if (activeContext !== ctx) return;
+            void reconcilePendingVerification(ctx).catch((error: unknown) => {
+                if (activeContext !== ctx) return;
+                ctx.ui.notify(
+                    boundedVerificationWarning(
+                        `Verification restoration failed: ${error instanceof Error ? error.message : String(error)}. Pending retained for retry.`,
+                    ),
+                    "warning",
+                );
+            });
+        }, 0);
     });
 
     pi.on("session_tree", async (_event, ctx) => {

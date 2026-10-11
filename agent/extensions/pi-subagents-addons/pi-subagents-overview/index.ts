@@ -29,10 +29,13 @@ import {
 } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { createWidget } from "../../_shared/fancy-footer";
-import type { AsyncLiveRun, LiveRunSnapshot } from "./fleet-store.ts";
-import { SubagentsLiveRuntime } from "./live-runtime.ts";
+import type {
+    AsyncLiveRun,
+    LiveRunSnapshot,
+} from "../../_shared/subagents/fleet-store.ts";
+import { resolveSubagentPackage } from "../../_shared/subagents/index.ts";
+import { SubagentsLiveRuntime } from "../../_shared/subagents/live-runtime.ts";
 import { hasVisibleLiveRuns, renderLiveWidget } from "./live-ui.ts";
-import { resolvePiSubagentsPackageRoot } from "./package-path.ts";
 import {
     icon,
     SubagentsOverviewView,
@@ -80,7 +83,7 @@ interface AgentOverride {
 const HOME = homedir();
 const SETTINGS_PATH = path.join(HOME, ".pi", "agent", "settings.json");
 const USER_AGENTS_DIR = path.join(HOME, ".pi", "agent", "agents");
-const BUILTIN_AGENTS_DIR = path.join(resolvePiSubagentsPackageRoot(), "agents");
+let builtinAgentsDir: string | undefined;
 const SKILLS_DIR = path.join(HOME, ".agents", "skills");
 
 // ── Frontmatter Parsing ────────────────────────────────
@@ -180,8 +183,19 @@ function getEffectiveTools(
     return agent.tools;
 }
 
+async function loadBuiltinOwner(ctx: ExtensionContext): Promise<void> {
+    builtinAgentsDir = undefined;
+    const pkg = await resolveSubagentPackage(
+        ctx.cwd,
+        undefined,
+        ctx.isProjectTrusted(),
+    );
+    builtinAgentsDir = path.join(pkg.root, "agents");
+}
+
 function readBuiltinAgents(): AgentInfo[] {
     const agents: AgentInfo[] = [];
+    if (!builtinAgentsDir) return agents;
     const builtinNames = [
         "scout",
         "researcher",
@@ -194,7 +208,7 @@ function readBuiltinAgents(): AgentInfo[] {
     ];
 
     for (const name of builtinNames) {
-        const filePath = path.join(BUILTIN_AGENTS_DIR, `${name}.md`);
+        const filePath = path.join(builtinAgentsDir, `${name}.md`);
         if (!fs.existsSync(filePath)) continue;
         const fm = parseAgentFile(filePath);
         if (!fm) continue;
@@ -600,6 +614,7 @@ export default function (pi: ExtensionAPI) {
     let liveViewOpen = false;
     let subagentToolActive = false;
     let closeOverviewForNativeFleet: (() => void) | undefined;
+
     let stopTerminalInputListener: (() => void) | undefined;
 
     const clearLiveTimers = (): void => {
@@ -771,6 +786,7 @@ export default function (pi: ExtensionAPI) {
         description:
             "Show a clean overview of all subagents with tools, models, overrides, and stats",
         handler: async (_args, ctx) => {
+            await loadBuiltinOwner(ctx);
             if (ctx.mode !== "tui") {
                 const overview = formatOverview(true);
                 console.log(
@@ -846,6 +862,7 @@ export default function (pi: ExtensionAPI) {
                 .slice(0, 30);
         },
         handler: async (args, ctx) => {
+            await loadBuiltinOwner(ctx);
             const name = args.trim();
             if (!name) {
                 if (ctx.mode !== "tui") {
@@ -984,6 +1001,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("session_start", async (_event, ctx) => {
+        await loadBuiltinOwner(ctx);
         currentContext = ctx;
         stopTerminalInputListener?.();
         stopTerminalInputListener = ctx.ui.onTerminalInput((data) => {

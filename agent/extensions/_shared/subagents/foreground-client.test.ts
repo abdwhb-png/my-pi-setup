@@ -14,7 +14,7 @@ import {
     DelegationDeadlineError,
     DelegationDisposedError,
     type EventBus,
-} from './delegation-client.ts';
+} from './foreground-client.ts';
 
 class FakeEventBus implements EventBus {
     readonly emitted: Array<{ channel: string; data: unknown }> = [];
@@ -641,17 +641,4 @@ test('a terminal response clears its hard deadline', async () => {
             ({ channel }) => channel === SUBAGENT_DELEGATION_CANCEL_EVENT,
         ),
     ).toHaveLength(0);
-});
-
-test('uses only the public pi-subagents delegation boundary', () => {
-    const source = readFileSync(
-        new URL('./delegation-client.ts', import.meta.url),
-        'utf8',
-    );
-
-    expect(source).toMatch(/from ["']pi-subagents\/delegation["']/);
-    expect(source).not.toContain('/src/');
-    expect(source).not.toContain('subagents:rpc');
-    expect(source).not.toContain('child_process');
-    expect(source).not.toMatch(/\b(?:callTool|invokeTool|registerTool)\b/);
 });

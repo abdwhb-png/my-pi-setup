@@ -4,8 +4,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveMigratedPlanPath } from "../_shared/migrated-plan-path.ts";
 
 import { redactValue } from "../_shared/redaction.ts";
+import type { DelegationClient } from "../_shared/subagents/index.ts";
 import { loadSddConfig } from "./config.ts";
-import type { DelegationClient } from "./delegation-client.ts";
 import {
     delegationOutput,
     type SddDelegationResponse,

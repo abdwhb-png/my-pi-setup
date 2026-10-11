@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SubagentRpcToolResult } from "../../_shared/subagents/rpc-client.ts";
-import { readActiveRuns } from "./status.ts";
+import { readActiveRuns } from "../../_shared/subagents/status.ts";
 
 function status(
     runs: Array<{ id: string; state: string }>,

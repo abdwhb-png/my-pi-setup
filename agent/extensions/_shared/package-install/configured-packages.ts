@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
-export type PackageScope = 'user' | 'project';
+export type PackageScope = "user" | "project";
 
 export interface ConfiguredPackageSource {
     source: string;
@@ -26,18 +26,18 @@ export interface PackageJsonLike {
 }
 
 interface ParsedNpmSource {
-    type: 'npm';
+    type: "npm";
     name: string;
 }
 
 interface ParsedGitSource {
-    type: 'git';
+    type: "git";
     host: string;
     path: string;
 }
 
 interface ParsedLocalSource {
-    type: 'local';
+    type: "local";
     path: string;
 }
 
@@ -57,6 +57,7 @@ export interface IterateEnvironment {
     cwd: string;
     agentDir: string;
     force?: boolean;
+    includeProject?: boolean;
 }
 
 /**
@@ -67,23 +68,25 @@ export interface IterateEnvironment {
 export function readConfiguredPackageSources(
     cwd: string,
     agentDir: string,
+    includeProject = true,
 ): ConfiguredPackageSource[] {
     const sources: ConfiguredPackageSource[] = [];
-    const globalSettingsPath = join(agentDir, 'settings.json');
-    const projectSettingsPath = join(cwd, '.pi', 'settings.json');
+    const globalSettingsPath = join(agentDir, "settings.json");
+    const projectSettingsPath = join(cwd, ".pi", "settings.json");
 
     for (const [settingsPath, scope] of [
-        [globalSettingsPath, 'user'],
-        [projectSettingsPath, 'project'],
+        [globalSettingsPath, "user"],
+        [projectSettingsPath, "project"],
     ] as const) {
+        if (scope === "project" && !includeProject) continue;
         if (!existsSync(settingsPath)) continue;
         try {
-            const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8')) as {
+            const parsed = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
                 packages?: Array<string | { source: string }>;
             };
             for (const entry of parsed.packages ?? []) {
-                const source = typeof entry === 'string' ? entry : entry.source;
-                if (typeof source === 'string' && source.trim()) {
+                const source = typeof entry === "string" ? entry : entry.source;
+                if (typeof source === "string" && source.trim()) {
                     sources.push({ source, scope });
                 }
             }
@@ -96,43 +99,43 @@ export function readConfiguredPackageSources(
 }
 
 export function parsePackageSource(source: string): ParsedSource {
-    if (source.startsWith('npm:')) {
-        return { type: 'npm', name: parseNpmPackageName(source) };
+    if (source.startsWith("npm:")) {
+        return { type: "npm", name: parseNpmPackageName(source) };
     }
 
     if (isLocalPathSource(source)) {
-        return { type: 'local', path: source };
+        return { type: "local", path: source };
     }
 
     const parsedGit = parseGitSource(source);
     if (parsedGit) return parsedGit;
-    return { type: 'local', path: source };
+    return { type: "local", path: source };
 }
 
 export function parseNpmPackageName(source: string): string {
-    const spec = source.slice('npm:'.length).trim();
+    const spec = source.slice("npm:".length).trim();
     const match = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@.+)?$/);
     return match?.[1] ?? spec;
 }
 
 export function isLocalPathSource(source: string): boolean {
     return (
-        source.startsWith('/') ||
-        source.startsWith('./') ||
-        source.startsWith('../') ||
-        source.startsWith('~/')
+        source.startsWith("/") ||
+        source.startsWith("./") ||
+        source.startsWith("../") ||
+        source.startsWith("~/")
     );
 }
 
 export function parseGitSource(source: string): ParsedGitSource | null {
     let spec = source.trim();
-    if (spec.startsWith('git:')) spec = spec.slice(4);
+    if (spec.startsWith("git:")) spec = spec.slice(4);
 
     const sshShort = spec.match(/^git@([^:]+):(.+)$/);
     if (sshShort) {
         const pathWithRef = sshShort[2];
         return {
-            type: 'git',
+            type: "git",
             host: sshShort[1],
             path: stripGitSuffixAndRef(pathWithRef),
         };
@@ -140,15 +143,15 @@ export function parseGitSource(source: string): ParsedGitSource | null {
 
     const protocol = spec.match(/^(?:https?|ssh|git):\/\/([^/]+)\/(.+)$/);
     if (protocol) {
-        const host = protocol[1].replace(/^.+@/, '');
+        const host = protocol[1].replace(/^.+@/, "");
         const pathWithRef = protocol[2];
-        return { type: 'git', host, path: stripGitSuffixAndRef(pathWithRef) };
+        return { type: "git", host, path: stripGitSuffixAndRef(pathWithRef) };
     }
 
     const shorthand = spec.match(/^([^/]+)\/(.+)$/);
     if (shorthand) {
         return {
-            type: 'git',
+            type: "git",
             host: shorthand[1],
             path: stripGitSuffixAndRef(shorthand[2]),
         };
@@ -158,12 +161,12 @@ export function parseGitSource(source: string): ParsedGitSource | null {
 }
 
 function stripGitSuffixAndRef(pathWithRef: string): string {
-    const refIndex = pathWithRef.lastIndexOf('@');
+    const refIndex = pathWithRef.lastIndexOf("@");
     const withoutRef =
-        refIndex > pathWithRef.indexOf('/')
+        refIndex > pathWithRef.indexOf("/")
             ? pathWithRef.slice(0, refIndex)
             : pathWithRef;
-    return withoutRef.replace(/\.git$/, '');
+    return withoutRef.replace(/\.git$/, "");
 }
 
 export function resolveInstalledPackageRoot(
@@ -173,37 +176,37 @@ export function resolveInstalledPackageRoot(
     agentDir: string,
 ): string | null {
     const parsed = parsePackageSource(source);
-    if (parsed.type === 'local') {
-        const baseDir = scope === 'project' ? join(cwd, '.pi') : agentDir;
+    if (parsed.type === "local") {
+        const baseDir = scope === "project" ? join(cwd, ".pi") : agentDir;
         return resolvePathFromBase(parsed.path, baseDir);
     }
-    if (parsed.type === 'git') {
+    if (parsed.type === "git") {
         const gitRoot =
-            scope === 'project'
-                ? join(cwd, '.pi', 'git')
-                : join(agentDir, 'git');
+            scope === "project"
+                ? join(cwd, ".pi", "git")
+                : join(agentDir, "git");
         return join(gitRoot, parsed.host, parsed.path);
     }
     const npmRoot =
-        scope === 'project'
-            ? join(cwd, '.pi', 'npm', 'node_modules')
-            : join(agentDir, 'npm', 'node_modules');
+        scope === "project"
+            ? join(cwd, ".pi", "npm", "node_modules")
+            : join(agentDir, "npm", "node_modules");
     return join(npmRoot, parsed.name);
 }
 
 export function resolvePathFromBase(input: string, baseDir: string): string {
-    const expanded = input.startsWith('~/')
+    const expanded = input.startsWith("~/")
         ? join(homedir(), input.slice(2))
         : input;
     return resolve(baseDir, expanded);
 }
 
 export function readPackageJson(packageRoot: string): PackageJsonLike | null {
-    const packageJsonPath = join(packageRoot, 'package.json');
+    const packageJsonPath = join(packageRoot, "package.json");
     if (!existsSync(packageJsonPath)) return null;
     try {
         return JSON.parse(
-            readFileSync(packageJsonPath, 'utf-8'),
+            readFileSync(packageJsonPath, "utf-8"),
         ) as PackageJsonLike;
     } catch {
         return null;
@@ -221,7 +224,11 @@ export async function forEachConfiguredPackage(
     env: IterateEnvironment,
     visitor: (visit: PackageVisit) => void | Promise<void>,
 ): Promise<void> {
-    const configured = readConfiguredPackageSources(env.cwd, env.agentDir);
+    const configured = readConfiguredPackageSources(
+        env.cwd,
+        env.agentDir,
+        env.includeProject,
+    );
     for (const entry of configured) {
         const packageRoot = resolveInstalledPackageRoot(
             entry.source,

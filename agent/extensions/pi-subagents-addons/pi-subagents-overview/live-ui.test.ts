@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import type { LiveRunSnapshot } from './fleet-store.ts';
+import type { LiveRunSnapshot } from '../../_shared/subagents/fleet-store.ts';
 import { hasVisibleLiveRuns, renderLiveWidget } from './live-ui.ts';
 import { SubagentsOverviewView } from './ui.ts';
 

@@ -1,4 +1,4 @@
-import type { SubagentRpcToolResult } from "../../_shared/subagents/rpc-client.ts";
+import type { SubagentRpcToolResult } from "./rpc-client.ts";
 
 export interface ActiveSubagentRun {
     id: string;

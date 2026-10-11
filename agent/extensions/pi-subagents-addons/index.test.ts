@@ -84,7 +84,7 @@ async function start() {
 test("startup and reload publish snapshots while ordinary turns do not", async () => {
     const running = await start();
     const settingsPath = join(agentDir, "settings.json");
-    expect(existsSync(settingsPath)).toBe(true);
+    expect(existsSync(settingsPath), JSON.stringify(running.events.uiCallsFor("notify"))).toBe(true);
     const snapshot = readFileSync(settingsPath, "utf8");
     expect(JSON.parse(snapshot).subagents.agentOverrides.reader.tools).toEqual([
         "read",

@@ -43,7 +43,7 @@ export interface SubagentAsyncCompletion extends Record<string, unknown> {
 }
 
 export interface SubagentRpcClientOptions {
-    sourceExtension: string;
+    sourceExtension?: string;
     timeoutMs?: number;
     requestId?: () => string;
 }
@@ -161,10 +161,10 @@ export class SubagentRpcClient {
 
     constructor(
         private readonly events: SubagentRpcEventBus,
-        options: SubagentRpcClientOptions,
+        options: SubagentRpcClientOptions = {},
     ) {
         this.sourceExtension = boundedIdentity(
-            options.sourceExtension,
+            options.sourceExtension ?? "pi-subagents-addons",
             "Subagent RPC source extension",
         );
         this.timeoutMs = options.timeoutMs ?? 2_000;
@@ -241,6 +241,10 @@ export class SubagentRpcClient {
 
     onAsyncComplete(
         handler: (completion: SubagentAsyncCompletion) => void,
+        malformed?: (
+            error: SubagentRpcError,
+            identity: { runId?: string; sessionId?: string },
+        ) => void,
     ): () => void {
         if (this.disposed)
             throw new SubagentRpcError(
@@ -251,6 +255,23 @@ export class SubagentRpcClient {
             this.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (value) => {
                 const completion = parseCompletion(value);
                 if (completion) handler(completion);
+                else if (malformed)
+                    malformed(
+                        new SubagentRpcError(
+                            "Malformed subagent async completion.",
+                            "invalid_completion",
+                        ),
+                        {
+                            ...(isRecord(value) &&
+                            typeof (value.id ?? value.runId) === "string"
+                                ? { runId: String(value.id ?? value.runId) }
+                                : {}),
+                            ...(isRecord(value) &&
+                            typeof value.sessionId === "string"
+                                ? { sessionId: value.sessionId }
+                                : {}),
+                        },
+                    );
             }) ?? (() => undefined);
         let active = true;
         const release = () => {
@@ -263,7 +284,7 @@ export class SubagentRpcClient {
         return release;
     }
 
-    request(
+    private request(
         method: SubagentRpcMethod,
         params?: Record<string, unknown>,
         options: SubagentRpcRequestOptions = {},
@@ -383,4 +404,98 @@ export class SubagentRpcClient {
         );
         for (const cancel of this.cancelPending) cancel(error);
     }
+}
+
+export type EventBusLike = SubagentRpcEventBus;
+export interface FleetStatusEntryV1 {
+    key: string;
+    agent: string;
+    role?: string;
+    model?: string;
+    effort?: string;
+    goal?: string;
+    startedAt: number;
+    tokens: { input: number; output: number; total: number };
+}
+
+export interface FleetStatusV1 {
+    version: 1;
+    entries: FleetStatusEntryV1[];
+    totalActive: number;
+    omitted: number;
+}
+
+function isCount(value: unknown): value is number {
+    return (
+        typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    );
+}
+
+function displayText(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const text = value
+        .slice(0, 4_096)
+        .replace(
+            /\x1b\[[0-?]*[ -/]*[@-~]|\x9b[0-?]*[ -/]*[@-~]|\x1b][\s\S]*?(?:\x07|\x1b\\)|\x1b[PX^_][\s\S]*?\x1b\\|[\u0000-\u001f\u007f-\u009f]/g,
+            " ",
+        )
+        .replace(/\s+/g, " ")
+        .trim();
+    return text || undefined;
+}
+
+function parseFleetEntry(value: unknown): FleetStatusEntryV1 | undefined {
+    if (!isRecord(value) || !isRecord(value.tokens)) return undefined;
+    const key = displayText(value.key);
+    const agent = displayText(value.agent);
+    if (
+        !key ||
+        !agent ||
+        !isCount(value.startedAt) ||
+        !isCount(value.tokens.input) ||
+        !isCount(value.tokens.output) ||
+        !isCount(value.tokens.total)
+    ) {
+        return undefined;
+    }
+    const role = displayText(value.role);
+    const model = displayText(value.model);
+    const effort = displayText(value.effort);
+    const goal = displayText(value.goal);
+    return {
+        key,
+        agent,
+        ...(role ? { role } : {}),
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(goal ? { goal } : {}),
+        startedAt: value.startedAt,
+        tokens: {
+            input: value.tokens.input,
+            output: value.tokens.output,
+            total: value.tokens.total,
+        },
+    };
+}
+
+export function parseFleetStatus(value: unknown): FleetStatusV1 | undefined {
+    if (
+        !isRecord(value) ||
+        value.version !== 1 ||
+        !Array.isArray(value.entries) ||
+        !isCount(value.totalActive) ||
+        !isCount(value.omitted)
+    ) {
+        return undefined;
+    }
+    const entries = value.entries.map(parseFleetEntry);
+    if (entries.some((entry) => entry === undefined)) return undefined;
+    return {
+        version: 1,
+        entries: entries.filter(
+            (entry): entry is FleetStatusEntryV1 => entry !== undefined,
+        ),
+        totalActive: value.totalActive,
+        omitted: value.omitted,
+    };
 }

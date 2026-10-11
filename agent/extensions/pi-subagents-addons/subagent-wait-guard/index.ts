@@ -18,8 +18,8 @@ import {
     type GuardNoticeKind,
 } from "./guard.ts";
 
-import { SubagentRpcClient } from "../../_shared/subagents/rpc-client.ts";
-import { readActiveRuns, type ActiveSubagentRun } from "./status.ts";
+import { SubagentIntegration } from "../../_shared/subagents/index.ts";
+import type { ActiveSubagentRun } from "../../_shared/subagents/status.ts";
 
 interface SessionInterventionState {
     fingerprint: string;
@@ -57,7 +57,7 @@ function replacementKind(
 export default function register(pi: ExtensionAPI): void {
     if (process.env.PI_SUBAGENT_WAIT_GUARD === "off") return;
     const sendMessage = pi.sendMessage.bind(pi);
-    const client = new SubagentRpcClient(pi.events, {
+    const client = new SubagentIntegration(pi.events, {
         sourceExtension: "subagent-wait-guard",
     });
     const sessionInterventions = new Map<string, SessionInterventionState>();
@@ -69,7 +69,7 @@ export default function register(pi: ExtensionAPI): void {
         const sessionId = resolveSessionIdentity(ctx.sessionManager);
         if (statusErrors.has(sessionId)) return undefined;
         try {
-            const runs = readActiveRuns(await client.status());
+            const runs = await client.activeRuns();
             statusErrors.delete(sessionId);
             return runs;
         } catch (error) {

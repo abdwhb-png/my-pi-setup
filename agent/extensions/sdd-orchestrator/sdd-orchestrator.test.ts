@@ -26,7 +26,7 @@ import {
     DelegationClient,
     DelegationDisposedError,
     type EventBus,
-} from './delegation-client.ts';
+} from '../_shared/subagents/index.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
 import { createInitialReviewProgress } from './review-progress.ts';
 import type { ReviewProgressStorage } from './review-ui.ts';

@@ -1,7 +1,4 @@
-import type {
-    FleetStatusEntryV1,
-    FleetStatusV1,
-} from './rpc-client.ts';
+import type { FleetStatusEntryV1, FleetStatusV1 } from "./rpc-client.ts";
 
 export interface LiveRunTokens {
     input: number;
@@ -21,11 +18,11 @@ interface LiveRunBase {
 }
 
 export interface AsyncLiveRun extends LiveRunBase {
-    source: 'async';
+    source: "async";
     id: string;
     controlId: string;
     asyncDir: string;
-    state: 'running' | 'complete' | 'failed' | 'stopped';
+    state: "running" | "complete" | "failed" | "stopped";
     controllable: boolean;
     completedAt?: number;
     summary?: string;
@@ -35,8 +32,8 @@ export interface AsyncLiveRun extends LiveRunBase {
 }
 
 export interface FleetLiveRun extends LiveRunBase {
-    source: 'fleet';
-    state: 'active';
+    source: "fleet";
+    state: "active";
     controllable: false;
 }
 
@@ -64,11 +61,11 @@ interface AsyncArtifactUpdate {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function optionalText(value: unknown): string | undefined {
-    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function startedAgent(payload: Record<string, unknown>): string | undefined {
@@ -104,19 +101,21 @@ export class LiveRunStore {
         const agent = startedAgent(payload);
         if (!id || !asyncDir || !agent) return undefined;
         const startedAt =
-            typeof payload.startedAt === 'number' &&
+            typeof payload.startedAt === "number" &&
             Number.isSafeInteger(payload.startedAt) &&
             payload.startedAt >= 0
                 ? payload.startedAt
                 : this.now();
         const run: AsyncLiveRun = {
-            source: 'async',
+            source: "async",
             key: `async:${id}`,
             id,
             controlId: id,
             asyncDir,
             agent,
-            ...(optionalText(payload.role) ? { role: optionalText(payload.role) } : {}),
+            ...(optionalText(payload.role)
+                ? { role: optionalText(payload.role) }
+                : {}),
             ...(optionalText(payload.model)
                 ? { model: optionalText(payload.model) }
                 : {}),
@@ -128,7 +127,7 @@ export class LiveRunStore {
                 : {}),
             startedAt,
             tokens: { input: 0, output: 0, total: 0 },
-            state: 'running',
+            state: "running",
             controllable: true,
         };
         this.asyncRuns.set(id, run);
@@ -143,13 +142,13 @@ export class LiveRunStore {
         const current = this.asyncRuns.get(id);
         if (!current) return undefined;
         const state =
-            payload.state === 'stopped'
-                ? 'stopped'
+            payload.state === "stopped"
+                ? "stopped"
                 : payload.success === true
-                  ? 'complete'
-                  : 'failed';
+                  ? "complete"
+                  : "failed";
         const completedAt =
-            typeof payload.timestamp === 'number' &&
+            typeof payload.timestamp === "number" &&
             Number.isSafeInteger(payload.timestamp) &&
             payload.timestamp >= 0
                 ? payload.timestamp
@@ -174,18 +173,20 @@ export class LiveRunStore {
         const current = this.asyncRuns.get(id);
         if (!current) return undefined;
         const terminalState =
-            artifact.state === 'complete' || artifact.state === 'completed'
-                ? 'complete'
-                : artifact.state === 'failed' || artifact.state === 'error'
-                  ? 'failed'
-                  : artifact.state === 'stopped'
-                    ? 'stopped'
+            artifact.state === "complete" || artifact.state === "completed"
+                ? "complete"
+                : artifact.state === "failed" || artifact.state === "error"
+                  ? "failed"
+                  : artifact.state === "stopped"
+                    ? "stopped"
                     : undefined;
         const updated: AsyncLiveRun = {
             ...current,
             ...(artifact.model ? { model: artifact.model } : {}),
             ...(artifact.effort ? { effort: artifact.effort } : {}),
-            ...(artifact.currentTool ? { currentTool: artifact.currentTool } : {}),
+            ...(artifact.currentTool
+                ? { currentTool: artifact.currentTool }
+                : {}),
             ...(artifact.activity ? { activity: artifact.activity } : {}),
             ...(artifact.transcript ? { transcript: artifact.transcript } : {}),
             tokens: artifact.tokens,
@@ -224,7 +225,7 @@ export class LiveRunStore {
         const usedFleetKeys = new Set<string>();
         const uniqueMatches = new Map<string, FleetStatusEntryV1>();
         for (const run of asyncRuns) {
-            if (run.state !== 'running') continue;
+            if (run.state !== "running") continue;
             const entriesForRun = fleetEntries.filter((entry) =>
                 isLikelySameRun(run, entry),
             );
@@ -232,7 +233,7 @@ export class LiveRunStore {
             const entry = entriesForRun[0];
             const runsForEntry = asyncRuns.filter(
                 (candidate) =>
-                    candidate.state === 'running' &&
+                    candidate.state === "running" &&
                     isLikelySameRun(candidate, entry),
             );
             if (runsForEntry.length === 1) uniqueMatches.set(run.id, entry);
@@ -258,7 +259,7 @@ export class LiveRunStore {
         for (const entry of fleetEntries) {
             if (usedFleetKeys.has(entry.key)) continue;
             publicRuns.push({
-                source: 'fleet',
+                source: "fleet",
                 key: entry.key,
                 agent: entry.agent,
                 ...(entry.role ? { role: entry.role } : {}),
@@ -267,7 +268,7 @@ export class LiveRunStore {
                 ...(entry.goal ? { goal: entry.goal } : {}),
                 startedAt: entry.startedAt,
                 tokens: entry.tokens,
-                state: 'active',
+                state: "active",
                 controllable: false,
             });
         }
@@ -275,7 +276,7 @@ export class LiveRunStore {
             (left, right) => left.startedAt - right.startedAt,
         );
         const localActive = mergedAsyncRuns.filter(
-            (run) => run.state === 'running',
+            (run) => run.state === "running",
         ).length;
         return {
             runs,

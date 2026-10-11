@@ -1,10 +1,13 @@
 import { isAbsolute } from "node:path";
 import {
-    SubagentRpcClient,
-    type SubagentAsyncCompletion,
-    type SubagentRpcClientOptions,
-    type SubagentRpcEventBus,
-} from "../_shared/subagents/rpc-client";
+    SubagentIntegration,
+    type RunCompletion,
+    type IntegrationOptions,
+    type EventBus,
+    type RunRef,
+    type ChildResult,
+    type DelegationWorkflow,
+} from "../_shared/subagents/index.ts";
 import { TOOL_GROUPS_CHILD_POLICY_BINDING } from "../_shared/tool-groups/types";
 import {
     ARCHITECT_AGENT,
@@ -17,7 +20,7 @@ import {
     type VerificationPlanNode,
 } from "./verification";
 
-export type EventBusLike = SubagentRpcEventBus;
+export type EventBusLike = EventBus;
 
 type PendingVerificationStepBase = Readonly<{
     outputName: string;
@@ -171,112 +174,62 @@ export type AttachedVerificationNode = Readonly<{
 
 type CoordinatorRun = {
     nodes: readonly AttachedVerificationNode[];
+    ref?: RunRef;
+    unsubscribe?: () => void;
     state: "running" | "completed" | "failed" | "stopped";
     terminal?: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>;
 };
 
 const TERMINAL_RUN_CACHE_LIMIT = 32;
-const EARLY_COMPLETION_LIMIT = 16;
 const VERIFICATION_CHILD_TIMEOUT_MS = 30 * 60 * 1_000;
 
 export type VerificationCoordinatorDependencies = Readonly<{
     childTimeoutMs?: number;
-    rpc?: SubagentRpcClient;
-    rpcOptions?: Omit<SubagentRpcClientOptions, "sourceExtension">;
+    integration?: SubagentIntegration;
+    integrationOptions?: Omit<IntegrationOptions, "sourceExtension">;
 }>;
 
-function workflowItem(
-    node: VerificationDelegationNode,
-    timeoutMs: number,
-): Record<string, unknown> {
-    return {
+export function buildVerificationWorkflow(
+    nodes: readonly VerificationDelegationNode[],
+    timeoutMs = VERIFICATION_CHILD_TIMEOUT_MS,
+): DelegationWorkflow {
+    const item = (node: VerificationDelegationNode) => ({
         key: node.outputName,
         agent: node.agent,
         task: node.task,
-        context: "fresh",
+        context: "fresh" as const,
         artifacts: true,
         timeoutMs,
-        outputSchema: node.schema,
+        result: { kind: "structured" as const, schema: node.schema },
         extensionBindings: {
             [TOOL_GROUPS_CHILD_POLICY_BINDING]: {
                 allowedTools: [...READONLY_VERIFIER_TOOLS, "structured_output"],
             },
         },
         acceptance: false,
-    };
+    });
+    const verifiers = nodes
+        .filter((node) => node.role === "verifier")
+        .map(item);
+    const architect = nodes
+        .filter((node) => node.role === "architect")
+        .map(item);
+    return { stages: [verifiers, ...(architect.length ? [architect] : [])] };
 }
 
-export function buildVerificationWorkflowScript(
-    nodes: readonly VerificationDelegationNode[],
-    timeoutMs = VERIFICATION_CHILD_TIMEOUT_MS,
-): string {
-    const verifiers = nodes.filter((node) => node.role === "verifier");
-    const architect = nodes.find((node) => node.role === "architect");
-    const lines = [
-        `const verifierItems = ${JSON.stringify(verifiers.map((node) => workflowItem(node, timeoutMs)))};`,
-        "const verifierResults = await runs.all(verifierItems);",
-        "for (let index = 0; index < verifierResults.length; index += 1) {",
-        "  if (!verifierResults[index].ok) return { verifierResults };",
-        "}",
-    ];
-    if (architect) {
-        lines.push(
-            `let architectTask = ${JSON.stringify(architect.task)};`,
-            "for (let index = 0; index < verifierResults.length; index += 1) {",
-            '  const marker = "{outputs." + verifierItems[index].key + "}";',
-            "  architectTask = architectTask.replaceAll(marker, JSON.stringify(verifierResults[index].structuredOutput));",
-            "}",
-            `const architectResult = await runs.run(${JSON.stringify(architect.outputName)}, ${JSON.stringify(
-                { ...workflowItem(architect, timeoutMs), task: undefined },
-            )
-                .replace('"task":undefined,', "")
-                .replace(',"task":undefined', "")});`,
-            "return { verifierResults, architectResult };",
-        );
-        const architectItem = JSON.stringify({
-            ...workflowItem(architect, timeoutMs),
-            task: "__ARCHITECT_TASK__",
-        }).replace('"__ARCHITECT_TASK__"', "architectTask");
-        lines[lines.length - 2] =
-            `const architectResult = await runs.run(${JSON.stringify(architect.outputName)}, ${architectItem});`;
-    } else {
-        lines.push("return { verifierResults }; ");
-    }
-    return lines.join("\n");
-}
-
-function asyncRunId(value: {
-    details?: Record<string, unknown>;
-}): string | undefined {
-    const candidate = value.details?.asyncId;
-    return typeof candidate === "string" && candidate.trim()
-        ? candidate
-        : undefined;
-}
-
-function successfulResult(result: Record<string, unknown>): boolean {
-    return (
-        result.success !== false &&
-        result.status !== "failed" &&
-        result.status !== "stopped" &&
-        result.status !== "timed_out" &&
-        Object.hasOwn(result, "structuredOutput")
-    );
+function successfulResult(result: ChildResult): boolean {
+    return result.status === "completed" && result.value?.kind === "structured";
 }
 
 function failureReason(
-    completion: SubagentAsyncCompletion,
-    result?: Record<string, unknown>,
+    completion: RunCompletion,
+    result?: ChildResult,
 ): string {
-    for (const candidate of [
-        result?.error,
-        result?.output,
-        completion.summary,
-        completion.state,
-    ]) {
-        if (typeof candidate === "string" && candidate.trim()) return candidate;
-    }
-    return `Native verification run ${completion.id} failed.`;
+    return (
+        result?.error ??
+        completion.error ??
+        `Verification run ${completion.runId} failed.`
+    );
 }
 
 function malformedCompletion(
@@ -287,9 +240,9 @@ function malformedCompletion(
 
 function terminalFromCompletion(
     run: CoordinatorRun,
-    completion: SubagentAsyncCompletion,
+    completion: RunCompletion,
 ): Exclude<OwnedTerminalCompletion, { kind: "unrelated" }> {
-    const results = completion.results ?? [];
+    const results = completion.steps;
     const expectedKeys = run.nodes.map((node) => node.outputName);
     const expectedKeySet = new Set(expectedKeys);
     if (expectedKeySet.size !== expectedKeys.length) {
@@ -298,9 +251,9 @@ function terminalFromCompletion(
         );
     }
 
-    const byKey = new Map<string, Record<string, unknown>>();
+    const byKey = new Map<string, ChildResult>();
     for (const result of results) {
-        const key = result.workflowKey;
+        const key = result.key;
         if (typeof key !== "string" || !expectedKeySet.has(key)) {
             return malformedCompletion(
                 "Verification returned an unexpected workflow key.",
@@ -313,10 +266,23 @@ function terminalFromCompletion(
         }
         byKey.set(key, result);
     }
-    const missingKeys = expectedKeys.filter((key) => !byKey.has(key));
+    const failedVerifier = run.nodes.some(
+        (node) =>
+            node.role === "verifier" &&
+            byKey.has(node.outputName) &&
+            !successfulResult(byKey.get(node.outputName)!),
+    );
+    const missingKeys = run.nodes
+        .filter(
+            (node) =>
+                !byKey.has(node.outputName) &&
+                !(node.role === "architect" && failedVerifier),
+        )
+        .map((node) => node.outputName);
     if (missingKeys.length > 0) {
         return malformedCompletion(
-            `Verification omitted workflow key(s): ${missingKeys.join(", ")}.`,
+            completion.error ??
+                `Verification omitted workflow key(s): ${missingKeys.join(", ")}.`,
         );
     }
 
@@ -325,12 +291,22 @@ function terminalFromCompletion(
     const architectNode = run.nodes.find((node) => node.role === "architect");
     for (const node of verifierNodes) {
         const result = byKey.get(node.outputName);
+        if (
+            result &&
+            successfulResult(result) &&
+            result.value?.kind === "structured"
+        )
+            outputs[node.outputName] = result.value.value;
+    }
+    for (const node of verifierNodes) {
+        const result = byKey.get(node.outputName);
         if (!result || !successfulResult(result)) {
             const reason = failureReason(completion, result);
             return {
                 kind: "failure",
                 failureKind:
-                    completion.timedOut === true || /timed?\s*out/i.test(reason)
+                    completion.status === "timed_out" ||
+                    result?.status === "timed_out"
                         ? "timeout"
                         : "failed",
                 reason,
@@ -339,7 +315,6 @@ function terminalFromCompletion(
                     : {}),
             };
         }
-        outputs[node.outputName] = result.structuredOutput;
     }
     if (architectNode) {
         const result = byKey.get(architectNode.outputName);
@@ -348,7 +323,8 @@ function terminalFromCompletion(
             return {
                 kind: "failure",
                 failureKind:
-                    completion.timedOut === true || /timed?\s*out/i.test(reason)
+                    completion.status === "timed_out" ||
+                    result?.status === "timed_out"
                         ? "timeout"
                         : "failed",
                 reason,
@@ -356,7 +332,10 @@ function terminalFromCompletion(
                 failedAdvisoryOutputName: architectNode.outputName,
             };
         }
-        outputs[architectNode.outputName] = result.structuredOutput;
+        outputs[architectNode.outputName] =
+            result.value?.kind === "structured"
+                ? result.value.value
+                : undefined;
     }
     return { kind: "complete", structuredOutputs: outputs };
 }
@@ -367,16 +346,15 @@ export function createVerificationCoordinator(
 ) {
     const childTimeoutMs =
         dependencies.childTimeoutMs ?? VERIFICATION_CHILD_TIMEOUT_MS;
-    const ownsRpc = dependencies.rpc === undefined;
-    const rpc =
-        dependencies.rpc ??
-        new SubagentRpcClient(events, {
+    const ownsIntegration = dependencies.integration === undefined;
+    const integration =
+        dependencies.integration ??
+        new SubagentIntegration(events, {
             sourceExtension: "brainstorm-forcer",
-            ...dependencies.rpcOptions,
+            ...dependencies.integrationOptions,
         });
     const runs = new Map<string, CoordinatorRun>();
     const terminalRunIds: string[] = [];
-    const earlyCompletions = new Map<string, SubagentAsyncCompletion>();
     const completionHandlers = new Set<
         (completion: VerificationCoordinatorCompletion) => void
     >();
@@ -390,28 +368,35 @@ export function createVerificationCoordinator(
         }
     }
 
-    function processCompletion(completion: SubagentAsyncCompletion): boolean {
-        const run = runs.get(completion.id);
+    function processCompletion(completion: RunCompletion): boolean {
+        const run = runs.get(completion.runId);
         if (!run || run.state !== "running") return false;
         const terminal = terminalFromCompletion(run, completion);
         run.terminal = terminal;
         run.state = terminal.kind === "complete" ? "completed" : "failed";
-        earlyCompletions.delete(completion.id);
-        retainTerminalRun(completion.id);
+        run.unsubscribe?.();
+        retainTerminalRun(completion.runId);
         for (const handler of completionHandlers) {
-            handler({ runId: completion.id, terminal });
+            handler({ runId: completion.runId, terminal });
         }
         return true;
     }
 
-    const unsubscribeCompletion = rpc.onAsyncComplete((completion) => {
-        if (processCompletion(completion)) return;
-        if (earlyCompletions.size >= EARLY_COMPLETION_LIMIT) {
-            const oldest = earlyCompletions.keys().next().value;
-            if (typeof oldest === "string") earlyCompletions.delete(oldest);
-        }
-        earlyCompletions.set(completion.id, completion);
-    });
+    async function monitor(runId: string, run: CoordinatorRun): Promise<void> {
+        run.ref ??= await integration.reference(runId);
+        if (disposed || runs.get(runId) !== run) return;
+        run.unsubscribe = integration.subscribe((event) => {
+            if (event.kind === "terminal") processCompletion(event.completion);
+            else
+                processCompletion({
+                    runId,
+                    status: "failed",
+                    steps: [],
+                    error: event.error.message,
+                });
+        }, run.ref);
+        if (run.state !== "running") run.unsubscribe();
+    }
 
     return {
         async start(
@@ -425,31 +410,26 @@ export function createVerificationCoordinator(
                 throw new Error(
                     "Verification requires an absolute persisted session file.",
                 );
-            const response = await rpc.spawn({
-                workflowScript: buildVerificationWorkflowScript(
-                    input.nodes,
-                    childTimeoutMs,
-                ),
+            const ref = await integration.start({
+                ...buildVerificationWorkflow(input.nodes, childTimeoutMs),
                 cwd: input.cwd,
                 context: "fresh",
                 artifacts: true,
-                mission: false,
             });
-            const runId = asyncRunId(response);
-            if (!runId) {
-                throw new Error(
-                    "Native Brainstorm verification launch did not return an async run id.",
-                );
-            }
-            runs.set(runId, { nodes: input.nodes, state: "running" });
-            const early = earlyCompletions.get(runId);
-            if (early) processCompletion(early);
+            const { runId } = ref;
+            const run: CoordinatorRun = {
+                nodes: input.nodes,
+                state: "running",
+                ref,
+            };
+            runs.set(runId, run);
+            await monitor(runId, run);
             return { runId };
         },
-        attach(
+        async attach(
             runId: string,
             nodes: readonly AttachedVerificationNode[],
-        ): void {
+        ): Promise<void> {
             if (disposed)
                 throw new Error("Verification coordinator is disposed.");
             if (!runId.trim() || nodes.length === 0)
@@ -457,19 +437,31 @@ export function createVerificationCoordinator(
                     "Restored verification requires a run id and expected nodes.",
                 );
             if (runs.has(runId)) return;
-            runs.set(runId, { nodes, state: "running" });
-            const early = earlyCompletions.get(runId);
-            if (early) processCompletion(early);
+            const run: CoordinatorRun = { nodes, state: "running" };
+            runs.set(runId, run);
+            try {
+                await monitor(runId, run);
+                if (run.state === "running")
+                    await integration.inspect(run.ref!);
+            } catch (error) {
+                run.unsubscribe?.();
+                if (runs.get(runId) === run) runs.delete(runId);
+                throw error;
+            }
         },
         async stop(runId: string): Promise<boolean> {
             const run = runs.get(runId);
             if (!run || run.state !== "running") return false;
-            const result = await rpc.stop({ id: runId });
-            if (result.isError === true) return false;
+            if (!run.ref) return false;
+            try {
+                await integration.control(run.ref, { kind: "stop" });
+            } catch {
+                return false;
+            }
             if (runs.get(runId) !== run || run.state !== "running")
                 return false;
             run.state = "stopped";
-            earlyCompletions.delete(runId);
+            run.unsubscribe?.();
             retainTerminalRun(runId);
             return true;
         },
@@ -492,12 +484,11 @@ export function createVerificationCoordinator(
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            unsubscribeCompletion();
+            for (const run of runs.values()) run.unsubscribe?.();
             runs.clear();
             terminalRunIds.length = 0;
-            earlyCompletions.clear();
             completionHandlers.clear();
-            if (ownsRpc) rpc.dispose();
+            if (ownsIntegration) integration.dispose();
         },
     };
 }

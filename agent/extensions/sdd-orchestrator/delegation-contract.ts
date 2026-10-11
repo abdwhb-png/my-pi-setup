@@ -1,16 +1,16 @@
 import type {
-    SubagentDelegationRequest,
-    SubagentDelegationResponse,
-    SubagentDelegationStarted,
-    SubagentDelegationUpdate,
-    SubagentDelegationUsage,
-    SubagentDelegationValue,
-} from "pi-subagents/delegation";
+    DelegationRequest,
+    DelegationResponse,
+    DelegationStarted,
+    DelegationUpdate,
+    DelegationUsage,
+    DelegationValue,
+} from "../_shared/subagents/index.ts";
 
-export type SddDelegationRequest = SubagentDelegationRequest;
-export type SddDelegationStarted = SubagentDelegationStarted;
-export type SddDelegationUpdate = SubagentDelegationUpdate;
-export type SddDelegationStatus = SubagentDelegationResponse["status"];
+export type SddDelegationRequest = DelegationRequest;
+export type SddDelegationStarted = DelegationStarted;
+export type SddDelegationUpdate = DelegationUpdate;
+export type SddDelegationStatus = DelegationResponse["status"];
 
 /**
  * Durable SDD-owned terminal boundary.
@@ -32,8 +32,8 @@ export interface SddDelegationResponse {
     thinking?: string;
     exitCode?: number;
     launchContractDigest?: string;
-    result?: SubagentDelegationValue;
-    usage?: SubagentDelegationUsage;
+    result?: DelegationValue;
+    usage?: DelegationUsage;
     output?: string;
     outputPath?: string;
     sessionFile?: string;

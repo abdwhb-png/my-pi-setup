@@ -14,6 +14,7 @@ import {
     toPortableHomePath,
 } from "../_shared/home-path.ts";
 import { resolveMigratedPlanPath } from "../_shared/migrated-plan-path.ts";
+import type { DelegationClient } from "../_shared/subagents/index.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import type { SddActivityStore } from "./activity-store.ts";
 import {
@@ -28,7 +29,6 @@ import {
     type AssessmentProgressUpdate,
 } from "./assessment-cache.ts";
 import { loadSddConfig, type SddConfig } from "./config.ts";
-import type { DelegationClient } from "./delegation-client.ts";
 import { delegationOutput } from "./delegation-contract.ts";
 import {
     applyApproval,

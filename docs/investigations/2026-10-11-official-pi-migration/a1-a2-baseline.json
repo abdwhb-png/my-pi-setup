@@ -1,0 +1,4109 @@
+{
+  "samples": 20,
+  "warmups": 5,
+  "results": [
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 0,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722655809,
+      "preparationMs": 151,
+      "firstProviderCallMs": 108,
+      "completionMs": 175,
+      "sampledMaxRssBytes": 378580992,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 0,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656003,
+      "preparationMs": 130,
+      "firstProviderCallMs": 132,
+      "completionMs": 182,
+      "sampledMaxRssBytes": 398807040,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 1,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656194,
+      "preparationMs": 125,
+      "firstProviderCallMs": 92,
+      "completionMs": 134,
+      "sampledMaxRssBytes": 377585664,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 1,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656345,
+      "preparationMs": 94,
+      "firstProviderCallMs": 67,
+      "completionMs": 95,
+      "sampledMaxRssBytes": 399196160,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 2,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656454,
+      "preparationMs": 101,
+      "firstProviderCallMs": 56,
+      "completionMs": 102,
+      "sampledMaxRssBytes": 381186048,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 2,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656563,
+      "preparationMs": 135,
+      "firstProviderCallMs": 65,
+      "completionMs": 136,
+      "sampledMaxRssBytes": 405159936,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 3,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656721,
+      "preparationMs": 127,
+      "firstProviderCallMs": 100,
+      "completionMs": 128,
+      "sampledMaxRssBytes": 384561152,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 3,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656857,
+      "preparationMs": 99,
+      "firstProviderCallMs": 59,
+      "completionMs": 100,
+      "sampledMaxRssBytes": 404602880,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 4,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722656969,
+      "preparationMs": 101,
+      "firstProviderCallMs": 81,
+      "completionMs": 114,
+      "sampledMaxRssBytes": 386936832,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 4,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657099,
+      "preparationMs": 132,
+      "firstProviderCallMs": 67,
+      "completionMs": 133,
+      "sampledMaxRssBytes": 406310912,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 5,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657250,
+      "preparationMs": 146,
+      "firstProviderCallMs": 94,
+      "completionMs": 147,
+      "sampledMaxRssBytes": 386732032,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 5,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657403,
+      "preparationMs": 167,
+      "firstProviderCallMs": 122,
+      "completionMs": 170,
+      "sampledMaxRssBytes": 407506944,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 6,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657598,
+      "preparationMs": 114,
+      "firstProviderCallMs": 65,
+      "completionMs": 114,
+      "sampledMaxRssBytes": 389824512,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 6,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657732,
+      "preparationMs": 126,
+      "firstProviderCallMs": 75,
+      "completionMs": 128,
+      "sampledMaxRssBytes": 410202112,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 7,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657866,
+      "preparationMs": 113,
+      "firstProviderCallMs": 70,
+      "completionMs": 116,
+      "sampledMaxRssBytes": 391049216,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 7,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722657995,
+      "preparationMs": 110,
+      "firstProviderCallMs": 63,
+      "completionMs": 110,
+      "sampledMaxRssBytes": 411414528,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 8,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658125,
+      "preparationMs": 87,
+      "firstProviderCallMs": 53,
+      "completionMs": 87,
+      "sampledMaxRssBytes": 392151040,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 8,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658233,
+      "preparationMs": 87,
+      "firstProviderCallMs": 48,
+      "completionMs": 89,
+      "sampledMaxRssBytes": 415490048,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 9,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658342,
+      "preparationMs": 122,
+      "firstProviderCallMs": 70,
+      "completionMs": 123,
+      "sampledMaxRssBytes": 395603968,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 9,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658473,
+      "preparationMs": 125,
+      "firstProviderCallMs": 74,
+      "completionMs": 127,
+      "sampledMaxRssBytes": 418430976,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 10,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658603,
+      "preparationMs": 105,
+      "firstProviderCallMs": 65,
+      "completionMs": 106,
+      "sampledMaxRssBytes": 396234752,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 10,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658714,
+      "preparationMs": 77,
+      "firstProviderCallMs": 46,
+      "completionMs": 78,
+      "sampledMaxRssBytes": 419115008,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 11,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658804,
+      "preparationMs": 96,
+      "firstProviderCallMs": 63,
+      "completionMs": 104,
+      "sampledMaxRssBytes": 397164544,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 11,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722658913,
+      "preparationMs": 82,
+      "firstProviderCallMs": 46,
+      "completionMs": 83,
+      "sampledMaxRssBytes": 419831808,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 12,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659000,
+      "preparationMs": 104,
+      "firstProviderCallMs": 62,
+      "completionMs": 105,
+      "sampledMaxRssBytes": 399781888,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 12,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659111,
+      "preparationMs": 105,
+      "firstProviderCallMs": 67,
+      "completionMs": 105,
+      "sampledMaxRssBytes": 419713024,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 13,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659224,
+      "preparationMs": 90,
+      "firstProviderCallMs": 57,
+      "completionMs": 91,
+      "sampledMaxRssBytes": 399937536,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 13,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659333,
+      "preparationMs": 72,
+      "firstProviderCallMs": 40,
+      "completionMs": 73,
+      "sampledMaxRssBytes": 419782656,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 14,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659423,
+      "preparationMs": 72,
+      "firstProviderCallMs": 44,
+      "completionMs": 73,
+      "sampledMaxRssBytes": 400404480,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 14,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659512,
+      "preparationMs": 87,
+      "firstProviderCallMs": 44,
+      "completionMs": 88,
+      "sampledMaxRssBytes": 421294080,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 15,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659622,
+      "preparationMs": 95,
+      "firstProviderCallMs": 59,
+      "completionMs": 96,
+      "sampledMaxRssBytes": 400936960,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 15,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659729,
+      "preparationMs": 110,
+      "firstProviderCallMs": 58,
+      "completionMs": 111,
+      "sampledMaxRssBytes": 421998592,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 16,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659862,
+      "preparationMs": 79,
+      "firstProviderCallMs": 54,
+      "completionMs": 82,
+      "sampledMaxRssBytes": 401883136,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 16,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722659950,
+      "preparationMs": 85,
+      "firstProviderCallMs": 45,
+      "completionMs": 86,
+      "sampledMaxRssBytes": 424951808,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 17,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660044,
+      "preparationMs": 80,
+      "firstProviderCallMs": 51,
+      "completionMs": 81,
+      "sampledMaxRssBytes": 403812352,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 17,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660139,
+      "preparationMs": 84,
+      "firstProviderCallMs": 45,
+      "completionMs": 85,
+      "sampledMaxRssBytes": 425132032,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 18,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660248,
+      "preparationMs": 86,
+      "firstProviderCallMs": 48,
+      "completionMs": 87,
+      "sampledMaxRssBytes": 404942848,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 18,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660359,
+      "preparationMs": 118,
+      "firstProviderCallMs": 65,
+      "completionMs": 119,
+      "sampledMaxRssBytes": 424976384,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "foreground",
+      "index": 19,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660492,
+      "preparationMs": 85,
+      "firstProviderCallMs": 53,
+      "completionMs": 86,
+      "sampledMaxRssBytes": 404713472,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "foreground",
+      "index": 19,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722660582,
+      "preparationMs": 76,
+      "firstProviderCallMs": 47,
+      "completionMs": 77,
+      "sampledMaxRssBytes": 429400064,
+      "childProcesses": 0,
+      "runtimes": [
+        "bun"
+      ],
+      "mcpCalls": 0,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 0,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722700518,
+      "preparationMs": 48,
+      "firstProviderCallMs": 3408,
+      "completionMs": 4763,
+      "sampledMaxRssBytes": 266457088,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 0,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722705308,
+      "preparationMs": 50,
+      "firstProviderCallMs": 3471,
+      "completionMs": 5119,
+      "sampledMaxRssBytes": 266149888,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 1,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722710445,
+      "preparationMs": 79,
+      "firstProviderCallMs": 3511,
+      "completionMs": 4377,
+      "sampledMaxRssBytes": 253624320,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 1,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722714826,
+      "preparationMs": 55,
+      "firstProviderCallMs": 2192,
+      "completionMs": 3561,
+      "sampledMaxRssBytes": 266047488,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 2,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722718416,
+      "preparationMs": 113,
+      "firstProviderCallMs": 5302,
+      "completionMs": 7808,
+      "sampledMaxRssBytes": 251281408,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 2,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722726265,
+      "preparationMs": 130,
+      "firstProviderCallMs": 10380,
+      "completionMs": 13232,
+      "sampledMaxRssBytes": 250900480,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 3,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722739500,
+      "preparationMs": 83,
+      "firstProviderCallMs": 8473,
+      "completionMs": 12073,
+      "sampledMaxRssBytes": 251781120,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 3,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722751592,
+      "preparationMs": 164,
+      "firstProviderCallMs": 4799,
+      "completionMs": 5912,
+      "sampledMaxRssBytes": 265248768,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 4,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722757523,
+      "preparationMs": 29,
+      "firstProviderCallMs": 2725,
+      "completionMs": 3854,
+      "sampledMaxRssBytes": 255037440,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 4,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722761390,
+      "preparationMs": 314,
+      "firstProviderCallMs": 3526,
+      "completionMs": 4839,
+      "sampledMaxRssBytes": 265830400,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 5,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722766260,
+      "preparationMs": 65,
+      "firstProviderCallMs": 4387,
+      "completionMs": 6854,
+      "sampledMaxRssBytes": 252309504,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 5,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722773134,
+      "preparationMs": 69,
+      "firstProviderCallMs": 6505,
+      "completionMs": 8732,
+      "sampledMaxRssBytes": 251969536,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 6,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722781873,
+      "preparationMs": 70,
+      "firstProviderCallMs": 4356,
+      "completionMs": 5834,
+      "sampledMaxRssBytes": 256868352,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 6,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722787729,
+      "preparationMs": 63,
+      "firstProviderCallMs": 2962,
+      "completionMs": 3857,
+      "sampledMaxRssBytes": 255664128,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 7,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722791610,
+      "preparationMs": 37,
+      "firstProviderCallMs": 3658,
+      "completionMs": 4685,
+      "sampledMaxRssBytes": 255827968,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 7,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722796301,
+      "preparationMs": 27,
+      "firstProviderCallMs": 2912,
+      "completionMs": 3846,
+      "sampledMaxRssBytes": 253476864,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 8,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722800162,
+      "preparationMs": 29,
+      "firstProviderCallMs": 2398,
+      "completionMs": 3328,
+      "sampledMaxRssBytes": 254435328,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 8,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722803504,
+      "preparationMs": 43,
+      "firstProviderCallMs": 2644,
+      "completionMs": 3549,
+      "sampledMaxRssBytes": 264949760,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 9,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722807079,
+      "preparationMs": 40,
+      "firstProviderCallMs": 2540,
+      "completionMs": 3470,
+      "sampledMaxRssBytes": 256581632,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 9,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722810557,
+      "preparationMs": 29,
+      "firstProviderCallMs": 2174,
+      "completionMs": 3484,
+      "sampledMaxRssBytes": 252018688,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 10,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722814052,
+      "preparationMs": 61,
+      "firstProviderCallMs": 3549,
+      "completionMs": 4736,
+      "sampledMaxRssBytes": 252665856,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 10,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722818814,
+      "preparationMs": 48,
+      "firstProviderCallMs": 2565,
+      "completionMs": 3620,
+      "sampledMaxRssBytes": 249839616,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 11,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722822458,
+      "preparationMs": 58,
+      "firstProviderCallMs": 2798,
+      "completionMs": 3598,
+      "sampledMaxRssBytes": 259211264,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 11,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722826070,
+      "preparationMs": 22,
+      "firstProviderCallMs": 2115,
+      "completionMs": 3146,
+      "sampledMaxRssBytes": 249892864,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 12,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722829229,
+      "preparationMs": 27,
+      "firstProviderCallMs": 2100,
+      "completionMs": 2902,
+      "sampledMaxRssBytes": 253042688,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 12,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722832145,
+      "preparationMs": 22,
+      "firstProviderCallMs": 1690,
+      "completionMs": 2404,
+      "sampledMaxRssBytes": 254844928,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 13,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722834571,
+      "preparationMs": 30,
+      "firstProviderCallMs": 1726,
+      "completionMs": 2435,
+      "sampledMaxRssBytes": 254767104,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 13,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722837017,
+      "preparationMs": 18,
+      "firstProviderCallMs": 1675,
+      "completionMs": 2371,
+      "sampledMaxRssBytes": 255545344,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 14,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722839393,
+      "preparationMs": 29,
+      "firstProviderCallMs": 1657,
+      "completionMs": 2303,
+      "sampledMaxRssBytes": 268288000,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 14,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722841719,
+      "preparationMs": 14,
+      "firstProviderCallMs": 1493,
+      "completionMs": 2127,
+      "sampledMaxRssBytes": 254849024,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 15,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722843856,
+      "preparationMs": 24,
+      "firstProviderCallMs": 1559,
+      "completionMs": 2210,
+      "sampledMaxRssBytes": 255496192,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 15,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722846085,
+      "preparationMs": 17,
+      "firstProviderCallMs": 1495,
+      "completionMs": 2155,
+      "sampledMaxRssBytes": 251682816,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 16,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722848258,
+      "preparationMs": 22,
+      "firstProviderCallMs": 1521,
+      "completionMs": 2212,
+      "sampledMaxRssBytes": 253485056,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 16,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722850492,
+      "preparationMs": 14,
+      "firstProviderCallMs": 1841,
+      "completionMs": 2651,
+      "sampledMaxRssBytes": 246865920,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 17,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722853154,
+      "preparationMs": 26,
+      "firstProviderCallMs": 1739,
+      "completionMs": 2683,
+      "sampledMaxRssBytes": 265564160,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 17,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722855851,
+      "preparationMs": 18,
+      "firstProviderCallMs": 2082,
+      "completionMs": 3222,
+      "sampledMaxRssBytes": 251666432,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 18,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722859089,
+      "preparationMs": 32,
+      "firstProviderCallMs": 2677,
+      "completionMs": 3772,
+      "sampledMaxRssBytes": 250294272,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 18,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722862873,
+      "preparationMs": 24,
+      "firstProviderCallMs": 2338,
+      "completionMs": 3381,
+      "sampledMaxRssBytes": 254070784,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "async",
+      "index": 19,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722866271,
+      "preparationMs": 31,
+      "firstProviderCallMs": 2641,
+      "completionMs": 3778,
+      "sampledMaxRssBytes": 263565312,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "async",
+      "index": 19,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722870071,
+      "preparationMs": 36,
+      "firstProviderCallMs": 2834,
+      "completionMs": 3941,
+      "sampledMaxRssBytes": 265764864,
+      "childProcesses": 1,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 0,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722944193,
+      "preparationMs": 18,
+      "firstProviderCallMs": 2973,
+      "completionMs": 4994,
+      "sampledMaxRssBytes": 255234048,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 0,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722949219,
+      "preparationMs": 35,
+      "firstProviderCallMs": 2831,
+      "completionMs": 4490,
+      "sampledMaxRssBytes": 257171456,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 1,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722953719,
+      "preparationMs": 15,
+      "firstProviderCallMs": 2506,
+      "completionMs": 3889,
+      "sampledMaxRssBytes": 253403136,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 1,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722957612,
+      "preparationMs": 30,
+      "firstProviderCallMs": 2235,
+      "completionMs": 3387,
+      "sampledMaxRssBytes": 268312576,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 2,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722961023,
+      "preparationMs": 15,
+      "firstProviderCallMs": 2328,
+      "completionMs": 3834,
+      "sampledMaxRssBytes": 261840896,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 2,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722964874,
+      "preparationMs": 19,
+      "firstProviderCallMs": 2290,
+      "completionMs": 3807,
+      "sampledMaxRssBytes": 256106496,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 3,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722968688,
+      "preparationMs": 14,
+      "firstProviderCallMs": 2321,
+      "completionMs": 3931,
+      "sampledMaxRssBytes": 259952640,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 3,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722972633,
+      "preparationMs": 24,
+      "firstProviderCallMs": 2820,
+      "completionMs": 5113,
+      "sampledMaxRssBytes": 264187904,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 4,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722977778,
+      "preparationMs": 49,
+      "firstProviderCallMs": 4463,
+      "completionMs": 6704,
+      "sampledMaxRssBytes": 256483328,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 4,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722984509,
+      "preparationMs": 74,
+      "firstProviderCallMs": 5420,
+      "completionMs": 8870,
+      "sampledMaxRssBytes": 258949120,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 5,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791722993415,
+      "preparationMs": 59,
+      "firstProviderCallMs": 3917,
+      "completionMs": 6652,
+      "sampledMaxRssBytes": 254775296,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 5,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723000090,
+      "preparationMs": 66,
+      "firstProviderCallMs": 5742,
+      "completionMs": 8941,
+      "sampledMaxRssBytes": 255672320,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 6,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723009055,
+      "preparationMs": 46,
+      "firstProviderCallMs": 4762,
+      "completionMs": 8227,
+      "sampledMaxRssBytes": 259969024,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 6,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723017327,
+      "preparationMs": 110,
+      "firstProviderCallMs": 5148,
+      "completionMs": 8530,
+      "sampledMaxRssBytes": 261230592,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 7,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723025908,
+      "preparationMs": 50,
+      "firstProviderCallMs": 5285,
+      "completionMs": 7862,
+      "sampledMaxRssBytes": 257155072,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 7,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723033796,
+      "preparationMs": 31,
+      "firstProviderCallMs": 7181,
+      "completionMs": 13213,
+      "sampledMaxRssBytes": 254017536,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 8,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723047044,
+      "preparationMs": 66,
+      "firstProviderCallMs": 6246,
+      "completionMs": 9823,
+      "sampledMaxRssBytes": 259629056,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 8,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723056886,
+      "preparationMs": 31,
+      "firstProviderCallMs": 4152,
+      "completionMs": 6750,
+      "sampledMaxRssBytes": 257253376,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 9,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723063663,
+      "preparationMs": 86,
+      "firstProviderCallMs": 4416,
+      "completionMs": 7234,
+      "sampledMaxRssBytes": 262656000,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 9,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723070917,
+      "preparationMs": 45,
+      "firstProviderCallMs": 5057,
+      "completionMs": 8581,
+      "sampledMaxRssBytes": 255791104,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 10,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723079529,
+      "preparationMs": 52,
+      "firstProviderCallMs": 4017,
+      "completionMs": 6103,
+      "sampledMaxRssBytes": 256032768,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 10,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723085662,
+      "preparationMs": 35,
+      "firstProviderCallMs": 3589,
+      "completionMs": 5004,
+      "sampledMaxRssBytes": 265134080,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 11,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723090697,
+      "preparationMs": 19,
+      "firstProviderCallMs": 4196,
+      "completionMs": 5974,
+      "sampledMaxRssBytes": 281219072,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 11,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723096691,
+      "preparationMs": 40,
+      "firstProviderCallMs": 3955,
+      "completionMs": 6824,
+      "sampledMaxRssBytes": 254369792,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 12,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723103536,
+      "preparationMs": 43,
+      "firstProviderCallMs": 5117,
+      "completionMs": 7680,
+      "sampledMaxRssBytes": 258494464,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 12,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723111272,
+      "preparationMs": 57,
+      "firstProviderCallMs": 4104,
+      "completionMs": 6672,
+      "sampledMaxRssBytes": 261742592,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 13,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723117978,
+      "preparationMs": 37,
+      "firstProviderCallMs": 3799,
+      "completionMs": 5985,
+      "sampledMaxRssBytes": 253878272,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 13,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723124000,
+      "preparationMs": 40,
+      "firstProviderCallMs": 3539,
+      "completionMs": 5925,
+      "sampledMaxRssBytes": 251715584,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 14,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723129955,
+      "preparationMs": 36,
+      "firstProviderCallMs": 4422,
+      "completionMs": 6587,
+      "sampledMaxRssBytes": 256790528,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 14,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723136561,
+      "preparationMs": 33,
+      "firstProviderCallMs": 3852,
+      "completionMs": 6094,
+      "sampledMaxRssBytes": 258711552,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 15,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723142697,
+      "preparationMs": 36,
+      "firstProviderCallMs": 3586,
+      "completionMs": 5529,
+      "sampledMaxRssBytes": 255438848,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 15,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723148265,
+      "preparationMs": 31,
+      "firstProviderCallMs": 4077,
+      "completionMs": 6176,
+      "sampledMaxRssBytes": 255541248,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 16,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723154480,
+      "preparationMs": 26,
+      "firstProviderCallMs": 3046,
+      "completionMs": 4485,
+      "sampledMaxRssBytes": 257392640,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 16,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723158985,
+      "preparationMs": 43,
+      "firstProviderCallMs": 4067,
+      "completionMs": 5597,
+      "sampledMaxRssBytes": 264376320,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 17,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723164611,
+      "preparationMs": 16,
+      "firstProviderCallMs": 3442,
+      "completionMs": 5545,
+      "sampledMaxRssBytes": 260657152,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 17,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723170187,
+      "preparationMs": 29,
+      "firstProviderCallMs": 2858,
+      "completionMs": 4442,
+      "sampledMaxRssBytes": 258367488,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 18,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723174652,
+      "preparationMs": 15,
+      "firstProviderCallMs": 2811,
+      "completionMs": 4438,
+      "sampledMaxRssBytes": 258220032,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 18,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723179124,
+      "preparationMs": 34,
+      "firstProviderCallMs": 4092,
+      "completionMs": 6037,
+      "sampledMaxRssBytes": 251273216,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "parallel",
+      "index": 19,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723185195,
+      "preparationMs": 22,
+      "firstProviderCallMs": 6476,
+      "completionMs": 9884,
+      "sampledMaxRssBytes": 266121216,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "parallel",
+      "index": 19,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723195119,
+      "preparationMs": 51,
+      "firstProviderCallMs": 4051,
+      "completionMs": 6205,
+      "sampledMaxRssBytes": 257236992,
+      "childProcesses": 3,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 3,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 0,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723387514,
+      "preparationMs": 59,
+      "firstProviderCallMs": 6581,
+      "completionMs": 16660,
+      "sampledMaxRssBytes": 254042112,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 0,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723404209,
+      "preparationMs": 95,
+      "firstProviderCallMs": 4381,
+      "completionMs": 11914,
+      "sampledMaxRssBytes": 254181376,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 1,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723416152,
+      "preparationMs": 59,
+      "firstProviderCallMs": 5134,
+      "completionMs": 16355,
+      "sampledMaxRssBytes": 257007616,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 1,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723432534,
+      "preparationMs": 115,
+      "firstProviderCallMs": 5182,
+      "completionMs": 11968,
+      "sampledMaxRssBytes": 266399744,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 2,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723444513,
+      "preparationMs": 48,
+      "firstProviderCallMs": 3598,
+      "completionMs": 11712,
+      "sampledMaxRssBytes": 255315968,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 2,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723456234,
+      "preparationMs": 63,
+      "firstProviderCallMs": 6224,
+      "completionMs": 14454,
+      "sampledMaxRssBytes": 288632832,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 3,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723470708,
+      "preparationMs": 48,
+      "firstProviderCallMs": 6265,
+      "completionMs": 16052,
+      "sampledMaxRssBytes": 256278528,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 3,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723486801,
+      "preparationMs": 58,
+      "firstProviderCallMs": 13692,
+      "completionMs": 30403,
+      "sampledMaxRssBytes": 258093056,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 4,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723517331,
+      "preparationMs": 191,
+      "firstProviderCallMs": 13915,
+      "completionMs": 34798,
+      "sampledMaxRssBytes": 267001856,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 4,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723552190,
+      "preparationMs": 361,
+      "firstProviderCallMs": 9390,
+      "completionMs": 26570,
+      "sampledMaxRssBytes": 251256832,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 5,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723578813,
+      "preparationMs": 202,
+      "firstProviderCallMs": 11262,
+      "completionMs": 24407,
+      "sampledMaxRssBytes": 253415424,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 5,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723603287,
+      "preparationMs": 72,
+      "firstProviderCallMs": 9522,
+      "completionMs": 24972,
+      "sampledMaxRssBytes": 255156224,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 6,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723628296,
+      "preparationMs": 78,
+      "firstProviderCallMs": 9297,
+      "completionMs": 29773,
+      "sampledMaxRssBytes": 263544832,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 6,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723658108,
+      "preparationMs": 46,
+      "firstProviderCallMs": 5577,
+      "completionMs": 16874,
+      "sampledMaxRssBytes": 255705088,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 7,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723675020,
+      "preparationMs": 37,
+      "firstProviderCallMs": 4429,
+      "completionMs": 10766,
+      "sampledMaxRssBytes": 280891392,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 7,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723685795,
+      "preparationMs": 22,
+      "firstProviderCallMs": 3194,
+      "completionMs": 9658,
+      "sampledMaxRssBytes": 255496192,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 8,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723695478,
+      "preparationMs": 44,
+      "firstProviderCallMs": 4616,
+      "completionMs": 11525,
+      "sampledMaxRssBytes": 263348224,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 8,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723707027,
+      "preparationMs": 20,
+      "firstProviderCallMs": 3629,
+      "completionMs": 10088,
+      "sampledMaxRssBytes": 268304384,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 9,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723717141,
+      "preparationMs": 38,
+      "firstProviderCallMs": 2722,
+      "completionMs": 9308,
+      "sampledMaxRssBytes": 290873344,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 9,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723726465,
+      "preparationMs": 21,
+      "firstProviderCallMs": 3104,
+      "completionMs": 8196,
+      "sampledMaxRssBytes": 260612096,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 10,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723734672,
+      "preparationMs": 22,
+      "firstProviderCallMs": 2753,
+      "completionMs": 7412,
+      "sampledMaxRssBytes": 266215424,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 10,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723742110,
+      "preparationMs": 20,
+      "firstProviderCallMs": 3081,
+      "completionMs": 9613,
+      "sampledMaxRssBytes": 254971904,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 11,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723751740,
+      "preparationMs": 40,
+      "firstProviderCallMs": 5450,
+      "completionMs": 11861,
+      "sampledMaxRssBytes": 300589056,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 11,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723763633,
+      "preparationMs": 28,
+      "firstProviderCallMs": 4180,
+      "completionMs": 9733,
+      "sampledMaxRssBytes": 261206016,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 12,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723773389,
+      "preparationMs": 64,
+      "firstProviderCallMs": 3297,
+      "completionMs": 9640,
+      "sampledMaxRssBytes": 299110400,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 12,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723783049,
+      "preparationMs": 26,
+      "firstProviderCallMs": 2771,
+      "completionMs": 14041,
+      "sampledMaxRssBytes": 260493312,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 13,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723797176,
+      "preparationMs": 231,
+      "firstProviderCallMs": 9726,
+      "completionMs": 18497,
+      "sampledMaxRssBytes": 256274432,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 13,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723815694,
+      "preparationMs": 58,
+      "firstProviderCallMs": 3618,
+      "completionMs": 11813,
+      "sampledMaxRssBytes": 264445952,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 14,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723827544,
+      "preparationMs": 33,
+      "firstProviderCallMs": 4685,
+      "completionMs": 18772,
+      "sampledMaxRssBytes": 254357504,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 14,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723846345,
+      "preparationMs": 86,
+      "firstProviderCallMs": 5049,
+      "completionMs": 15429,
+      "sampledMaxRssBytes": 256815104,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 15,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723861813,
+      "preparationMs": 81,
+      "firstProviderCallMs": 4426,
+      "completionMs": 13545,
+      "sampledMaxRssBytes": 287576064,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 15,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723875418,
+      "preparationMs": 183,
+      "firstProviderCallMs": 8138,
+      "completionMs": 15807,
+      "sampledMaxRssBytes": 271863808,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 16,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723891241,
+      "preparationMs": 23,
+      "firstProviderCallMs": 3003,
+      "completionMs": 7496,
+      "sampledMaxRssBytes": 255336448,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 16,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723898783,
+      "preparationMs": 23,
+      "firstProviderCallMs": 3661,
+      "completionMs": 8629,
+      "sampledMaxRssBytes": 267137024,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 17,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723907446,
+      "preparationMs": 25,
+      "firstProviderCallMs": 3014,
+      "completionMs": 7088,
+      "sampledMaxRssBytes": 256471040,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 17,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723914557,
+      "preparationMs": 15,
+      "firstProviderCallMs": 1914,
+      "completionMs": 5868,
+      "sampledMaxRssBytes": 267354112,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 18,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723920450,
+      "preparationMs": 17,
+      "firstProviderCallMs": 3636,
+      "completionMs": 8548,
+      "sampledMaxRssBytes": 285331456,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 18,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723929021,
+      "preparationMs": 21,
+      "firstProviderCallMs": 4009,
+      "completionMs": 10674,
+      "sampledMaxRssBytes": 256028672,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "dependent",
+      "index": 19,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723939725,
+      "preparationMs": 16,
+      "firstProviderCallMs": 2437,
+      "completionMs": 7007,
+      "sampledMaxRssBytes": 253493248,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "dependent",
+      "index": 19,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791723946755,
+      "preparationMs": 34,
+      "firstProviderCallMs": 2380,
+      "completionMs": 5982,
+      "sampledMaxRssBytes": 255295488,
+      "childProcesses": 4,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 4,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 0,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724347905,
+      "preparationMs": 26,
+      "firstProviderCallMs": 2058,
+      "completionMs": 5048,
+      "sampledMaxRssBytes": 254816256,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 0,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724352965,
+      "preparationMs": 40,
+      "firstProviderCallMs": 2210,
+      "completionMs": 5337,
+      "sampledMaxRssBytes": 260390912,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 1,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724358325,
+      "preparationMs": 25,
+      "firstProviderCallMs": 2242,
+      "completionMs": 5021,
+      "sampledMaxRssBytes": 255991808,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 1,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724363355,
+      "preparationMs": 18,
+      "firstProviderCallMs": 1741,
+      "completionMs": 4385,
+      "sampledMaxRssBytes": 261275648,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 2,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724367751,
+      "preparationMs": 21,
+      "firstProviderCallMs": 1680,
+      "completionMs": 4186,
+      "sampledMaxRssBytes": 253583360,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 2,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724371941,
+      "preparationMs": 19,
+      "firstProviderCallMs": 1863,
+      "completionMs": 4556,
+      "sampledMaxRssBytes": 246657024,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 3,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724376519,
+      "preparationMs": 34,
+      "firstProviderCallMs": 1864,
+      "completionMs": 4449,
+      "sampledMaxRssBytes": 254230528,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 3,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724380985,
+      "preparationMs": 29,
+      "firstProviderCallMs": 1738,
+      "completionMs": 4343,
+      "sampledMaxRssBytes": 249741312,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 4,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724385341,
+      "preparationMs": 23,
+      "firstProviderCallMs": 1790,
+      "completionMs": 4573,
+      "sampledMaxRssBytes": 254271488,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 4,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724389937,
+      "preparationMs": 17,
+      "firstProviderCallMs": 1843,
+      "completionMs": 4659,
+      "sampledMaxRssBytes": 266870784,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 5,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724394602,
+      "preparationMs": 18,
+      "firstProviderCallMs": 1828,
+      "completionMs": 4388,
+      "sampledMaxRssBytes": 253739008,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 5,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724399000,
+      "preparationMs": 20,
+      "firstProviderCallMs": 1737,
+      "completionMs": 4367,
+      "sampledMaxRssBytes": 255180800,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 6,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724403385,
+      "preparationMs": 24,
+      "firstProviderCallMs": 1805,
+      "completionMs": 4524,
+      "sampledMaxRssBytes": 265969664,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 6,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724407930,
+      "preparationMs": 36,
+      "firstProviderCallMs": 1841,
+      "completionMs": 4549,
+      "sampledMaxRssBytes": 253874176,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 7,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724412493,
+      "preparationMs": 18,
+      "firstProviderCallMs": 1793,
+      "completionMs": 4870,
+      "sampledMaxRssBytes": 253575168,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 7,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724417385,
+      "preparationMs": 29,
+      "firstProviderCallMs": 1968,
+      "completionMs": 5453,
+      "sampledMaxRssBytes": 254013440,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 8,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724422845,
+      "preparationMs": 31,
+      "firstProviderCallMs": 2382,
+      "completionMs": 6535,
+      "sampledMaxRssBytes": 254730240,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 8,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724429394,
+      "preparationMs": 30,
+      "firstProviderCallMs": 2439,
+      "completionMs": 5488,
+      "sampledMaxRssBytes": 254472192,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 9,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724434897,
+      "preparationMs": 29,
+      "firstProviderCallMs": 2110,
+      "completionMs": 5259,
+      "sampledMaxRssBytes": 253050880,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 9,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724440173,
+      "preparationMs": 32,
+      "firstProviderCallMs": 2147,
+      "completionMs": 5760,
+      "sampledMaxRssBytes": 254189568,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 10,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724445958,
+      "preparationMs": 40,
+      "firstProviderCallMs": 3603,
+      "completionMs": 7819,
+      "sampledMaxRssBytes": 253566976,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 10,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724453792,
+      "preparationMs": 33,
+      "firstProviderCallMs": 2431,
+      "completionMs": 6131,
+      "sampledMaxRssBytes": 254222336,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 11,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724459936,
+      "preparationMs": 26,
+      "firstProviderCallMs": 2288,
+      "completionMs": 6069,
+      "sampledMaxRssBytes": 265244672,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 11,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724466025,
+      "preparationMs": 34,
+      "firstProviderCallMs": 2681,
+      "completionMs": 6635,
+      "sampledMaxRssBytes": 261525504,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 12,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724472664,
+      "preparationMs": 30,
+      "firstProviderCallMs": 2460,
+      "completionMs": 6378,
+      "sampledMaxRssBytes": 255213568,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 12,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724479050,
+      "preparationMs": 69,
+      "firstProviderCallMs": 2451,
+      "completionMs": 5370,
+      "sampledMaxRssBytes": 258678784,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 13,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724484431,
+      "preparationMs": 26,
+      "firstProviderCallMs": 2083,
+      "completionMs": 6898,
+      "sampledMaxRssBytes": 254996480,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 13,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724491344,
+      "preparationMs": 61,
+      "firstProviderCallMs": 3225,
+      "completionMs": 7451,
+      "sampledMaxRssBytes": 267538432,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 14,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724498820,
+      "preparationMs": 62,
+      "firstProviderCallMs": 2397,
+      "completionMs": 5004,
+      "sampledMaxRssBytes": 251731968,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 14,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724503845,
+      "preparationMs": 16,
+      "firstProviderCallMs": 1522,
+      "completionMs": 4085,
+      "sampledMaxRssBytes": 256495616,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 15,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724507944,
+      "preparationMs": 21,
+      "firstProviderCallMs": 1766,
+      "completionMs": 4522,
+      "sampledMaxRssBytes": 252633088,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 15,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724512487,
+      "preparationMs": 36,
+      "firstProviderCallMs": 1694,
+      "completionMs": 4307,
+      "sampledMaxRssBytes": 251346944,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 16,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724516810,
+      "preparationMs": 22,
+      "firstProviderCallMs": 1642,
+      "completionMs": 4125,
+      "sampledMaxRssBytes": 248512512,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 16,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724520941,
+      "preparationMs": 16,
+      "firstProviderCallMs": 1592,
+      "completionMs": 4066,
+      "sampledMaxRssBytes": 253939712,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 17,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724525024,
+      "preparationMs": 18,
+      "firstProviderCallMs": 1720,
+      "completionMs": 4470,
+      "sampledMaxRssBytes": 247402496,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 17,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724529511,
+      "preparationMs": 25,
+      "firstProviderCallMs": 2155,
+      "completionMs": 5223,
+      "sampledMaxRssBytes": 255553536,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 18,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724534755,
+      "preparationMs": 25,
+      "firstProviderCallMs": 2098,
+      "completionMs": 5774,
+      "sampledMaxRssBytes": 263069696,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 18,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724540535,
+      "preparationMs": 23,
+      "firstProviderCallMs": 2432,
+      "completionMs": 5568,
+      "sampledMaxRssBytes": 256618496,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "reference",
+      "scenario": "interrupt-resume",
+      "index": 19,
+      "packageRoot": "~/.pi/agent/npm/node_modules/pi-subagents",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724546115,
+      "preparationMs": 18,
+      "firstProviderCallMs": 2197,
+      "completionMs": 5311,
+      "sampledMaxRssBytes": 259702784,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    },
+    {
+      "arm": "candidate",
+      "scenario": "interrupt-resume",
+      "index": 19,
+      "packageRoot": "~/engineering/pi-integrations/pi-subagents/dist-pkg",
+      "packageVersion": "0.73.1",
+      "sdkRoot": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent",
+      "parentEntrypoint": "~/.pi/runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/install/node_modules/@earendil-works/pi-coding-agent/dist/bun/cli.js",
+      "requestAt": 1791724551444,
+      "preparationMs": 21,
+      "firstProviderCallMs": 2704,
+      "completionMs": 6397,
+      "sampledMaxRssBytes": 254164992,
+      "childProcesses": 2,
+      "runtimes": [
+        "node"
+      ],
+      "mcpCalls": 1,
+      "networkConnections": null
+    }
+  ],
+  "qualification": [
+    {
+      "path": "preflight",
+      "providerCalls": 0,
+      "models": [],
+      "thinking": [],
+      "tools": [],
+      "resumedFrom": null,
+      "preflightOk": true
+    },
+    {
+      "path": "direct-builtin",
+      "providerCalls": 2,
+      "models": [
+        "baseline-child/target"
+      ],
+      "thinking": [
+        "high"
+      ],
+      "tools": [
+        "contact_supervisor",
+        "read",
+        "structured_output"
+      ],
+      "resumedFrom": null,
+      "preflightOk": null
+    },
+    {
+      "path": "builtin-foreground",
+      "providerCalls": 2,
+      "models": [
+        "baseline-child/target"
+      ],
+      "thinking": [
+        "high"
+      ],
+      "tools": [
+        "contact_supervisor",
+        "read",
+        "structured_output"
+      ],
+      "resumedFrom": null,
+      "preflightOk": null
+    },
+    {
+      "path": "builtin-async",
+      "providerCalls": 2,
+      "models": [
+        "baseline-child/target"
+      ],
+      "thinking": [
+        "high"
+      ],
+      "tools": [
+        "contact_supervisor",
+        "read",
+        "structured_output"
+      ],
+      "resumedFrom": null,
+      "preflightOk": null
+    },
+    {
+      "path": "builtin-workflow",
+      "providerCalls": 2,
+      "models": [
+        "baseline-child/target"
+      ],
+      "thinking": [
+        "high"
+      ],
+      "tools": [
+        "contact_supervisor",
+        "read",
+        "structured_output"
+      ],
+      "resumedFrom": null,
+      "preflightOk": null
+    },
+    {
+      "path": "builtin-hold",
+      "providerCalls": 3,
+      "models": [
+        "baseline-child/target"
+      ],
+      "thinking": [
+        "high"
+      ],
+      "tools": [
+        "contact_supervisor",
+        "read",
+        "structured_output"
+      ],
+      "resumedFrom": "425204d7-f0d6-4a17-b6b7-4a351f0fd2f6",
+      "preflightOk": null
+    }
+  ],
+  "limitations": [
+    "Measurements collected during local validation, not a promotion gate",
+    "RSS sampled at provider calls, not continuously",
+    "Network connection count unavailable",
+    "Interrupt scenario repeated after waiting for actual MCP completion"
+  ],
+  "capturedDate": "2026-10-11"
+}

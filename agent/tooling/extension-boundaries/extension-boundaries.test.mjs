@@ -23,6 +23,31 @@ const classify = (importer, specifier, centralTestOwners = new Set()) =>
     });
 
 describe('Pi extension boundary classifier', () => {
+    test('keeps native subagent imports inside the common integration owner', () => {
+        expect(
+            classify('brainstorm-forcer/index.ts', 'pi-subagents/preflight')
+                .allowed,
+        ).toBe(false);
+        expect(
+            classify(
+                'sdd-orchestrator/delegation-contract.ts',
+                'pi-subagents/delegation',
+            ).allowed,
+        ).toBe(false);
+        expect(
+            classify(
+                '_shared/subagents/native-api.ts',
+                'pi-subagents/preflight',
+            ).allowed,
+        ).toBe(true);
+        expect(
+            classify(
+                '__tests__/integration/fixtures/probe.ts',
+                'pi-subagents/preflight',
+            ).allowed,
+        ).toBe(true);
+    });
+
     test('allows same-owner, shared, and package imports', () => {
         expect(classify('tool-groups/index.ts', './config.ts').allowed).toBe(
             true,
@@ -84,6 +109,8 @@ describe('Pi extension boundary classifier', () => {
             'import type { Seven } from "../seven";',
             'export { type Eight } from "../eight";',
             'const worker = new URL("../nine", import.meta.url);',
+            'const native = import.meta.resolve("pi-subagents");',
+            "const sibling = import . meta . resolve ( '../ten' );",
         ].join('\n');
         expect(
             collectLiteralModuleSpecifiers(source).map(
@@ -99,6 +126,8 @@ describe('Pi extension boundary classifier', () => {
             '../seven',
             '../eight',
             '../nine',
+            'pi-subagents',
+            '../ten',
         ]);
     });
 });

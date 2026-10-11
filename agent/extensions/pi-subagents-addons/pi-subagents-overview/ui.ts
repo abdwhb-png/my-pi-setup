@@ -8,6 +8,10 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
+import type {
+    LiveRun,
+    LiveRunSnapshot,
+} from "../../_shared/subagents/fleet-store.ts";
 import { cycleFocus } from "../../_shared/ui/focus-navigation.ts";
 import { BoxRenderer } from "../../_shared/ui/framed-box";
 import {
@@ -19,7 +23,6 @@ import {
     slicePanelViewport,
     wrapPanelLines,
 } from "../../_shared/ui/framed-panels.ts";
-import type { LiveRun, LiveRunSnapshot } from "./fleet-store.ts";
 import { formatDuration, formatTokens } from "./live-ui.ts";
 
 export const icon = "👥";

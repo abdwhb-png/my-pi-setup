@@ -61,6 +61,17 @@ export function classifyExtensionImport({
     extensionsRoot,
     centralTestOwners = new Set(),
 }) {
+    if (specifier === 'pi-subagents' || specifier.startsWith('pi-subagents/')) {
+        const source = relativeToExtensions(importer, extensionsRoot);
+        const compatibilityTest =
+            /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(source) ||
+            source.startsWith('__tests__/');
+        if (!source.startsWith('_shared/subagents/') && !compatibilityTest)
+            return {
+                allowed: false,
+                reason: 'Native subagent APIs belong to _shared/subagents. Consumers use the owned contract.',
+            };
+    }
     if (!specifier.startsWith('.')) return { allowed: true };
 
     const sourceOwner = extensionOwner(importer, extensionsRoot);
@@ -144,13 +155,23 @@ export function collectLiteralModuleSpecifiers(source) {
     for (const match of parseableSource.matchAll(moduleUrlPattern)) {
         moduleUrls.push({ specifier: match[2], kind: 'module-url' });
     }
+    const moduleResolutions = [];
+    const moduleResolvePattern =
+        /\bimport\s*\.\s*meta\s*\.\s*resolve\s*\(\s*(["'])([^"']+)\1\s*\)/g;
+    for (const match of parseableSource.matchAll(moduleResolvePattern)) {
+        moduleResolutions.push({ specifier: match[2], kind: 'module-resolve' });
+    }
 
     const seen = new Set();
-    return [...imports, ...mockModules, ...erasedImports, ...moduleUrls].filter(
-        (entry) => {
-            if (seen.has(entry.specifier)) return false;
-            seen.add(entry.specifier);
-            return true;
-        },
-    );
+    return [
+        ...imports,
+        ...mockModules,
+        ...erasedImports,
+        ...moduleUrls,
+        ...moduleResolutions,
+    ].filter((entry) => {
+        if (seen.has(entry.specifier)) return false;
+        seen.add(entry.specifier);
+        return true;
+    });
 }

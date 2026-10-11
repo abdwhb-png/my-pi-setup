@@ -1,12 +1,15 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type {
+    LiveRun,
+    LiveRunSnapshot,
+} from "../../_shared/subagents/fleet-store.ts";
 import {
     allocateBoxPanelLayout,
     renderBoxFooter,
     renderBoxHeader,
     renderBoxPanelRow,
 } from "../../_shared/ui/framed-box.ts";
-import type { LiveRun, LiveRunSnapshot } from "./fleet-store.ts";
 
 const MAX_WIDGET_LINES = 5;
 const COMPLETION_LINGER_MS = 5_000;
