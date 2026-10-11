@@ -9,19 +9,26 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { resolveToolAliases } from '../../_shared/tool-groups/resolver';
-import { resolvePiSubagentsPackageRoot } from './package-path';
+import { fileURLToPath } from 'node:url';
 import { AgentDetailView, SubagentsOverviewView } from './ui';
 
 const realOs = { ...os };
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subagents-overview-'));
 afterAll(async () => {
     try {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         await mock.module('node:os', () => realOs);
     } finally {
         fs.rmSync(fixtureHome, { recursive: true, force: true });
     }
 });
 await mock.module('node:os', () => ({ ...realOs, homedir: () => fixtureHome }));
+const fixtureAgentDir = path.join(fixtureHome, '.pi', 'agent');
+fs.mkdirSync(fixtureAgentDir, { recursive: true });
+fs.writeFileSync(path.join(fixtureAgentDir, 'settings.json'), JSON.stringify({ packages: [path.dirname(fileURLToPath(import.meta.resolve('pi-subagents')))] }));
+process.env.PI_CODING_AGENT_DIR = fixtureAgentDir;
 const { default: registerSubagentsOverview } = await import('./index');
 const userAgentsDir = path.join(fixtureHome, '.pi', 'agent', 'agents');
 fs.mkdirSync(userAgentsDir, { recursive: true });
@@ -81,6 +88,7 @@ describe('pi-subagents-overview', () => {
 
             let output: string[] = [];
             await handlers.get('subagents-overview')?.('', {
+                cwd: fixtureHome, isProjectTrusted: () => false,
                 mode: 'tui',
                 hasUI: true,
                 ui: {
@@ -136,6 +144,7 @@ describe('pi-subagents-overview', () => {
             let overview = '';
             try {
                 await handler?.('', {
+                    cwd: fixtureHome, isProjectTrusted: () => false,
                     hasUI: false,
                 } as unknown as ExtensionCommandContext);
                 overview = String(log.mock.calls[0]?.[0] ?? '');
@@ -339,7 +348,7 @@ describe('pi-subagents-overview', () => {
             'delegate',
         ];
         const BUILTIN_AGENTS_DIR = path.join(
-            resolvePiSubagentsPackageRoot(),
+            path.dirname(fileURLToPath(import.meta.resolve('pi-subagents'))),
             'agents',
         );
 
@@ -382,7 +391,7 @@ describe('pi-subagents-overview', () => {
             registerSubagentsOverview(pi);
             const handler = handlers.get('subagents-overview');
             if (!handler) throw new Error('Overview command missing');
-            const ctx = { hasUI: false } as ExtensionCommandContext;
+            const ctx = { cwd: fixtureHome, isProjectTrusted: () => false, hasUI: false } as ExtensionCommandContext;
             const log = spyOn(console, 'log').mockImplementation(() => {});
             const filePath = path.join(userAgentsDir, 'custom-role.md');
             try {
