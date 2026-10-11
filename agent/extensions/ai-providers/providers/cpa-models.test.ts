@@ -11,7 +11,7 @@ import { useIsolatedAgentDir } from "../../_shared/testing/config-fixture.ts";
  */
 
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
+import type { ChatModelConfig } from "../rules/model-rules.ts";
 import type {
     ModelsDevCatalog,
     ModelsDevMatch,
@@ -597,7 +597,7 @@ describe('enrichModel enrichment pipeline', () => {
                     },
                 },
             },
-        ]) as ProviderModelConfig & { samplingParams?: Record<string, unknown> };
+        ]) as ChatModelConfig & { samplingParams?: Record<string, unknown> };
 
         expect(result.thinkingLevelMap).toEqual({
             off: null,

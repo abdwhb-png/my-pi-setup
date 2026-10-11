@@ -204,7 +204,7 @@ function fakePi() {
             appendEntry(type: string, data: unknown) {
                 entries.push({ type, data });
             },
-            getAllTools: () => [...new Set(['read', 'edit', 'write', ...tools.keys()])].map(name => ({ name })),
+            getAllTools: () => [...new Set(['read', 'edit', 'write', ...tools.keys()])].map(name => ({ name, exposure: "direct" })),
             getActiveTools: () => [...activeToolNames],
             setActiveTools: (names: string[]) => {
                 activeToolNames = [...names];

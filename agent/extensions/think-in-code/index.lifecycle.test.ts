@@ -89,7 +89,7 @@ describe("think-in-code extension lifecycle", () => {
                     emit: () => undefined,
                 },
             } as unknown as ExtensionAPI;
-            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
+            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"].map(name => ({ name, exposure: "direct" as const })), active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
             registerThinkInCode(pi, {
                 resolveRoot: () => join(fixture!, "state"),
             });
@@ -164,7 +164,7 @@ describe("think-in-code extension lifecycle", () => {
                 },
                 events: { on: () => () => undefined },
             } as unknown as ExtensionAPI;
-            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
+            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"].map(name => ({ name, exposure: "direct" as const })), active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
             registerThinkInCode(pi, {
                 resolveRoot: () => join(fixture!, "state"),
             });

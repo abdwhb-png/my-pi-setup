@@ -134,7 +134,7 @@ function createMockExtensionApi(
         ),
         sendMessage: mock(() => undefined),
     } as unknown as ExtensionAPI;
-    mountPolicy({ registered: () => [...new Set(["read", "bash", "edit", "write", ...registeredTools.keys()])], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
+    mountPolicy({ registered: () => [...new Set(["read", "bash", "edit", "write", ...registeredTools.keys()])].map(name => ({ name, exposure: "direct" as const })), active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
     return {
         pi,
         handlers,

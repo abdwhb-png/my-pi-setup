@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolvePiInstallationPaths } from "./pi-installation-paths.ts";
 import {
   activateRelease,
@@ -70,6 +70,7 @@ interface DeploymentContext {
 interface AgentFilesBackup {
   packageJson: Buffer;
   lockfile?: Buffer;
+  nodeModules?: string;
 }
 
 export async function deployFork(options: DeployForkOptions = {}): Promise<ActivePiRuntime> {
@@ -86,11 +87,12 @@ export async function deployFork(options: DeployForkOptions = {}): Promise<Activ
       throw new Error(`Pi runtime coherence check failed:\n${report.errors.join("\n")}`);
     }
     activateRelease(runtime.releaseRoot, context.runtimeRoot);
-    return runtime;
   } catch (cause) {
     restoreAgentFiles(context.agentDir, agentBackup);
     throw cause;
   }
+  discardAgentBackup(agentBackup);
+  return runtime;
 }
 
 export async function rollbackFork(
@@ -108,11 +110,13 @@ export async function rollbackFork(
     if (!report.ok) {
       throw new Error(`Pi runtime coherence check failed:\n${report.errors.join("\n")}`);
     }
-    return rollbackRelease(runtimeRoot);
+    rollbackRelease(runtimeRoot);
   } catch (cause) {
     restoreAgentFiles(agentDir, agentBackup);
     throw cause;
   }
+  discardAgentBackup(agentBackup);
+  return previous;
 }
 
 function resolveDeploymentContext(options: DeployForkOptions): DeploymentContext {
@@ -194,10 +198,16 @@ function installPackedRelease(
 
 function captureAgentFiles(agentDir: string): AgentFilesBackup {
   const lockPath = join(agentDir, "bun.lock");
-  return {
+  const backup: AgentFilesBackup = {
     packageJson: readFileSync(join(agentDir, "package.json")),
     lockfile: existsSync(lockPath) ? readFileSync(lockPath) : undefined,
   };
+  const installed = join(agentDir, "node_modules");
+  if (existsSync(installed)) {
+    backup.nodeModules = join(agentDir, `.pi-fork-node-modules-${randomUUID()}`);
+    renameSync(installed, backup.nodeModules);
+  }
+  return backup;
 }
 
 function restoreAgentFiles(agentDir: string, backup: AgentFilesBackup): void {
@@ -205,6 +215,28 @@ function restoreAgentFiles(agentDir: string, backup: AgentFilesBackup): void {
   const lockPath = join(agentDir, "bun.lock");
   if (backup.lockfile === undefined) rmSync(lockPath, { force: true });
   else writeFileSync(lockPath, backup.lockfile);
+  rmSync(join(agentDir, "node_modules"), { recursive: true, force: true });
+  if (backup.nodeModules) renameSync(backup.nodeModules, join(agentDir, "node_modules"));
+}
+
+function discardAgentBackup(backup: AgentFilesBackup): void {
+  if (backup.nodeModules) rmSync(backup.nodeModules, { recursive: true, force: true });
+}
+
+/** A name alone does not establish ownership: the pin must match a managed release manifest. */
+function isReleaseOwnedPin(name: string, value: JsonValue | undefined, runtime: ActivePiRuntime, agentDir: string): boolean {
+  if (typeof value !== "string" || !value.startsWith("file:")) return false;
+  const tarball = resolve(agentDir, value.slice(5));
+  const releasesRoot = dirname(runtime.releaseRoot);
+  if (!isWithin(releasesRoot, tarball)) return false;
+  const releaseRoot = join(releasesRoot, relative(releasesRoot, tarball).split(sep)[0]!);
+  const manifestPath = join(releaseRoot, RUNTIME_MANIFEST);
+  if (!existsSync(manifestPath)) return false;
+  const manifest = readJsonObject(manifestPath, "Invalid owning Pi runtime manifest");
+  return requireArray(manifest.packages).some((value) => {
+    const pkg = requireObject(value);
+    return pkg.name === name && typeof pkg.tarball === "string" && resolve(releaseRoot, pkg.tarball) === tarball;
+  });
 }
 
 export async function synchronizeAgentPiPins(
@@ -222,6 +254,12 @@ export async function synchronizeAgentPiPins(
     const manifest = readJsonObject(packagePath, "Invalid agent package.json");
     const dependencies = optionalObject(manifest.dependencies);
     const overrides = optionalObject(manifest.overrides);
+    const targetNames = new Set(runtime.manifest.packages.map((pkg) => pkg.name));
+    for (const pins of [dependencies, overrides]) {
+      for (const [name, value] of Object.entries(pins)) {
+        if (!targetNames.has(name) && isReleaseOwnedPin(name, value, runtime, agentDir)) delete pins[name];
+      }
+    }
     for (const pkg of runtime.manifest.packages) {
       const pin = packageFileSpecifier(agentDir, join(runtime.releaseRoot, pkg.tarball));
       dependencies[pkg.name] = pin;
@@ -256,6 +294,13 @@ export function verifyRuntimeCoherence(
   const dependencies = optionalObject(agentManifest.dependencies);
   const overrides = optionalObject(agentManifest.overrides);
   const expectedPackages = new Map(runtime.manifest.packages.map((pkg) => [pkg.name, pkg]));
+  for (const [kind, pins] of [["dependency", dependencies], ["override", overrides]] as const) {
+    for (const [name, value] of Object.entries(pins)) {
+      if (!expectedPackages.has(name) && isReleaseOwnedPin(name, value, runtime, agentDir)) {
+        errors.push(`${name}: obsolete release-owned ${kind}`);
+      }
+    }
+  }
   for (const pkg of runtime.manifest.packages) {
     const expectedPin = packageFileSpecifier(agentDir, join(runtime.releaseRoot, pkg.tarball));
     if (dependencies[pkg.name] !== expectedPin) {

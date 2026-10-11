@@ -8,7 +8,7 @@ import type { BeforeAgentStartEvent, ExtensionAPI } from '@earendil-works/pi-cod
 
 function fixture(options: { active?: string[]; registered?: string[]; groups?: Record<string, string[]>; requested?: string[]; child?: string[]; useEnv?: boolean } = {}) {
     let active = options.active ?? ['read', 'edit', 'write'];
-    const registry = new Map((options.registered ?? ['read', 'edit', 'write', 'ls', 'bash', 'herdr']).map(name => [name, { name } as any]));
+    const registry = new Map((options.registered ?? ['read', 'edit', 'write', 'ls', 'bash', 'herdr']).map(name => [name, { name, exposure: "direct" } as any]));
     const hooks = new TestHooks();
     const listeners = new Map<string, Set<(value: unknown) => void>>();
     const notify = mock();
@@ -19,7 +19,7 @@ function fixture(options: { active?: string[]; registered?: string[]; groups?: R
             on(name: string, fn: (value: unknown) => void) { const set = listeners.get(name) ?? new Set(); set.add(fn); listeners.set(name, set); return () => { set.delete(fn); }; },
             emit(name: string, value: unknown) { for (const fn of listeners.get(name) ?? []) fn(value); },
         },
-        registerTool: (tool: any) => registry.set(tool.name, tool),
+        registerTool: (tool: any) => registry.set(tool.name, { exposure: "direct", ...tool }),
         getAllTools: () => [...registry.values()],
         getActiveTools: () => [...active],
         setActiveTools: (names: string[]) => { active = [...names]; },
@@ -35,7 +35,7 @@ function fixture(options: { active?: string[]; registered?: string[]; groups?: R
         const event: BeforeAgentStartEvent = {
             type: 'before_agent_start', prompt: 'fixture', systemPrompt: '',
             systemPromptOptions: {
-                selectedTools: [...selectedTools], toolSnippets: {}, toolGuidelines: {},
+                selectedTools: [...selectedTools], hiddenTools: [], toolSnippets: {}, toolGuidelines: {},
                 promptGuidelines: [], appendSystemPrompt: '', sections: {},
                 cwd: '.', contextFiles: [], skills: [],
             },
@@ -103,7 +103,7 @@ describe('tool-groups runtime owner', () => {
     });
     test('registry changes reevaluate the policy and gate late tools', () => {
         const f = fixture(); f.start(); f.role(['read']);
-        f.registry.set('late', { name: 'late' }); f.pi.setActiveTools(['read', 'late']);
+        f.registry.set('late', { name: 'late', exposure: 'direct' }); f.pi.setActiveTools(['read', 'late']);
         expect(f.hooks.get('input')!({}, f.ctx)).toEqual({ action: 'continue' });
         expect(f.active()).toEqual(['read']);
         expect(f.hooks.get('tool_call')!({ toolName: 'late' }, f.ctx)).toMatchObject({ block: true });

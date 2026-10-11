@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { RoleToolPolicyPayload } from "../pi-roles/index.ts";
 import { resolveToolAliases } from "../tool-groups/resolver.ts";
 import type {
@@ -8,7 +8,7 @@ import type {
 
 export interface PolicyView {
     readonly role: RoleToolPolicyPayload | undefined;
-    readonly registered: readonly string[];
+    readonly registered: ReadonlyArray<Pick<ToolInfo, "name" | "exposure">>;
 }
 
 /** Grants are explicit entry actions; defaults never widen an explicit role. */
@@ -19,7 +19,7 @@ export interface ToolPolicyContribution {
 }
 export type PolicyContributor = (view: PolicyView) => ToolPolicyContribution;
 export interface PolicyHost {
-    registered(): string[];
+    registered(): Array<Pick<ToolInfo, "name" | "exposure">>;
     active(): string[];
     apply(names: string[]): void;
 }
@@ -32,6 +32,7 @@ export interface PolicyConfiguration {
 }
 export interface PolicySnapshot {
     names: string[];
+    activeNames: string[];
     diagnostics: ToolGroupDiagnostic[];
     excluded: Record<string, string>;
     sources: string[];
@@ -44,13 +45,14 @@ export function calculateToolPolicy(
     baseline: readonly string[],
     config: PolicyConfiguration,
     contributions: ReadonlyArray<readonly [string, ToolPolicyContribution]>,
+    activatedDeferred: readonly string[] = [],
 ): Omit<PolicySnapshot, "revision" | "externalDrift"> {
     const diagnostics: ToolGroupDiagnostic[] = [];
     const excluded: Record<string, string> = {};
     const resolve = (refs: readonly string[]) => {
         const result = resolveToolAliases(
             [...refs],
-            [...view.registered],
+            view.registered.map((tool) => tool.name),
             config.groups,
             config.resolveMcp,
         );
@@ -61,8 +63,17 @@ export function calculateToolPolicy(
         view.role?.mode === "set"
             ? view.role.toolNames
             : view.role?.mode === "all"
-              ? view.registered
-              : baseline;
+              ? view.registered.map((tool) => tool.name)
+              : [
+                    ...baseline,
+                    ...view.registered
+                        .filter(
+                            (tool) =>
+                                tool.exposure === "codemode" ||
+                                tool.exposure === "deferred",
+                        )
+                        .map((tool) => tool.name),
+                ];
     let names = resolve(base);
     for (const [, contribution] of contributions) {
         if (view.role?.mode !== "set")
@@ -89,9 +100,24 @@ export function calculateToolPolicy(
             return false;
         });
     }
+    const exposures = new Map(
+        view.registered.map((tool) => [tool.name, tool.exposure]),
+    );
+    names = names.filter((name) => {
+        if (exposures.get(name) !== "hidden") return true;
+        excluded[name] = "hidden exposure";
+        return false;
+    });
     // A tool group is a configuration placeholder, never an executable tool.
     return {
         names: names.filter((n) => !n.startsWith("@")),
+        activeNames: names.filter(
+            (name) =>
+                !name.startsWith("@") &&
+                (exposures.get(name) === "direct" ||
+                    exposures.get(name) === "model-only" ||
+                    activatedDeferred.includes(name)),
+        ),
         diagnostics,
         excluded,
         sources: contributions.map(([source]) => source),
@@ -127,8 +153,12 @@ export function createToolPolicyCoordinator() {
         if (!snapshot || !host) return undefined;
         const current = snapshot;
         const active = host.active();
-        const added = active.filter((name) => !current.names.includes(name));
-        const removed = current.names.filter((name) => !active.includes(name));
+        const added = active.filter(
+            (name) => !current.activeNames.includes(name),
+        );
+        const removed = current.activeNames.filter(
+            (name) => !active.includes(name),
+        );
         return structuredClone({
             ...current,
             externalDrift:
@@ -147,7 +177,13 @@ export function createToolPolicyCoordinator() {
             if (++passes > 32)
                 throw new Error("Tool-policy invalidation did not converge");
             dirty = false;
-            const registered = Object.freeze([...host.registered()]);
+            const registered = Object.freeze(
+                host
+                    .registered()
+                    .map(({ name, exposure }) =>
+                        Object.freeze({ name, exposure }),
+                    ),
+            );
             const roleView = role && structuredClone(role);
             if (roleView) {
                 Object.freeze(roleView.toolNames);
@@ -166,7 +202,17 @@ export function createToolPolicyCoordinator() {
             } finally {
                 evaluating = false;
             }
+            const active = host.active();
+            const activatedDeferred = registered
+                .filter(
+                    (tool) =>
+                        (tool.exposure === "deferred" ||
+                            tool.exposure === "codemode") &&
+                        active.includes(tool.name),
+                )
+                .map((tool) => tool.name);
             const nextSignature = JSON.stringify([
+                activatedDeferred,
                 role,
                 registered,
                 configuration.groups,
@@ -182,6 +228,7 @@ export function createToolPolicyCoordinator() {
                 baseline,
                 configuration,
                 contributions,
+                activatedDeferred,
             );
             signature = nextSignature;
             snapshot = {
@@ -189,14 +236,13 @@ export function createToolPolicyCoordinator() {
                 revision: ++revision,
                 externalDrift: undefined,
             };
-            const active = host.active();
             if (
-                active.length !== result.names.length ||
-                active.some((n, i) => n !== result.names[i])
+                active.length !== result.activeNames.length ||
+                active.some((n, i) => n !== result.activeNames[i])
             ) {
                 applying = true;
                 try {
-                    host.apply([...result.names]);
+                    host.apply([...result.activeNames]);
                 } finally {
                     applying = false;
                 }

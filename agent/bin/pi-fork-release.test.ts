@@ -82,7 +82,6 @@ function writeAgentManifest(agentDir: string): void {
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@abdwhb-png/pi-test-harness": "file:/old-harness.tgz",
     "@abdwhb-png/pi-test-harness": "file:/stable-harness",
     "typescript": "7.0.2"
   }
@@ -329,6 +328,62 @@ describe("pi-fork-release", () => {
     expect(restored.releaseId).not.toBe(second.releaseId);
     expect(realpathSync(join(fixture.runtimeRoot, "current"))).toBe(realpathSync(first.releaseRoot));
     expect(verifyRuntimeCoherence(restored, fixture.agentDir)).toEqual({ ok: true, errors: [] });
+  });
+
+  it("removes only obsolete release-owned pins on upgrade and rollback", async () => {
+    const fixture = createDeploymentFixture();
+    const builder = join(fixture.sourceRoot, "scripts", "local-release.mjs");
+    const base = readFileSync(builder, "utf-8");
+    writeFileSync(builder, base.replace('const specs = [', 'const specs = [["@earendil-works/pi-session-backend-sqlite-node", "0.85.0", "sqlite.tgz"],'));
+    const first = await deploy(fixture);
+    const manifestPath = join(fixture.agentDir, "package.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    manifest.dependencies["@earendil-works/unrelated"] = "1.2.3";
+    manifest.overrides["external-override"] = "4.5.6";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    writeFileSync(builder, base.replace('const specs = [', 'const specs = [["@earendil-works/pi-mcp", "0.85.0", "mcp.tgz"],'));
+    await deploy(fixture);
+    let current = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    expect(current.dependencies["@earendil-works/pi-session-backend-sqlite-node"]).toBeUndefined();
+    expect(current.overrides["@earendil-works/pi-session-backend-sqlite-node"]).toBeUndefined();
+    await rollbackFork({ runtimeRoot: fixture.runtimeRoot, agentDir: fixture.agentDir, sfwExecutable: fixture.sfwExecutable });
+    current = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    expect(current.dependencies["@earendil-works/pi-mcp"]).toBeUndefined();
+    expect(current.overrides["@earendil-works/pi-mcp"]).toBeUndefined();
+    expect(current.dependencies["@earendil-works/pi-session-backend-sqlite-node"]).toContain(first.releaseId);
+    expect(current.dependencies["@earendil-works/unrelated"]).toBe("1.2.3");
+    expect(current.overrides["external-override"]).toBe("4.5.6");
+  });
+
+  it("restores the installed graph as well as manifests when installation fails", async () => {
+    const fixture = createDeploymentFixture({ failAgentInstall: true });
+    const installed = join(fixture.agentDir, "node_modules", "sentinel", "value.txt");
+    mkdirSync(join(fixture.agentDir, "node_modules", "sentinel"), { recursive: true });
+    writeFileSync(installed, "original");
+    writeFileSync(fixture.sfwExecutable, readFileSync(fixture.sfwExecutable, "utf-8").replace(
+      'process.exit(41);',
+      'mkdirSync(join(cwd, "node_modules", "sentinel"), { recursive: true }); writeFileSync(join(cwd, "node_modules", "sentinel", "value.txt"), "broken"); process.exit(41);',
+    ));
+    await expectFailure(() => deploy(fixture), "Command failed");
+    expect(readFileSync(installed, "utf-8")).toBe("original");
+  });
+
+  it.each(["coherence", "activation"])("restores the installed graph when %s fails after install", async (failure) => {
+    const fixture = createDeploymentFixture();
+    const installed = join(fixture.agentDir, "node_modules", "sentinel", "value.txt");
+    mkdirSync(join(fixture.agentDir, "node_modules", "sentinel"), { recursive: true });
+    writeFileSync(installed, "original");
+    const packageBefore = readFileSync(join(fixture.agentDir, "package.json"));
+    const lockBefore = readFileSync(join(fixture.agentDir, "bun.lock"));
+    if (failure === "coherence") {
+      writeFileSync(fixture.sfwExecutable, readFileSync(fixture.sfwExecutable, "utf8").replace('version: "0.85.0",', `version: cwd === ${JSON.stringify(fixture.agentDir)} ? "wrong" : "0.85.0",`));
+    } else {
+      mkdirSync(join(fixture.runtimeRoot, "active"), { recursive: true });
+    }
+    await expect(deploy(fixture)).rejects.toThrow();
+    expect(readFileSync(installed, "utf8")).toBe("original");
+    expect(readFileSync(join(fixture.agentDir, "package.json"))).toEqual(packageBefore);
+    expect(readFileSync(join(fixture.agentDir, "bun.lock"))).toEqual(lockBefore);
   });
 
   it("rejects a release manifest with a wrong tarball hash", async () => {

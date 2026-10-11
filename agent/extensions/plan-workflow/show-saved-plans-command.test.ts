@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
     ExtensionAPI,
-    ExtensionContext,
+    ExtensionToolContext,
     ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
@@ -41,7 +41,7 @@ function context(
     cwd: string,
     sessionId: string,
     messages: string[],
-): ExtensionContext {
+): ExtensionToolContext {
     return {
         cwd,
         isProjectTrusted: () => true,
@@ -56,7 +56,7 @@ function context(
             getSessionDir: () => cwd,
             getEntries: () => [],
         },
-    } as unknown as ExtensionContext;
+    } as unknown as ExtensionToolContext;
 }
 
 describe("/show-saved-plans", () => {

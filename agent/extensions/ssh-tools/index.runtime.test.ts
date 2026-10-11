@@ -59,7 +59,7 @@ async function withSshSession(
         detach = policy.bind(
             {
                 registered: () =>
-                    session?.session.getAllTools().map((tool) => tool.name) ??
+                    session?.session.getAllTools() ??
                     [],
                 active: () => session?.session.getActiveToolNames() ?? [],
                 apply: (names) => session?.session.setActiveToolsByName(names),

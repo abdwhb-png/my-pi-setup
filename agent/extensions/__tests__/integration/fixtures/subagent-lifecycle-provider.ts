@@ -115,11 +115,7 @@ export default function registerLifecycleFixture(pi: ExtensionAPI): void {
         handler: async () => {
             faux.setResponses([
                 fauxAssistantMessage(
-                    fauxToolCall("mcp", {
-                        server: "fixture",
-                        tool: "echo",
-                        args: { message: "warm" },
-                    }),
+                    fauxToolCall("mcp__fixture__echo", { message: "warm" }),
                 ),
                 fauxAssistantMessage("fixture-parent-complete"),
             ]);

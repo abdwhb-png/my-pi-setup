@@ -23,7 +23,7 @@ import {
     it,
     mock,
 } from "bun:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,8 +58,8 @@ function textBinding(
     return typeof value === "string" ? value : "";
 }
 
-function ctx(cwd: string): ExtensionContext {
-    return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
+function ctx(cwd: string): ExtensionToolContext {
+    return { cwd, hasUI: false, ui: {} } as unknown as ExtensionToolContext;
 }
 
 function makeSafeExec(

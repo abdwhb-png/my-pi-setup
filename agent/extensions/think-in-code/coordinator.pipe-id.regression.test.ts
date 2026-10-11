@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 
 import type { CommandExecutionService } from "../_shared/command-execution/core.ts";
 import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
@@ -12,8 +12,8 @@ import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import { ThinkStore } from "./storage/store.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
 
-function ctx(cwd: string): ExtensionContext {
-  return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
+function ctx(cwd: string): ExtensionToolContext {
+  return { cwd, hasUI: false, ui: {} } as unknown as ExtensionToolContext;
 }
 
 describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundary", () => {

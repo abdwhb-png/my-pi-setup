@@ -55,3 +55,19 @@ test("package resolution keeps one physical configured owner and ignores untrust
         await expect(resolveSubagentPackage(cwd, agentDir, true)).rejects.toThrow("escapes");
     } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('preflight forwards the resolved project trust decision to the package API', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'subagent-trust-input-'));
+    const agentDir = join(root, 'agent'), cwd = join(root, 'project'), pkg = join(root, 'package');
+    try {
+        mkdirSync(agentDir); mkdirSync(cwd); mkdirSync(pkg);
+        writeFileSync(join(pkg, 'package.json'), JSON.stringify({name:'pi-subagents',exports:{'./preflight':'./preflight.ts'}}));
+        writeFileSync(join(pkg, 'preflight.ts'), 'export function resolveSubagentLaunchContract(input) { return {ok:true, projectTrusted:input.projectTrusted}; }');
+        writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({packages:[pkg]}));
+        expect(await preflightSubagent({agent:'reader',cwd}, {agentDir,projectTrusted:false})).toMatchObject({projectTrusted:false});
+        expect(await preflightSubagent({agent:'reader',cwd}, {agentDir,projectTrusted:true})).toMatchObject({projectTrusted:true});
+        expect(await preflightSubagent({agent:'reader',cwd}, {agentDir})).toMatchObject({projectTrusted:false});
+        new ProjectTrustStore(agentDir).set(cwd,true);
+        expect(await preflightSubagent({agent:'reader',cwd}, {agentDir})).toMatchObject({projectTrusted:true});
+    } finally {rmSync(root,{recursive:true,force:true});}
+});

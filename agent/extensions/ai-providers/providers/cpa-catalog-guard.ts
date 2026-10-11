@@ -1,10 +1,10 @@
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import type { CpaCatalogResult } from './cpa-models.ts';
+import type { ChatModelConfig } from "../rules/model-rules.ts";
+import type { CpaCatalogResult } from "./cpa-models.ts";
 
 export type CpaCatalogGuardResult =
-    | { state: 'valid'; modelId?: string; refreshed: boolean }
-    | { state: 'stale'; modelId: string; refreshed: boolean }
-    | { state: 'unverified'; modelId?: string; refreshed: boolean };
+    | { state: "valid"; modelId?: string; refreshed: boolean }
+    | { state: "stale"; modelId: string; refreshed: boolean }
+    | { state: "unverified"; modelId?: string; refreshed: boolean };
 
 interface ActiveModelRef {
     provider: string;
@@ -15,7 +15,7 @@ interface RefreshInput {
     force?: boolean;
     activeModel?: ActiveModelRef;
     loadCatalog(): Promise<CpaCatalogResult>;
-    registerModels(models: ProviderModelConfig[]): void;
+    registerModels(models: ChatModelConfig[]): void;
     hasModel(provider: string, id: string): boolean;
 }
 
@@ -28,7 +28,7 @@ export function createCpaCatalogGuard(options: CpaCatalogGuardOptions) {
     const now = options.now ?? Date.now;
     let lastRefreshAt = Number.NEGATIVE_INFINITY;
     let lastResult: CpaCatalogGuardResult = {
-        state: 'unverified',
+        state: "unverified",
         refreshed: false,
     };
     let inFlight: Promise<CpaCatalogGuardResult> | undefined;
@@ -39,15 +39,15 @@ export function createCpaCatalogGuard(options: CpaCatalogGuardOptions) {
         const catalog = await input.loadCatalog();
         lastRefreshAt = now();
 
-        if (catalog.source !== 'live') {
+        if (catalog.source !== "live") {
             if (
-                lastResult.state !== 'unverified' &&
+                lastResult.state !== "unverified" &&
                 lastResult.modelId === input.activeModel?.id
             ) {
                 return { ...lastResult, refreshed: true };
             }
             lastResult = {
-                state: 'unverified',
+                state: "unverified",
                 modelId: input.activeModel?.id,
                 refreshed: true,
             };
@@ -57,11 +57,11 @@ export function createCpaCatalogGuard(options: CpaCatalogGuardOptions) {
         input.registerModels(catalog.models);
 
         if (
-            input.activeModel?.provider === 'cpa' &&
-            !input.hasModel('cpa', input.activeModel.id)
+            input.activeModel?.provider === "cpa" &&
+            !input.hasModel("cpa", input.activeModel.id)
         ) {
             lastResult = {
-                state: 'stale',
+                state: "stale",
                 modelId: input.activeModel.id,
                 refreshed: true,
             };
@@ -69,7 +69,7 @@ export function createCpaCatalogGuard(options: CpaCatalogGuardOptions) {
         }
 
         lastResult = {
-            state: 'valid',
+            state: "valid",
             modelId: input.activeModel?.id,
             refreshed: true,
         };

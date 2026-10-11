@@ -19,7 +19,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createMcpRefResolver } from '../_shared/mcp/ref-resolver.ts';
-import { computeServerHash } from 'pi-mcp-adapter/metadata-cache';
 import {
     resolvePath,
     myersDiff,
@@ -552,34 +551,20 @@ describe('validateSlowModeConfig', () => {
     const activeTools = ['write', 'edit', 'read', 'bash', 'grep', 'find', 'ls'];
 
     it('does not review a proxy for a nonexistent MCP tool', () => {
-        const definition = { command: 'fixture' };
-        const resolveMcp = createMcpRefResolver('/unused', {
-            loadConfig: () => ({ mcpServers: { demo: definition } }),
-            loadCache: () => ({
-                version: 1,
-                servers: {
-                    demo: {
-                        configHash: computeServerHash(definition),
-                        cachedAt: Date.now(),
-                        tools: [{ name: 'lookup' }],
-                        resources: [],
-                    },
-                },
-            }),
-        });
+        const resolveMcp = createMcpRefResolver(() => [{ name: 'mcp__demo__lookup', namespace: { name: 'mcp__demo' }, exposure: 'deferred' }]);
         const result = validateSlowModeConfig(
             { 'mcp:demo/missing': true },
-            ['mcp__demo'],
+            ['mcp__demo__lookup'],
             resolveMcp,
         );
         expect(result.tools.size).toBe(0);
         expect(result.warnings).toHaveLength(1);
         const valid = validateSlowModeConfig(
             { 'mcp:demo/lookup': true },
-            ['mcp__demo'],
+            ['mcp__demo__lookup'],
             resolveMcp,
         );
-        expect(valid.tools.get('mcp__demo')).toBe(true);
+        expect(valid.tools.get('mcp__demo__lookup')).toBe(true);
     });
 
     it('returns empty warnings when all tools exist', () => {

@@ -65,15 +65,16 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
         expect(
             JSON.parse(readFileSync(join(officialRoot, "package.json"), "utf8"))
                 .version,
-        ).toBe("0.73.1");
+        ).toBe("0.77.0");
         mkdirSync(cwd);
         mkdirSync(join(agentDir, "agents"), { recursive: true });
+        mkdirSync(join(agentDir, "config"), { recursive: true });
         const markdown =
             "---\nname: reader\ndescription: Offline fixture\ntools: '@inspect'\n---\nReply fixture-child-complete.\n";
         const agentPath = join(agentDir, "agents", "reader.md");
         writeFileSync(agentPath, markdown);
         writeFileSync(
-            join(agentDir, "tool-groups.json"),
+            join(agentDir, "config", "tool-groups.json"),
             JSON.stringify({ groups: { inspect: ["read", "grep"] } }),
         );
         const configPath = join(root, "addon.json");
@@ -100,30 +101,22 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
         const probeMarkdown = `---\nname: probe\ndescription: Tool execution fixture\ntools: '@inspect, fixture_ping'\nexcludeTools: grep\nsubagentOnlyExtensions: ${childTools}\n---\nExercise tool contract.\n`;
         writeFileSync(join(agentDir, "agents", "probe.md"), probeMarkdown);
         writeFileSync(join(cwd, "proof.txt"), "native-call-proof");
-        const adapter = realpathSync(
-            fileURLToPath(import.meta.resolve("pi-mcp-adapter")),
-        );
-        expect(
-            JSON.parse(
-                readFileSync(join(dirname(adapter), "package.json"), "utf8"),
-            ).version,
-        ).toBe("3.0.0");
-        const mcpMarkdown = `---\nname: mcp-probe\ndescription: Async MCP fixture\ntools: '@inspect, fixture_ping, mcp:fixture/echo'\nexcludeTools: grep\nextensions: []\nsubagentOnlyExtensions:\n  - ${childTools}\n  - ${adapter}\n---\nExercise tools then wait for interrupt.\n`;
+        const mcpMarkdown = `---\nname: mcp-probe\ndescription: Async MCP fixture\ntools: '@inspect, fixture_ping, mcp:fixture/echo'\nexcludeTools: grep\nextensions: []\nsubagentOnlyExtensions:\n  - ${childTools}\n---\nExercise tools then wait for interrupt.\n`;
         writeFileSync(join(agentDir, "agents", "mcp-probe.md"), mcpMarkdown);
         const mcpCalls: string[] = [];
         const server = startFixtureMcp(mcpCalls);
         writeFileSync(
-            join(agentDir, "mcp-adapter.json"),
+            join(agentDir, "mcp.json"),
             JSON.stringify({
                 mcpServers: {
-                    fixture: { url: `${server.url}mcp`, directTools: true },
+                    fixture: { url: `${server.url}mcp`, exposure: "direct" },
                 },
             }),
         );
         writeFileSync(
             join(agentDir, "settings.json"),
             JSON.stringify({
-                packages: [officialRoot, dirname(adapter)],
+                packages: [officialRoot],
                 extensions: [wrapper, provider, childTools],
                 subagents: {
                     control: { enabled: false },
@@ -277,7 +270,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
                 (event) => event.type === "fixture_upstream_ready",
                 reloadOffset,
             );
-            expect(upstreamAllowed.ceiling).toBeUndefined();
+            expect(upstreamAllowed.ceiling, JSON.stringify(events())).toBeUndefined();
             expect(upstreamAllowed.generatedTools).toEqual(["read", "grep"]);
             const contractOffset = events().length;
             await prompt("/fixture-contract");
@@ -345,7 +338,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
             await prompt("Warm MCP metadata");
             await waitFor((event) => event.type === "agent_end", warmOffset);
             expect(mcpCalls).toEqual(["warm"]);
-            expect(existsSync(join(agentDir, "mcp-cache.json"))).toBe(true);
+            expect(existsSync(join(agentDir, "mcp-cache.json"))).toBe(false);
             const launchOffset = events().length;
             await prompt("/fixture-rpc");
             const completed = await waitFor(
@@ -424,7 +417,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
                 expect.arrayContaining([
                     "read",
                     "fixture_ping",
-                    "fixture_echo",
+                    "mcp__fixture__echo",
                 ]),
             );
             expect(asyncEvidence.tools).not.toContain("grep");
@@ -449,7 +442,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
                 ["read", false],
                 ["fixture_ping", false],
                 ["write", true],
-                ["fixture_echo", false],
+                ["mcp__fixture__echo", false],
             ]);
             expect(existsSync(join(cwd, "forbidden.txt"))).toBe(false);
             const recovery = JSON.parse(
@@ -490,7 +483,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
             expect(persistedSession).toContain("echo:initial");
             expect(persistedSession).toContain("native-call-proof");
             writeFileSync(
-                join(agentDir, "tool-groups.json"),
+                join(agentDir, "config", "tool-groups.json"),
                 JSON.stringify({ groups: { inspect: ["ls"] } }),
             );
             const changedOffset = events().length;
@@ -548,7 +541,7 @@ test.skipIf(process.env.PI_SUBAGENTS_OFFICIAL_SMOKE !== "1")(
                 ["read", false],
                 ["fixture_ping", false],
                 ["write", true],
-                ["fixture_echo", false],
+                ["mcp__fixture__echo", false],
             ]);
             expect(existsSync(join(cwd, "forbidden.txt"))).toBe(false);
             expect(revivedEvidence.tools).toEqual(asyncEvidence.tools);

@@ -8,6 +8,7 @@ import {
     type FauxResponseFactory,
 } from '@earendil-works/pi-ai';
 import {
+    createMcpToolName,
     getAgentDir,
     type ExtensionAPI,
 } from '@earendil-works/pi-coding-agent';
@@ -20,6 +21,7 @@ import { SubagentRpcClient } from '../../extensions/_shared/subagents/rpc-client
 
 /** Only provider responses are synthetic. The CLI, SDK, child processes and loopback MCP stay real. */
 export default function fixture(pi: ExtensionAPI): void {
+    const mcpProbe = createMcpToolName('fixture', 'echo');
     const child = fauxProvider({
         provider: 'baseline-child',
         models: [
@@ -64,7 +66,7 @@ export default function fixture(pi: ExtensionAPI): void {
             join(process.cwd(), 'calls.jsonl'),
             JSON.stringify(evidence) + '\n',
         );
-        const probe = tools.includes('fixture_echo') ? 'fixture_echo' : 'read';
+        const probe = tools.includes(mcpProbe) ? mcpProbe : 'read';
         if (
             !context.messages.some(
                 (message) =>
@@ -235,11 +237,7 @@ export default function fixture(pi: ExtensionAPI): void {
                 if (scenario === 'warm') {
                     parent.setResponses([
                         fauxAssistantMessage(
-                            fauxToolCall('mcp', {
-                                server: 'fixture',
-                                tool: 'echo',
-                                args: { message: 'warm' },
-                            }),
+                            fauxToolCall(mcpProbe, { message: 'warm' }),
                         ),
                         fauxAssistantMessage('warmed'),
                     ]);
@@ -394,7 +392,7 @@ export default function fixture(pi: ExtensionAPI): void {
                         const workflowScript = `const items = ${JSON.stringify(items.map(({ result, ...item }) => ({ ...item, outputSchema: result.schema })))}; const results = await runs.all(items); if(results.some(r => !r.ok)) return { results }; ${scenario === 'dependent' ? `const advisory = await runs.run('advisory', { agent: 'reader', task: ${JSON.stringify(`baseline ${id} assess `)} + JSON.stringify(results[0].structuredOutput), context: 'fresh', skill: false, outputSchema: ${JSON.stringify(schema)} }); return {results, advisory};` : 'return {results};'}`;
                         const result = await rpc.spawn({
                             cwd: ctx.cwd,
-                            workflowScript,
+                            script: workflowScript,
                             async: true,
                             mission: false,
                         });

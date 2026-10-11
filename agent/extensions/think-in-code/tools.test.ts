@@ -5,7 +5,7 @@ import {
     it,
     mock,
 } from "bun:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,8 +21,8 @@ import { ThinkCoordinator } from "./coordinator.ts";
 import { buildToolHandlers, SCHEMAS } from "./tools.ts";
 import { resolveExecution } from '../_shared/execution-provenance/index.ts';
 
-function ctx(cwd: string): ExtensionContext {
-    return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
+function ctx(cwd: string): ExtensionToolContext {
+    return { cwd, hasUI: false, ui: {} } as unknown as ExtensionToolContext;
 }
 
 function fakeSafeExecution(text: string): CommandExecutionService<ThinkCommandOperation> {

@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type {
     BashOperations,
-    ExtensionContext,
+    ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
 import { createCommandExecutionService } from "./core.ts";
@@ -10,7 +10,7 @@ import { GuardSessionApprovals } from "./policy.ts";
 function context(
     hasUI: boolean,
     select = mock(async () => "Yes for this session"),
-): ExtensionContext {
+): ExtensionToolContext {
     return {
         cwd: process.cwd(),
         hasUI,
@@ -23,7 +23,7 @@ function context(
             getSessionId: () => "policy-isolation",
             getSessionFile: () => undefined,
         },
-    } as unknown as ExtensionContext;
+    } as unknown as ExtensionToolContext;
 }
 
 function service() {

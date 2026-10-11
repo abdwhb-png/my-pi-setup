@@ -1,12 +1,12 @@
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ChatModelConfig } from "../rules/model-rules.ts";
 
 /** Shared compat constant — avoids repeating the cast across ~30 model entries. */
 export const NO_DEV_ROLE_COMPAT = {
     supportsDeveloperRole: false,
-} as ProviderModelConfig["compat"];
+} as ChatModelConfig["compat"];
 
 // ── Static fallback models (CPA down) ──
-export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
+export const STATIC_FALLBACK_MODELS: ChatModelConfig[] = [
     // OpenCode Go (8)
     {
         id: "ocg/go-glm-5.2",

@@ -715,10 +715,10 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       ]);
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
-      const [codingAgent, { getModel }] = await Promise.all([
-        import("@earendil-works/pi-coding-agent"),
-        import("@earendil-works/pi-ai/compat"),
-      ]);
+      const codingAgent = await import("@earendil-works/pi-coding-agent");
+      const { fauxProvider, fauxAssistantMessage } = await import("@earendil-works/pi-ai/providers/faux");
+      const parent = fauxProvider({provider:"brainstorm-parent",models:[{id:"mock"}],tokensPerSecond:100000});
+      parent.setResponses([fauxAssistantMessage("Verification notification received.")]);
       const subagentsExtensionPath = fileURLToPath(
         import.meta.resolve("pi-subagents"),
       );
@@ -729,7 +729,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         join(cwd, ".pi", "agents", "code-analysis.scout.md"),
         "---\nname: scout\npackage: code-analysis\ndescription: Colliding project scout\ntools: '@inspect'\n---\n",
       );
-      const model = getModel("openai", "gpt-4o");
+      const model = parent.getModel();
       const sessionManager = codingAgent.SessionManager.create(cwd, sessionDir);
       persistRuntimeSession(sessionManager, model);
       const child = await installStructuredProviderFixture(isolatedAgentDir, {
@@ -760,6 +760,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         cwd,
         sessionManager,
         [
+          (pi) => pi.registerProvider(parent.provider),
           (pi) =>
             pi.registerProvider("brainstorm-test", {
               baseUrl: "http://127.0.0.1:1",
@@ -827,7 +828,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           },
         });
         expect(
-          (spawn as any).params.workflowScript,
+          (spawn as any).params.script,
         ).toContain("verify_local_code_supported");
         expect(asyncCompletions.find((completion) => completion.id === naturalRunId)).toMatchObject({
           id: naturalRunId,
@@ -882,7 +883,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           params: { id: stoppedRunId },
           source: { extension: "brainstorm-forcer" },
         });
-        expect(runtime.errors).toHaveLength(0);
+        expect(runtime.errors, JSON.stringify(runtime.errors)).toHaveLength(0);
       } finally {
         runtime.session.dispose();
         child.cleanup();

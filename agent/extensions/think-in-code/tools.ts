@@ -11,7 +11,7 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 
 import { ThinkCoordinator } from "./coordinator.ts";
@@ -211,7 +211,7 @@ export interface ToolRuntime {
 export interface ToolHandlers {
     execute(
         args: unknown,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime?: ToolRuntime,
     ): Promise<unknown>;
     artifactSearch(args: unknown): Promise<unknown>;

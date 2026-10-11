@@ -128,10 +128,11 @@ function createMockAPI(sessionManager?: SessionManager) {
       activeToolNames = [...names];
     },
     getAllTools: () => [
-      ...toolInfo,
+      ...toolInfo.map(tool => ({ ...tool, exposure: "direct" })),
       ...[...tools.values()].map((tool) => ({
         name: tool.name,
         description: tool.description,
+        exposure: tool.exposure ?? "direct",
       })),
     ],
     events,
@@ -336,6 +337,8 @@ describe("brainstorm-forcer redesign", () => {
       join(agentsDir, "brainstorm-scout.md"),
       getBrainstormAgentEntry("brainstorm-scout")!.markdown,
     );
+    const { ProjectTrustStore } = await import("@earendil-works/pi-coding-agent");
+    new ProjectTrustStore(isolatedAgentDir!).set(root, true);
     manager.register(sessionId);
     try {
       const { resolveSubagentLaunchContract } = await import("pi-subagents/preflight");
@@ -2556,7 +2559,7 @@ describe("brainstorm-forcer redesign", () => {
       source: { extension: "brainstorm-forcer" },
       params: { context: "fresh", artifacts: true },
     });
-    expect(request?.params.workflowScript).toContain("verify_local_code_supported");
+    expect(request?.params.script).toContain("verify_local_code_supported");
     expect(selectedPreflightAgents).toEqual(["brainstorm-scout"]);
     expect(entries.at(-1)).toMatchObject({
       customType: "brainstorm-forcer",
@@ -2641,7 +2644,7 @@ describe("brainstorm-forcer redesign", () => {
       method: "stop",
       params: { id: expect.any(String) },
     });
-    expect(architectureRunId.workflowScript).toContain("architect_advisory");
+    expect(architectureRunId.script).toContain("architect_advisory");
   });
 
   it("recovers a verifier completion atomically across terminal journal, EV, RV, and snapshot failures", async () => {
@@ -2791,10 +2794,10 @@ describe("brainstorm-forcer redesign", () => {
         firstContext,
       );
       const nativeRunId = "native-test-run-1";
-      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
+      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.script).toContain(
         "verify_local_code_supported",
       );
-      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
+      expect(first.subagentRpcRequests.find(request => request.method === "spawn")?.params.script).toContain(
         "verify_external_supported",
       );
 
@@ -3104,7 +3107,7 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
-    expect(api.subagentRpcRequests.find(request => request.method === "spawn")?.params.workflowScript).toContain(
+    expect(api.subagentRpcRequests.find(request => request.method === "spawn")?.params.script).toContain(
       "architect_advisory",
     );
     api.completeSubagentRun("native-test-run-1", {

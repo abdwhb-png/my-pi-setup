@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
+import type { ChatModelConfig } from "../rules/model-rules.ts";
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 
 import type { CpaModelEntry } from './cpa-models.ts';
@@ -102,7 +102,7 @@ function createMockBuildCpaModels() {
     });
 }
 
-const fakeModel: ProviderModelConfig = {
+const fakeModel: ChatModelConfig = {
     id: 'ocg/go-test',
     name: 'Test Model',
     reasoning: true,
@@ -171,7 +171,7 @@ describe('registerCpaProvider', () => {
         });
 
         const models = registeredProviders[0].config
-            .models as ProviderModelConfig[];
+            .models as ChatModelConfig[];
         expect(models.map((model) => model.id)).toContain(fakeEntry.id);
     });
 
@@ -630,7 +630,7 @@ describe('registerCpaProvider', () => {
         expect(mockBuild).toHaveBeenCalledTimes(1);
         expect(registeredProviders.at(-1)?.config.models).toHaveLength(1);
         const reprojected = registeredProviders.at(-1)?.config.models?.[0] as
-            | ProviderModelConfig
+            | ChatModelConfig
             | undefined;
         expect(reprojected?.contextWindow).toBe(9_000);
     });
@@ -676,7 +676,7 @@ describe('registerCpaProvider', () => {
 
     test('routes catalog drift to ctx.ui.notify at runtime (input hook)', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
-        const driftModel: ProviderModelConfig = {
+        const driftModel: ChatModelConfig = {
             id: 'ocg/go-runtime-drift-model',
             name: 'Drift',
             reasoning: true,
@@ -733,7 +733,7 @@ describe('registerCpaProvider', () => {
 
     test('does not write catalog drift to stderr in a headless child', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
-        const driftModel: ProviderModelConfig = {
+        const driftModel: ChatModelConfig = {
             id: 'ocg/go-headless-drift-model',
             name: 'Headless drift',
             reasoning: true,

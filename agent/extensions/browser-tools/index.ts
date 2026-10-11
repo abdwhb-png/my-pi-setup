@@ -51,7 +51,9 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
         pi,
         "browser-tools",
         ({ registered }) => {
-            const available = registered.includes(PRIMARY_TOOL);
+            const available = registered.some(
+                (tool) => tool.name === PRIMARY_TOOL,
+            );
             return manualGrant && available
                 ? { grants: [PRIMARY_TOOL], deny: [OPTIONAL_SEARCH_TOOL] }
                 : { deny: MANAGED_TOOLS };

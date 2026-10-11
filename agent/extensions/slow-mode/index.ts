@@ -59,20 +59,34 @@ export default function slowMode(pi: ExtensionAPI) {
     /** Per-tool slow-mode config. Map key = tool name, value = slow mode active for this tool. */
     let toolConfig = new Map<string, boolean>();
 
+    const resolveMcp = createMcpRefResolver(() => pi.getAllTools());
+    let rawToolConfig: Parameters<typeof validateSlowModeConfig>[0] = {};
+    let registrySignature = "";
+
+    function refreshToolConfig(): SlowModeConfigResult {
+        const tools = pi
+            .getAllTools()
+            .filter((tool) => tool.exposure !== "hidden");
+        registrySignature = JSON.stringify(
+            tools.map((tool) => [tool.name, tool.exposure]),
+        );
+        const result = validateSlowModeConfig(
+            rawToolConfig,
+            tools.map((tool) => tool.name),
+            resolveMcp,
+        );
+        toolConfig = result.tools;
+        return result;
+    }
+
     /** Reload the slow-mode tool config from disk. */
     function reloadToolConfig(ctx: ExtensionContext): SlowModeConfigResult {
-        const raw = loadSlowModeConfig(
+        rawToolConfig = loadSlowModeConfig(
             ctx.cwd,
             undefined,
             ctx.isProjectTrusted(),
         );
-        const result = validateSlowModeConfig(
-            raw,
-            pi.getActiveTools(),
-            createMcpRefResolver(),
-        );
-        toolConfig = result.tools;
-        return result;
+        return refreshToolConfig();
     }
 
     const editedCalls = new Map<string, { original: string; edited: string }>();
@@ -452,6 +466,13 @@ export default function slowMode(pi: ExtensionAPI) {
     });
 
     pi.on("tool_call", async (event, ctx) => {
+        const signature = JSON.stringify(
+            pi
+                .getAllTools()
+                .filter((tool) => tool.exposure !== "hidden")
+                .map((tool) => [tool.name, tool.exposure]),
+        );
+        if (signature !== registrySignature) refreshToolConfig();
         if (!enabled || isRPC || !ctx.hasUI) return;
 
         // Opt-in: review only tools explicitly enabled (=== true) in config.

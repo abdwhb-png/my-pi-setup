@@ -68,7 +68,7 @@ function registerTestToolPolicyOwner(pi: ExtensionAPI): void {
     const policy = getToolPolicy();
     const detach = policy.bind(
         {
-            registered: () => pi.getAllTools().map((tool) => tool.name),
+            registered: () => pi.getAllTools(),
             active: () => pi.getActiveTools(),
             apply: (names) => pi.setActiveTools(names),
         },

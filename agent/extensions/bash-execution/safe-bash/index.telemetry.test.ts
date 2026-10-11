@@ -92,7 +92,7 @@ function setup(options: {
         getActiveTools: () => activeTools,
         setActiveTools: (names: string[]) => { activeTools = names; },
     } as unknown as ExtensionAPI;
-    const policy = mountPolicy({ registered: () => ["read", "bash", "safe_bash"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
+    const policy = mountPolicy({ registered: () => ["read", "bash", "safe_bash"].map(name => ({ name, exposure: "direct" as const })), active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
     registerSafeBash(pi, {
         createOperations: (operationOptions) =>
             createBashOperations(operationOptions),

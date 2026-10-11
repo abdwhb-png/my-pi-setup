@@ -52,7 +52,7 @@ export default function registerChildTools(pi: ExtensionAPI): void {
         ];
         if (model.id === "mcp")
             calls.push(
-                fauxToolCall("fixture_echo", {
+                fauxToolCall("mcp__fixture__echo", {
                     message: resumed ? "revived" : "initial",
                 }),
             );

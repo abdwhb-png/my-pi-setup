@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import type {
     BashOperations,
-    ExtensionContext,
+    ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -24,7 +24,7 @@ const ctx = {
         getSessionId: () => "think-policy-session",
         getSessionFile: () => undefined,
     },
-} as ExtensionContext;
+} as ExtensionToolContext;
 
 const owners: symbol[] = [];
 

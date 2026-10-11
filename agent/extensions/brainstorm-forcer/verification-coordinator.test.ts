@@ -180,7 +180,7 @@ describe("native verification coordinator", () => {
                 mission: false,
             },
         });
-        const workflowScript = request.params.workflowScript as string;
+        const workflowScript = request.params.script as string;
         expect(typeof workflowScript).toBe("string");
         expect(workflowScript).toContain("runs.all");
         expect(workflowScript).toContain("brainstorm-scout");

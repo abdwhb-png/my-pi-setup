@@ -296,3 +296,36 @@ test("recovered results hydrate only the bounded output references published by 
         expect((await integration.wait(ref, { timeoutMs: 100 })).steps).toMatchObject([{ value: { kind: "structured", value: { proof: "large retained value" } } }, { value: { kind: "text", text: "retained text" } }]);
     } finally { integration.dispose(); rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test("workflow launches use the native RPC script contract", async () => {
+    const { bus, requests } = fixture();
+    const integration = new boundary.SubagentIntegration(bus);
+    try {
+        const request = { cwd: process.cwd(), stages: [[{ key: "inspect", agent: "reader", task: "Inspect" }]] };
+        await integration.start(request);
+        const spawn = requests.find((value: any) => value.method === "spawn") as { params: Record<string, unknown> };
+        expect(spawn.params.script).toBe(boundary.compileWorkflow(request));
+        expect(spawn.params).not.toHaveProperty("workflowScript");
+    } finally { integration.dispose(); }
+});
+
+test('public preflight forwards the live native MCP host', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'subagent-host-preflight-'));
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    const client = new boundary.SubagentIntegration(fixture().bus);
+    try {
+        const agentDir = join(root,'agent'), pkg = join(root,'package');
+        mkdirSync(agentDir); mkdirSync(pkg);
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        writeFileSync(join(agentDir,'settings.json'), JSON.stringify({packages:[pkg]}));
+        writeFileSync(join(pkg,'package.json'), JSON.stringify({name:'pi-subagents',exports:{'./preflight':'./preflight.ts'}}));
+        writeFileSync(join(pkg,'preflight.ts'), 'export function resolveSubagentLaunchContract(input) { return {ok:true, tools:input.runtimeSnapshotHost?.getAllTools().map(t=>t.name)}; }');
+        const runtimeSnapshotHost = {events:fixture().bus, getAllTools: () => [{name:'mcp__docs__search'}],getCommands: () => []};
+        expect(await client.preflight({agent:'reader',task:'inspect',cwd:root}, {runtimeSnapshotHost})).toMatchObject({tools:['mcp__docs__search']});
+    } finally {
+        client.dispose();
+        if(previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+        rmSync(root,{recursive:true,force:true});
+    }
+});

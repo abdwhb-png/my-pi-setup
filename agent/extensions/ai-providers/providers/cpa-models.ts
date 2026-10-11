@@ -14,7 +14,6 @@
  * to CPA appear automatically with family-based defaults.
  */
 
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { ModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { resolveCpaModelsDevRefs } from "../../_shared/models-dev/mapping";
@@ -23,6 +22,7 @@ import {
     STATIC_FALLBACK_MODELS,
     NO_DEV_ROLE_COMPAT,
 } from "../constants/cpa-static-models";
+import type { ChatModelConfig } from "../rules/model-rules.ts";
 import { applyModelRules } from "../rules/model-rules.ts";
 
 // ── Types ──
@@ -37,7 +37,7 @@ export interface CpaModelEntry {
 }
 
 export interface CpaCatalogResult {
-    models: ProviderModelConfig[];
+    models: ChatModelConfig[];
     /** Raw CPA /v1/models entries (un-enriched), used for metadata-only reprojection. */
     entries: CpaModelEntry[];
     source: "live" | "fallback";
@@ -177,9 +177,7 @@ export async function fetchCpaModelIds(
 
 export function familyDefaults(
     modelId: string,
-): Partial<
-    Pick<ProviderModelConfig, "contextWindow" | "maxTokens" | "reasoning">
-> {
+): Partial<Pick<ChatModelConfig, "contextWindow" | "maxTokens" | "reasoning">> {
     const id = modelId.toLowerCase();
 
     // Normalize ocg/go- prefixed models to their base family name
@@ -392,7 +390,7 @@ export function enrichModel(
     entry: CpaModelEntry,
     catalog: CpaCatalogLookup,
     modelRules?: readonly ModelRule[],
-): ProviderModelConfig | null {
+): ChatModelConfig | null {
     const modelId = entry.id;
     const ownedBy = entry.owned_by;
 
@@ -467,7 +465,7 @@ export function enrichModel(
             : ["text"];
     }
 
-    const baseModel: ProviderModelConfig = {
+    const baseModel: ChatModelConfig = {
         id: modelId,
         name: formatModelName(modelId, ownedBy),
         reasoning,
@@ -480,7 +478,7 @@ export function enrichModel(
 
     // ── Layer 6: Model rules ──
     const effectiveRules =
-        modelRules ?? (loadAiProvidersConfig().modelRules ?? []);
+        modelRules ?? loadAiProvidersConfig().modelRules ?? [];
 
     return applyModelRules(baseModel, effectiveRules, {
         provider: "cpa",
@@ -521,9 +519,8 @@ export async function buildCpaModels(
     // 3. Enrich each entry against the shared catalog (in-memory lookup)
     const catalog = options?.catalog ?? getModelsDevCatalog();
     const config = loadAiProvidersConfig();
-    const modelRules =
-        options?.modelRules ?? (config.modelRules ?? []);
-    const models: ProviderModelConfig[] = [];
+    const modelRules = options?.modelRules ?? config.modelRules ?? [];
+    const models: ChatModelConfig[] = [];
     for (const entry of entries) {
         const model = enrichModel(entry, catalog, modelRules);
         if (model) models.push(model);

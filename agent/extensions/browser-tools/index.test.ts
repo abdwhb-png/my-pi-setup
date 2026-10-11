@@ -113,7 +113,7 @@ function registerRuntime(options: {
   const nativeOrder = options.nativeOrder ?? "before";
   if (nativeOrder === "before") registerNativeTools();
   const host = {
-    registered: () => ["read", ...tools.keys()],
+    registered: () => ["read", ...tools.keys()].map(name => ({ name, exposure: "direct" as const })),
     active: pi.getActiveTools,
     apply: pi.setActiveTools,
   };

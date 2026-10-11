@@ -22,6 +22,7 @@ import type {
     AgentToolResult,
     ExtensionAPI,
     ExtensionContext,
+    ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 import {
     getSandboxRuntime,
@@ -191,9 +192,9 @@ export function registerThinkInCode(
         const handlers = buildToolHandlers(coordinator);
         const schemas = createThinkSchemas();
         const adaptCtx = (
-            ctx: ExtensionContext,
+            ctx: ExtensionToolContext,
             signal: AbortSignal | undefined,
-        ) => ({ ...ctx, cwd: ctx.cwd, signal }) as ExtensionContext;
+        ) => ({ ...ctx, cwd: ctx.cwd, signal });
         // SAFETY: each handler returns a structurally-correct
         // AgentToolResult ({ content: TextContent[]; details }). The two
         // unknown-by-default generics on ToolDefinition accept any value, and

@@ -24,12 +24,12 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { createUiColors } from "../../_shared/ui/ui-colors.ts";
 import { loadAiProvidersConfig } from "../config.ts";
 import { STATIC_FALLBACK_MODELS } from "../constants/cpa-static-models";
+import type { ChatModelConfig } from "../rules/model-rules.ts";
 import type { CatalogDiffCounts } from "./catalog-diff.ts";
 import { reportCatalogDiff } from "./catalog-diff.ts";
 import { createCpaCatalogCache } from "./cpa-catalog-cache.ts";
@@ -190,7 +190,7 @@ export function getCliproxyApiKey(): string {
 
 // ── Provider config helpers ──
 
-function buildProviderConfig(models: ProviderModelConfig[]) {
+function buildProviderConfig(models: ChatModelConfig[]) {
     return {
         name: PROVIDER_DISPLAY,
         baseUrl: PROVIDER_BASE_URL,
@@ -201,8 +201,8 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
 }
 
 function mergeStartupModels(
-    cachedModels: readonly ProviderModelConfig[],
-): ProviderModelConfig[] {
+    cachedModels: readonly ChatModelConfig[],
+): ChatModelConfig[] {
     const modelsById = new Map(
         STATIC_FALLBACK_MODELS.map((model) => [model.id, model]),
     );
@@ -268,18 +268,18 @@ export function registerCpaProvider(
     // Cache raw CPA entries so projections can re-enrich against current
     // models.dev metadata without another CPA /v1/models request.
     const lastEntries: CpaModelEntry[] = [];
-    let lastEnrichedModels: ProviderModelConfig[] = [];
+    let lastEnrichedModels: ChatModelConfig[] = [];
     let hasStartupCatalog = false;
 
     function enrichEntries(
         entries: readonly CpaModelEntry[],
-    ): ProviderModelConfig[] {
+    ): ChatModelConfig[] {
         const catalog = getCatalog();
         const config = loadAiProvidersConfig();
         const rules = config.modelRules ?? [];
         return entries
             .map((entry) => enrichModel(entry, catalog, rules))
-            .filter((model): model is ProviderModelConfig => model !== null);
+            .filter((model): model is ChatModelConfig => model !== null);
     }
 
     async function refreshCatalog(

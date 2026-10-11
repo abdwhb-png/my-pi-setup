@@ -158,7 +158,7 @@ export function createToolGroupsExtension(
         const childAllowedTools = childToolPolicy
             ? new Set(childToolPolicy.allowedTools)
             : undefined;
-        const resolveMcp = createMcpRefResolver(cwd);
+        const resolveMcp = createMcpRefResolver(() => pi.getAllTools());
 
         for (const [groupName] of Object.entries(groups)) {
             const toolName = `${TOOL_GROUP_PREFIX}${groupName}`;
@@ -180,11 +180,12 @@ export function createToolGroupsExtension(
         const workflow = registerToolPolicyContribution(
             pi,
             "workflows",
-            ({ registered }) => broker.contribution(registered),
+            ({ registered }) =>
+                broker.contribution(registered.map((tool) => tool.name)),
         );
         const detach = policy.bind(
             {
-                registered: () => pi.getAllTools().map((tool) => tool.name),
+                registered: () => pi.getAllTools(),
                 active: () => pi.getActiveTools(),
                 apply: (names) => pi.setActiveTools(names),
             },
@@ -240,6 +241,9 @@ export function createToolGroupsExtension(
                 block: true,
                 reason: `Tool "${event.toolName}" is not allowed by ${result.excluded[event.toolName] ?? "active role / workflow tool policy"}.`,
             };
+        });
+        pi.on("tool_result", () => {
+            policy.refresh();
         });
         pi.on("session_shutdown", () => {
             unsubscribe();

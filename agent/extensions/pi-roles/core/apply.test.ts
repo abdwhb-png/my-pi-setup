@@ -102,7 +102,7 @@ function makeFake(
     },
   };
   let active: string[] = ["__initial__"];
-  mountPolicy({ registered: () => tools.map(t => t.name), active: () => active, apply: names => { active = names; fake.pi.setActiveTools(names); } });
+  mountPolicy({ registered: () => tools.map(t => ({ name: t.name, exposure: "direct" as const })), active: () => active, apply: names => { active = names; fake.pi.setActiveTools(names); } });
   fake.pi.setActiveTools.mockClear();
   return fake;
 }

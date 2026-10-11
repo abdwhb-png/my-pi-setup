@@ -30,7 +30,7 @@ import {
 
 import type {
     AgentToolUpdateCallback,
-    ExtensionContext,
+    ExtensionToolContext,
     TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 
@@ -415,7 +415,7 @@ export class ThinkCoordinator {
 
     async execute(
         request: ExecuteRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime = {},
     ) {
         return withThinkExecution(
@@ -431,7 +431,7 @@ export class ThinkCoordinator {
 
     async #execute(
         request: ExecuteRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime,
         trace: ThinkAnalysisTrace,
     ): Promise<{
@@ -676,7 +676,7 @@ export class ThinkCoordinator {
 
     async executeFile(
         request: ExecuteFileRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime = {},
     ) {
         return withThinkExecution(
@@ -687,7 +687,7 @@ export class ThinkCoordinator {
 
     async #executeFile(
         request: ExecuteFileRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime,
         trace: ThinkAnalysisTrace,
     ): Promise<{
@@ -884,7 +884,7 @@ export class ThinkCoordinator {
 
     async batchExecute(
         request: BatchExecuteRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime = {},
     ) {
         return withThinkExecution(
@@ -901,7 +901,7 @@ export class ThinkCoordinator {
 
     async #batchExecute(
         request: BatchExecuteRequest,
-        ctx: ExtensionContext,
+        ctx: ExtensionToolContext,
         runtime: CoordinatorRuntime,
         trace: ThinkAnalysisTrace,
     ): Promise<{

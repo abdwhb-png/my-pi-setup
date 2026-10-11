@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
     ExtensionAPI,
-    ExtensionContext,
+    ExtensionToolContext,
     ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import sessionPlanExtension from "./index";
@@ -26,7 +26,7 @@ function makeContext(
             getSessionDir: () => sessionDirectory,
             getSessionId: () => sessionId,
         },
-    } as unknown as ExtensionContext;
+    } as unknown as ExtensionToolContext;
 }
 
 function makeExtension() {

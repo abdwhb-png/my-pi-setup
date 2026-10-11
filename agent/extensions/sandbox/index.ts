@@ -1962,6 +1962,7 @@ export function createSandboxExtension(
                 }),
             ],
             read: async () => {
+                watchedShell = undefined;
                 const resolved = loadShell(ctx);
                 watchedShell = { resolved, session: sessionConfig };
                 const key = shellSandboxFingerprint(resolved.config);

@@ -87,7 +87,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
     },
   } as unknown as ExtensionAPI;
 
-  mountPolicy({ registered: () => [...new Set(["read", "edit", "write", ...registeredTools.keys()])], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
+  mountPolicy({ registered: () => [...new Set(["read", "edit", "write", ...registeredTools.keys()])].map(name => ({ name, exposure: "direct" as const })), active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
   return { pi, commands, registeredTools, registeredCommands, registeredRenderers, activeTools, sentMessages, handlers };
 }
 

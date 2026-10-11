@@ -75,12 +75,12 @@ export function mountWorkflowPolicy(pi: ExtensionAPI) {
     const broker = getSharedVisibilityBroker();
     broker.resetSession();
     const policy = mountPolicy({
-        registered: () => pi.getAllTools().map((tool) => tool.name),
+        registered: () => pi.getAllTools(),
         active: () => pi.getActiveTools(),
         apply: (names) => pi.setActiveTools(names),
     });
     policy.register("workflows", ({ registered }) =>
-        broker.contribution(registered),
+        broker.contribution(registered.map((tool) => tool.name)),
     );
     return policy;
 }

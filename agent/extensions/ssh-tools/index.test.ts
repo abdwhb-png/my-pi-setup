@@ -41,7 +41,7 @@ function mountExtension() {
     };
     const policy = mountPolicy(
         {
-            registered: () => [...tools.keys(), "read"],
+            registered: () => [...tools.keys(), "read"].map(name => ({ name, exposure: "direct" as const })),
             active: () => active,
             apply: (names) => {
                 active = names;

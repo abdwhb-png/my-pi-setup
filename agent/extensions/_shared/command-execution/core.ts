@@ -3,7 +3,7 @@ import {
     type BashOperations,
     type BashToolDetails,
     type AgentToolResult,
-    type ExtensionContext,
+    type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -100,7 +100,7 @@ export interface CommandExecutionRequest<
     stdin?: string;
     signal?: AbortSignal;
     onUpdate?: CommandExecutionUpdateCallback;
-    ctx: ExtensionContext;
+    ctx: ExtensionToolContext;
 }
 
 export interface CommandExecutionService<
@@ -242,6 +242,14 @@ export function createCommandExecutionService<
                     request.onUpdate,
                     request.ctx,
                 );
+                if (result.isError) {
+                    throw new Error(
+                        result.content
+                            .filter((part) => part.type === "text")
+                            .map((part) => part.text)
+                            .join("\n"),
+                    );
+                }
                 await telemetry?.record({
                     operation: request.operation,
                     toolCallId: request.toolCallId,

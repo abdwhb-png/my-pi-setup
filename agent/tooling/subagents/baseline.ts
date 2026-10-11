@@ -12,6 +12,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createMcpToolName } from '@earendil-works/pi-coding-agent';
 import { startFixtureMcp } from '../../extensions/__tests__/integration/fixtures/local-mcp.ts';
 
 const candidateRoot = process.env.PI_SUBAGENTS_CANDIDATE_ROOT;
@@ -37,9 +38,6 @@ const output = resolve(
         join(tmpdir(), 'pi-delegation-baseline.json'),
 );
 const fixture = join(import.meta.dir, 'fixture-provider.ts');
-const adapter = realpathSync(
-    fileURLToPath(import.meta.resolve('pi-mcp-adapter')),
-);
 
 async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
     const root = mkdtempSync(join(tmpdir(), 'pi-baseline-'));
@@ -73,24 +71,33 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
         ]),
     );
     const calls: string[] = [];
-    const server = startFixtureMcp(calls);
+    let mcpInitializations = 0;
+    const server = startFixtureMcp(calls, (request) => {
+        if (request.method === 'POST')
+            void request
+                .clone()
+                .json()
+                .then((body) => {
+                    if (body.method === 'initialize') mcpInitializations++;
+                });
+    });
     writeFileSync(
-        join(agentDir, 'mcp-adapter.json'),
+        join(agentDir, 'mcp.json'),
         JSON.stringify({
             mcpServers: {
-                fixture: { url: `${server.url}mcp`, directTools: true },
+                fixture: { url: `${server.url}mcp`, exposure: 'direct' },
             },
         }),
     );
     writeFileSync(
         join(agentDir, 'settings.json'),
         JSON.stringify({
-            packages: [packageRoot, dirname(adapter)],
+            packages: [packageRoot],
             extensions: [fixture],
             subagents: {
                 control: { enabled: false },
                 intercomBridge: { mode: 'off' },
-                subagentOnlyExtensions: [fixture, adapter],
+                subagentOnlyExtensions: [fixture],
                 agentOverrides: overrides,
             },
         }),
@@ -102,7 +109,7 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
     const child = spawn(
         process.execPath,
         [
-            join(homedir(), '.pi', 'bin', 'pi'),
+            process.env.PI_TEST_CLI ?? join(homedir(), '.pi', 'bin', 'pi'),
             '--mode',
             'rpc',
             '--offline',
@@ -111,7 +118,7 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
             '--no-prompt-templates',
             '--no-themes',
             '--no-context-files',
-            '--no-approve',
+            '--approve',
             '--provider',
             'baseline-parent',
             '--model',
@@ -356,7 +363,8 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
             const id = `${arm}-${scenario}-${index}`;
             const offset = events.length,
                 callOffset = evidence().length,
-                mcpOffset = calls.length;
+                mcpOffset = calls.length,
+                initializationOffset = mcpInitializations;
             const requestAt = Date.now();
             await command(
                 `/baseline ${scenario === 'interrupt-resume' ? 'hold' : scenario} ${id}`,
@@ -377,7 +385,14 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                                 (row) =>
                                     row.task.includes(id) &&
                                     row.task.includes('"toolResult"') &&
-                                    row.task.includes('"fixture_echo"'),
+                                    row.task.includes(
+                                        JSON.stringify(
+                                            createMcpToolName(
+                                                'fixture',
+                                                'echo',
+                                            ),
+                                        ),
+                                    ),
                             ) &&
                         Date.now() < deadline
                     )
@@ -440,6 +455,10 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                     `Child contract mismatch: ${JSON.stringify(proof)}`,
                 );
             const firstCall = Math.min(...proof.map((row) => row.time));
+            if (scenario !== 'foreground' && calls.length === mcpOffset)
+                throw new Error(
+                    'Delegation did not execute its native MCP probe.',
+                );
             const row = {
                 arm,
                 scenario,
@@ -462,7 +481,7 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                 ).size,
                 runtimes: [...new Set(proof.map((row) => row.runtime))],
                 mcpCalls: calls.length - mcpOffset,
-                networkConnections: null,
+                mcpInitializations: mcpInitializations - initializationOffset,
             };
             if (index >= 0) results.push(row);
             writeFileSync(

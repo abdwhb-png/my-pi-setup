@@ -108,7 +108,7 @@ function registerRuntime(
 			return typeof result === "string" ? response(undefined, result) : response(result);
 		},
 	};
-	const policy = mountPolicy({ registered: () => ["read", ...tools.keys()], active: pi.getActiveTools, apply: pi.setActiveTools }, handlers);
+	const policy = mountPolicy({ registered: () => ["read", ...tools.keys()].map(name => ({ name, exposure: "direct" as const })), active: pi.getActiveTools, apply: pi.setActiveTools }, handlers);
 	pi.events.on("pi-roles:tool-policy", payload => policy.setRole(payload as any));
 	herdrExtension(pi as any);
 	return { tools, commands, handlers, pi };

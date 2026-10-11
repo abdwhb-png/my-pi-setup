@@ -21,6 +21,8 @@ import {
 } from "../_shared/shell-runtime/index.ts";
 
 type RegisteredTool = Parameters<ExtensionAPI["registerTool"]>[0];
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+
 type Hook = (event: unknown, ctx: ExtensionContext) => unknown;
 
 const owners: symbol[] = [];
@@ -30,7 +32,7 @@ function publishProfile(owner: symbol, profile: ShellProfile = "default") {
         grants: emptyGrants(), requestedGrants: emptyGrants(), authorityPath: "/unused" }));
 }
 
-function executionContext(): ExtensionContext {
+function executionContext(): ExtensionToolContext {
     return {
         cwd: process.cwd(),
         hasUI: false,
@@ -39,7 +41,7 @@ function executionContext(): ExtensionContext {
             getSessionId: () => "bash-execution-test",
             getSessionFile: () => undefined,
         },
-    } as ExtensionContext;
+    } as ExtensionToolContext;
 }
 
 function publish(

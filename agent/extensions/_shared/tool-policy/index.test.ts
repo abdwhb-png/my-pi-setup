@@ -1,14 +1,14 @@
+import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { describe, expect, test } from 'bun:test';
 import { createToolPolicyCoordinator, type PolicyConfiguration } from './index.ts';
 import { createMcpRefResolver } from '../mcp/ref-resolver.ts';
-import { computeServerHash } from 'pi-mcp-adapter/metadata-cache';
 
 function fixture(config: Partial<PolicyConfiguration> = {}) {
     let active = ['read', 'edit', 'bash'];
     let registered = ['read', 'edit', 'write', 'bash', 'safe_bash', 'herdr', 'think'];
     const policy = createToolPolicyCoordinator();
     const writes: string[][] = [];
-    policy.bind({ registered: () => registered, active: () => active, apply: names => { active = names; writes.push(names); } },
+    policy.bind({ registered: () => registered.map(name => ({ name, exposure: "direct" as const })), active: () => active, apply: names => { active = names; writes.push(names); } },
         { groups: { inspect: ['read'], implement: ['read', 'edit', 'write', 'safe_bash'] }, resolveMcp: () => [], ...config });
     policy.beginSession('first');
     policy.start();
@@ -38,26 +38,12 @@ describe('tool policy coordinator', () => {
         expect(f.active()).toContain('edit');
         expect(f.active()).toContain('safe_bash');
     });
-    test('grants a proxy-only MCP server through a tool group', () => {
-        const definition = { command: 'fixture' };
-        const resolveMcp = createMcpRefResolver('/unused', {
-            loadConfig: () => ({ mcpServers: { docs: definition } }),
-            loadCache: () => ({
-                version: 1,
-                servers: {
-                    docs: {
-                        configHash: computeServerHash(definition),
-                        cachedAt: Date.now(),
-                        tools: [{ name: 'search' }],
-                        resources: [],
-                    },
-                },
-            }),
-        });
+    test('grants a native MCP namespace through a tool group', () => {
+        const resolveMcp = createMcpRefResolver(() => [{ name: 'mcp__docs__search', exposure: 'direct', namespace: { name: 'mcp__docs' } }]);
         const f = fixture({ groups: { docs: ['mcp:docs'] }, resolveMcp });
-        f.registry(['read', 'mcp__docs']);
+        f.registry(['read', 'mcp__docs__search']);
         f.policy.setRole(role('set', ['@docs']));
-        expect(f.active()).toEqual(['mcp__docs']);
+        expect(f.active()).toEqual(['mcp__docs__search']);
     });
     test('defaults do not widen explicit empty roles', () => {
         const f = fixture();
@@ -114,7 +100,7 @@ describe('tool policy coordinator', () => {
     });
     test('converges when a host application invalidates synchronously', () => {
         const p = createToolPolicyCoordinator(); let active = ['read']; let once = true;
-        p.bind({ registered: () => ['read', 'edit'], active: () => active, apply: names => {
+        p.bind({ registered: () => ['read', 'edit'].map(name => ({ name, exposure: 'direct' as const })), active: () => active, apply: names => {
             active = names;
             if (once) { once = false; p.setRole(role('set', ['read'])); }
         } }, { groups: {}, resolveMcp: () => [] });
@@ -127,4 +113,52 @@ describe('tool policy coordinator', () => {
         expect(f.active()).toEqual(['read']);
         expect(f.policy.getRole()).toBeUndefined();
     });
+});
+
+test('keeps codemode tools authorized without declaring them and excludes hidden tools', () => {
+    const p = createToolPolicyCoordinator();
+    let active: string[] = [];
+    p.bind({
+        registered: () => [
+            { name: 'read', exposure: 'direct' },
+            { name: 'mcp__docs__search', exposure: 'deferred' },
+            { name: 'mcp__docs__secret', exposure: 'hidden' },
+        ],
+        active: () => active,
+        apply: names => { active = names; },
+    }, { groups: {}, resolveMcp: () => [] });
+    p.start();
+    const result = p.setRole(role('all'));
+    expect(result?.names).toEqual(['read', 'mcp__docs__search']);
+    expect(active).toEqual(['read']);
+    expect(result?.excluded['mcp__docs__secret']).toBe('hidden exposure');
+});
+
+test('authorizes late native tools in the default policy without declaring them', () => {
+    const p = createToolPolicyCoordinator();
+    const registered: Array<Pick<ToolInfo, 'name' | 'exposure'>> = [{ name: 'read', exposure: 'direct' }];
+    let active = ['read'];
+    p.bind({ registered: () => registered, active: () => active, apply: names => { active = names; } },
+        { groups: {}, resolveMcp: ref => ref === 'mcp:docs' ? ['mcp__docs__search'] : [] });
+    p.beginSession('native-late');
+    p.start();
+    // Model declarations intentionally omit tools whose exposure is deferred.
+    registered.push({ name: 'mcp__docs__search', exposure: 'codemode' });
+    expect(p.refresh()?.names).toEqual(['read', 'mcp__docs__search']);
+    expect(active).toEqual(['read']);
+});
+
+test('preserves an explicitly activated deferred tool across refresh and removes it on role restriction', () => {
+    const p = createToolPolicyCoordinator();
+    let active = ['read'];
+    p.bind({ registered: () => [{name:'read', exposure:'direct'}, {name:'mcp__docs__search', exposure:'deferred'}], active: () => active, apply: names => { active = names; } }, {groups:{},resolveMcp: () => []});
+    p.start();
+    p.setRole(role('all'));
+    active.push('mcp__docs__search');
+    p.refresh();
+    expect(p.inspect()?.externalDrift).toBeUndefined();
+    p.setRole(role('all'));
+    expect(active).toEqual(['read','mcp__docs__search']);
+    p.setRole(role('set', ['read']));
+    expect(active).toEqual(['read']);
 });

@@ -6,7 +6,7 @@ import {
     mock,
 } from "bun:test";
 import type {
-    ExtensionContext,
+    ExtensionToolContext,
     TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -25,12 +25,12 @@ import { parseThinkExecuteHeader, type ThinkFailurePayload } from "./public-cont
 import type { ExecuteRequest } from "./types.ts";
 import { unknownExecution, hostExecution, withExecutionError } from '../_shared/execution-provenance/index.ts';
 
-function ctx(cwd: string): ExtensionContext {
+function ctx(cwd: string): ExtensionToolContext {
     return {
         cwd,
         hasUI: false,
         ui: {},
-    } as unknown as ExtensionContext;
+    } as unknown as ExtensionToolContext;
 }
 
 function fakeSafeExecution(

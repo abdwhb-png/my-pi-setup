@@ -1,3 +1,4 @@
+import type { SubagentLaunchContractInput } from "pi-subagents/preflight";
 import {
     nativeArtifactRoot,
     readOwnedCompletion,
@@ -363,7 +364,10 @@ export class SubagentIntegration extends ForegroundClient {
 
     async preflight(
         request: AgentLaunch,
-        options: { projectTrusted?: boolean } = {},
+        options: {
+            projectTrusted?: boolean;
+            runtimeSnapshotHost?: SubagentLaunchContractInput["runtimeSnapshotHost"];
+        } = {},
     ) {
         if (!request.cwd) throw new Error("Preflight requires cwd.");
         const sessionId = await this.session();
@@ -384,6 +388,7 @@ export class SubagentIntegration extends ForegroundClient {
                 extensionBindings: request.extensionBindings,
                 intercomBridge: request.intercomBridge,
                 parentSessionId: sessionId,
+                runtimeSnapshotHost: options.runtimeSnapshotHost,
                 capabilityCeiling: currentSubagentRestriction(sessionId),
             },
             options,
@@ -398,7 +403,7 @@ export class SubagentIntegration extends ForegroundClient {
         const params =
             "stages" in request
                 ? {
-                      workflowScript: compileWorkflow(request),
+                      script: compileWorkflow(request),
                       cwd: request.cwd,
                       context: request.context ?? "fresh",
                       artifacts: request.artifacts ?? true,

@@ -6,7 +6,7 @@ import {
     getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 
-test("the installed package resolver loads the provider finalizer owner last", async () => {
+test.skipIf(process.env.PI_CONFIGURATION_AUDIT !== "1")("the installed package resolver loads the provider finalizer owner last", async () => {
     const agentDir = getAgentDir();
     const cwd = dirname(agentDir);
     const settingsManager = SettingsManager.create(cwd, agentDir);

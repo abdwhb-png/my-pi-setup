@@ -1,7 +1,13 @@
 {
     "groups": {
-        "inspect": ["read", "grep", "find", "ls"],
+        "inspect": [
+            "read",
+            "grep",
+            "find",
+            "ls"
+        ],
         "web": [
+            "@codemode",
             "web_enable",
             "web_search",
             "source_check",
@@ -9,7 +15,11 @@
             "get_search_content",
             "mcp:firecrawl"
         ],
-        "docs": ["mcp:context7", "mcp:deepwiki"],
+        "docs": [
+            "@codemode",
+            "mcp:context7",
+            "mcp:deepwiki"
+        ],
         "pi-session-recall": [
             "pi_session_context",
             "pi_session_find",
@@ -17,16 +27,28 @@
             "pi_session_query",
             "pi_session_read"
         ],
-        "memory-consult": ["@pi-session-recall", "memory_search"],
+        "memory-consult": [
+            "@pi-session-recall",
+            "memory_search"
+        ],
         "memory": [
             "@memory-consult",
             "memory_add",
             "memory_replace",
             "memory_remove"
         ],
-        "files-write": ["edit", "write"],
-        "report-write": ["write_report", "edit_report"],
-        "implement": ["@files-write", "safe_bash"],
+        "files-write": [
+            "edit",
+            "write"
+        ],
+        "report-write": [
+            "write_report",
+            "edit_report"
+        ],
+        "implement": [
+            "@files-write",
+            "safe_bash"
+        ],
         "lens-inspect": [
             "ast_grep_search",
             "ast_grep_outline",
@@ -37,21 +59,59 @@
             "read_enclosing",
             "lens_diagnostics"
         ],
-        "lens-write": ["ast_grep_replace", "lens_diagnostic_mark"],
-        "lens": ["@lens-inspect", "@lens-write"],
-        "think-inspect": ["think_artifact_search"],
-        "think-exec": ["think_execute"],
-        "think": ["@think-inspect", "@think-exec"],
-        "ssh-tools": ["ssh_read", "ssh_write", "ssh_edit", "ssh_bash"],
-        "subagents": ["subagent", "subagent_supervisor", "bg_wait"],
-        "subagents-parent": ["@subagents", "subagents_enable"],
+        "lens-write": [
+            "ast_grep_replace",
+            "lens_diagnostic_mark"
+        ],
+        "lens": [
+            "@lens-inspect",
+            "@lens-write"
+        ],
+        "think-inspect": [
+            "think_artifact_search"
+        ],
+        "think-exec": [
+            "think_execute"
+        ],
+        "think": [
+            "@think-inspect",
+            "@think-exec"
+        ],
+        "ssh-tools": [
+            "ssh_read",
+            "ssh_write",
+            "ssh_edit",
+            "ssh_bash"
+        ],
+        "subagents": [
+            "subagent",
+            "subagent_supervisor",
+            "bg_wait"
+        ],
+        "subagents-parent": [
+            "@subagents",
+            "subagents_enable"
+        ],
         "review": [
             "@inspect",
             "@lens-inspect",
             "@think-inspect",
             "contact_supervisor"
         ],
-        "review-max": ["@review", "@report-write", "@docs", "memory_search"],
-        "herdr": ["herdr_layout", "herdr_pane", "herdr_agent"]
+        "review-max": [
+            "@review",
+            "@report-write",
+            "@docs",
+            "memory_search"
+        ],
+        "herdr": [
+            "herdr_layout",
+            "herdr_pane",
+            "herdr_agent"
+        ],
+        "codemode": [
+            "codemode",
+            "tool_search"
+        ]
     }
 }

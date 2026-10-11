@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
+import type { ChatModelConfig } from "./model-rules.ts";
 import {
     applyModelRules,
     isExactRule,
@@ -129,7 +129,7 @@ describe('normalizeModelRule', () => {
 });
 
 describe('mergeModelMetadata', () => {
-    const baseModel: ProviderModelConfig = {
+    const baseModel: ChatModelConfig = {
         id: 'ocg/go-glm-5.2',
         name: 'GLM 5.2 (Go)',
         api: 'openai-completions',
@@ -155,11 +155,11 @@ describe('mergeModelMetadata', () => {
     });
 
     it('deep-merges compat and samplingParams', () => {
-        // SAFETY: samplingParams is part of pi-ai Model<Api> and supported at runtime by Pi provider composer even if omitted from ProviderModelConfig.
+        // SAFETY: samplingParams is part of pi-ai Model<Api> and supported at runtime by Pi provider composer even if omitted from ChatModelConfig.
         const merged = mergeModelMetadata(baseModel, {
             compat: { supportsDeveloperRole: true, supportsStore: false },
             samplingParams: { temperature: 0.7 },
-        }) as ProviderModelConfig & { samplingParams?: Record<string, unknown> };
+        }) as ChatModelConfig & { samplingParams?: Record<string, unknown> };
         expect(merged.compat).toEqual({
             supportsDeveloperRole: true,
             supportsStore: false,
@@ -182,13 +182,13 @@ describe('mergeModelMetadata', () => {
     it('preserves extra passthrough metadata', () => {
         const merged = mergeModelMetadata(baseModel, {
             arbitraryField: 'passed-through',
-        }) as ProviderModelConfig & { arbitraryField?: string };
+        }) as ChatModelConfig & { arbitraryField?: string };
         expect(merged.arbitraryField).toBe('passed-through');
     });
 });
 
 describe('applyModelRules', () => {
-    const baseModel: ProviderModelConfig = {
+    const baseModel: ChatModelConfig = {
         id: 'gpt-5.6-terra',
         name: 'GPT 5.6 Terra',
         api: 'openai-completions',

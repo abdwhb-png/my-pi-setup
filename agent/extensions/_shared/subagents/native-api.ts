@@ -87,14 +87,19 @@ export async function preflightSubagent(
     input: SubagentLaunchContractInput,
     options: { agentDir?: string; projectTrusted?: boolean } = {},
 ): Promise<SubagentLaunchContractResult> {
+    const agentDir = options.agentDir ?? getAgentDir();
+    const projectTrusted =
+        options.projectTrusted ??
+        input.projectTrusted ??
+        isProjectConfigTrusted(input.cwd, agentDir);
     const pkg = await resolveSubagentPackage(
         input.cwd,
-        options.agentDir,
-        options.projectTrusted,
+        agentDir,
+        projectTrusted,
     );
     // oxlint-disable-next-line typescript/no-unsafe-assignment -- A variable URL selects the configured public export with its installed API type.
     const api: typeof import("pi-subagents/preflight") = await import(
         pathToFileURL(pkg.preflight).href
     );
-    return api.resolveSubagentLaunchContract(input);
+    return api.resolveSubagentLaunchContract({ ...input, projectTrusted });
 }

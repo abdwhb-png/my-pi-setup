@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
     BashOperations,
-    ExtensionContext,
+    ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -32,7 +32,7 @@ const ctx = {
     cwd: "/workspace",
     hasUI: false,
     ui: {},
-} as ExtensionContext;
+} as ExtensionToolContext;
 
 function setup(options: {
     command?: string;
@@ -308,7 +308,7 @@ describe("safe execution core", () => {
                     cwd: tmpDir(),
                     hasUI: false,
                     ui: {},
-                } as ExtensionContext,
+                } as ExtensionToolContext,
             })
             .catch((cause: unknown) => cause);
         expect(error).toBeInstanceOf(SafeExecutionError);

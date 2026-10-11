@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import slowMode from "./index.ts";
 
-test("slow-mode loads and starts with the installed MCP adapter", async () => {
+test("slow-mode loads and starts with the native tool registry", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "slow-mode-extension-"));
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousCwd = process.cwd();
@@ -18,6 +18,7 @@ test("slow-mode loads and starts with the installed MCP adapter", async () => {
         registerCommand() {},
         registerTool() {},
         getActiveTools: () => ["write", "edit", "bash", "safe_bash"],
+        getAllTools: () => ["write", "edit", "bash", "safe_bash"].map(name => ({name,exposure:"direct"})),
     } as unknown as ExtensionAPI;
 
     try {
