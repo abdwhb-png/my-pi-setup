@@ -2,6 +2,10 @@
 
 Apply these instructions only when working in the local Pi harness repository. Frenquently read [docs/ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
 
+## Repository language
+
+Write repository implementation artifacts and documentation in English, even when the user communicates in French. This includes identifiers, comments, docstrings, runtime and user-facing messages, test descriptions and fixture prose, plans, investigation reports, ADRs, and commit/PR text. Keep conversational replies in the user's language.
+
 ## Context
 
 This is the local installation of my pi harness.
