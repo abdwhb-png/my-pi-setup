@@ -12,7 +12,7 @@ The qualified migration sources are committed locally. The primary core checkout
 | pi-test-harness | `b987af1002fad59b1ef5d925082f12a716b01bab` | `main` |
 | pi-session-recall | `ab9664e62638ca81a19845279553de7e2b9d98ee` | `perf/persistent-session-views` |
 
-The core commit includes the official `v1.1.0` commit `abe508e1b89912adde45528136c3221eb69acdd7` as a merge parent. The subagents, browser, and Lens commits also retain their recorded upstream merge parents. Footer needed no source modification.
+The core commit includes the official `v1.1.0` commit `abe508e1b89912adde45528136c3221eb69acdd7` as a merge parent. The subagents, browser, and Lens commits preserve their recorded upstream revisions in their history. Browser's upstream merge parent is `e7b3b57a387e37722e0ce2401eb91935d0bea3c1`, the 0.9.4 release merge, which also contains the earlier recorded revision `0058c8e0e6dda568c5313be603841c440fc19d85`. Footer needed no source modification.
 
 ## Verification and preservation
 
