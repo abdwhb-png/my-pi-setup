@@ -344,10 +344,10 @@ export default function fixture(pi: ExtensionAPI): void {
                               : await rpc[scenario]({ id: ref.runId });
                     if (scenario === 'resume') {
                         if ('runId' in result) references.set(id, result);
-                        else if ('details' in result && result.details?.asyncId)
+                        else if ('details' in result && typeof result.details?.asyncId === 'string' && result.details.asyncId.length > 0)
                             references.set(id, {
                                 ...ref,
-                                runId: String(result.details.asyncId),
+                                runId: result.details.asyncId,
                             });
                         else
                             throw new Error(

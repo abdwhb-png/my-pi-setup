@@ -1,8 +1,8 @@
 # pi-subagents companion addons
 
-This Pi package augments upstream `pi-subagents`; it does not replace discovery, child execution, MCP handling, recovery, or notifications. It generates ordinary tool overrides and provides request-local fallback advice. Only the parent can choose to retry. Overview and wait guard remain independently disabled.
+This Pi package supplies runtime tool-group resolution and request-local fallback advice to the `pi-subagents` fork. Native discovery, child execution, MCP handling, recovery and notifications retain their existing owners. Only the parent can choose to retry. Overview and wait guard remain independently disabled.
 
-Daily Pi uses official `pi-subagents@0.73.1` with `pi-mcp-adapter@3.0.0`, installed and verified after operator approval on 2026-09-28. Package imports resolve through `~/.pi/agent/npm/node_modules/`, independently of the contribution repository and its worktrees. See [ADR-028](../../../docs/adr/ADR-028-generated-subagent-tool-overrides.md).
+Daily Pi loads the qualified Git fork from the managed clone recorded in the installation section. Package imports resolve to that clone independently of the contribution repository and its worktrees. See [ADR-029](../../../docs/adr/ADR-029-runtime-subagent-tool-selection.md).
 
 ## Runtime tool selections
 
@@ -58,4 +58,4 @@ Malformed addon configuration produces a visible startup diagnostic. Tool-select
 
 Install the qualified Git release with the daily Pi CLI. A new ref for the same repository replaces the old declaration. Do not subsequently remove the old source, since both refs share the managed clone. Verify the installed clone SHA, full package version, public exports and bare-import link. Existing Pi parent sessions must reload or restart after cutover. This change does not promote Pi core or alter MCP configuration.
 
-The pinned source is `git:github.com/abdwhb-png/pi-subagents@v0.77.0+fork.1`. Its managed directory remains `~/.pi/agent/git/github.com/abdwhb-png/pi-subagents`; the version is recorded in the source ref and manifest. Historical tags remain valid rollback targets.
+The pinned source is `git:github.com/abdwhb-png/pi-subagents@v0.77.0+fork.2`. Its managed directory remains `~/.pi/agent/git/github.com/abdwhb-png/pi-subagents`; the version is recorded in the source ref and manifest. Historical tags remain valid rollback targets.

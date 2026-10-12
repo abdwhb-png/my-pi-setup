@@ -28,6 +28,16 @@ test("expands nested groups with ordered exact and MCP selections", () => {
     expect(resolve(["@review", "read", "child_only"])).toEqual({ ok: true, selectors: ["read", "mcp:fixture/echo", "child_only"] });
     expect(resolve([])).toEqual({ ok: true, selectors: [] });
 });
+test("keeps per-agent exact tools isolated when resolving a shared policy batch", () => {
+    const result = resolveTools({cwd, agentDir, scope:"user", projectTrusted:false, selections:[
+        {agentName:"a", selectors:["@inspect", "private_a"]},
+        {agentName:"b", selectors:["@review", "private_b"]},
+    ]});
+    expect(result).toEqual([
+        {ok:true, selectors:["read", "private_a"]},
+        {ok:true, selectors:["read", "mcp:fixture/echo", "private_b"]},
+    ]);
+});
 test("uses only saved project trust and isolates user scope", () => {
     groups(join(cwd, ".pi"), { inspect: ["grep"] });
     expect(resolve(["@inspect"])).toEqual({ ok: true, selectors: ["read"] });

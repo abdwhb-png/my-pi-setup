@@ -15,6 +15,12 @@ const GROUPS: Record<string, string[]> = {
 const AVAILABLE = ['write', 'edit', 'grep', 'find', 'delete', 'move', 'list'];
 
 describe('resolveToolAliases', () => {
+    it('accepts a reusable membership index while preserving ordered expansion and diagnostics', () => {
+        const r = resolveToolAliases(['@nested', 'private_b', 'g*'], new Set([...AVAILABLE, 'private_b']), GROUPS);
+        expect(r.names).toEqual(['write', 'edit', 'grep', 'find', 'private_b']);
+        expect(r.expandedAliases).toEqual(['@nested', '@read', '@dev']);
+        expect(r.diagnostics).toEqual([{code:'unknown-tool', group:'dev', member:'read', message:'Unknown tool: read'}]);
+    });
     it('returns empty result for empty activeNames', () => {
         const r = resolveToolAliases([], AVAILABLE, GROUPS);
         expect(r.names).toEqual([]);

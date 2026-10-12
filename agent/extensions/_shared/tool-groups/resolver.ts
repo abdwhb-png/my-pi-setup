@@ -11,7 +11,7 @@ import {
  * Skips names starting with `@` (group aliases).
  * Uses simple wildcard match: `*` matches any sequence, `?` matches any single char.
  */
-function globMatch(pattern: string, candidates: string[]): string[] {
+function globMatch(pattern: string, candidates: ReadonlySet<string>): string[] {
     const regexStr =
         "^" +
         pattern
@@ -20,7 +20,7 @@ function globMatch(pattern: string, candidates: string[]): string[] {
             .replace(/\?/g, ".") +
         "$";
     const re = new RegExp(regexStr);
-    return candidates.filter(
+    return [...candidates].filter(
         (c) => !c.startsWith(TOOL_GROUP_PREFIX) && re.test(c),
     );
 }
@@ -47,10 +47,14 @@ function isGlob(value: string): boolean {
  */
 export function resolveToolAliases(
     activeNames: string[],
-    availableNames: string[],
+    availableNames: readonly string[] | ReadonlySet<string>,
     groups: Record<string, string[]>,
     resolveMcp?: (ref: string) => string[],
 ): ResolveToolAliasesResult {
+    const available =
+        availableNames instanceof Set
+            ? availableNames
+            : new Set(availableNames);
     const names: string[] = [];
     const seen = new Set<string>();
     const expandedAliases: string[] = [];
@@ -112,7 +116,7 @@ export function resolveToolAliases(
                 return;
             }
             for (const name of resolved) {
-                if (!availableNames.includes(name)) {
+                if (!available.has(name)) {
                     emitDiag("unknown-tool", name, originGroup);
                     continue;
                 }
@@ -120,7 +124,7 @@ export function resolveToolAliases(
             }
         } else {
             // Exact name — validate against available names
-            if (!availableNames.includes(member)) {
+            if (!available.has(member)) {
                 emitDiag("unknown-tool", member, originGroup);
                 return;
             }
@@ -160,7 +164,7 @@ export function resolveToolAliases(
     }
 
     function expandGlobInGroup(pattern: string, originGroup: string): void {
-        const matched = globMatch(pattern, availableNames);
+        const matched = globMatch(pattern, available);
         if (matched.length === 0) {
             emitDiag("unmatched-pattern", pattern, originGroup);
             return;
@@ -183,14 +187,14 @@ export function resolveToolAliases(
                 continue;
             }
             for (const name of resolved) {
-                if (!availableNames.includes(name)) {
+                if (!available.has(name)) {
                     emitDiag("unknown-tool", name, "<active>");
                     continue;
                 }
                 addName(name);
             }
         } else {
-            if (!availableNames.includes(item)) {
+            if (!available.has(item)) {
                 emitDiag("unknown-tool", item, "<active>");
                 continue;
             }

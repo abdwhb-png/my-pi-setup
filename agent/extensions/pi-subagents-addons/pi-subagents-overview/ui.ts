@@ -47,6 +47,7 @@ export interface OverviewAgent {
     source: "builtin" | "user" | "project";
     context: string | null;
     overrideFields: OverviewField[];
+    discoveryError?: string;
 }
 
 export interface SubagentsOverviewData {
@@ -425,7 +426,12 @@ export class SubagentsOverviewView implements Component {
             `Source: ${agent.source}`,
             `Model: ${agent.model}`,
             `Context: ${agent.context ?? "—"}`,
-            `Tools: ${agent.tools.join(", ") || "—"}`,
+            agent.discoveryError
+                ? this.config.theme.fg(
+                      "error",
+                      `Unavailable: ${agent.discoveryError}`,
+                  )
+                : `Tools: ${agent.tools.join(", ") || "—"}`,
             `Skills: ${agent.skills.join(", ") || "—"}`,
             ...(agent.overrideFields.length > 0
                 ? [

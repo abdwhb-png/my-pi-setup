@@ -15,11 +15,13 @@ export function resolveTools(
         projectTrusted: request.scope !== "user" && request.projectTrusted,
         strict: true,
     });
-    const groupMembers = Object.values(groups).flat();
+    const available = new Set(
+        [
+            ...Object.values(groups).flat(),
+            ...request.selections.flatMap(({ selectors }) => selectors),
+        ].filter((value) => !value.startsWith("@") && !/[?*]/.test(value)),
+    );
     return request.selections.map(({ agentName, selectors }) => {
-        const available = [...selectors, ...groupMembers].filter(
-            (value) => !value.startsWith("@") && !/[?*]/.test(value),
-        );
         const expanded = resolveToolAliases(selectors, available, groups);
         const visited = [
             ...selectors,

@@ -72,6 +72,7 @@ interface AgentInfo {
     skills: string[];
     source: "builtin" | "user" | "project";
     context: string | null;
+    discoveryError?: string;
 }
 
 interface AgentOverride {
@@ -172,13 +173,14 @@ function readOverrides(): Record<string, AgentOverride> {
     }
 }
 
-let effectiveTools = new Map<string, string[]>();
-let effectiveNames = new Map<string, string>();
+let effectiveSelections = new Map<
+    string,
+    Pick<AgentInfo, "name" | "tools" | "discoveryError">
+>();
 
 async function loadBuiltinOwner(ctx: ExtensionContext): Promise<void> {
     builtinAgentsDir = undefined;
-    effectiveTools = new Map();
-    effectiveNames = new Map();
+    effectiveSelections = new Map();
     const discovery = await discoverSubagents(ctx.cwd, {
         projectTrusted: ctx.isProjectTrusted(),
     });
@@ -187,8 +189,22 @@ async function loadBuiltinOwner(ctx: ExtensionContext): Promise<void> {
             ...(agent.tools ?? []),
             ...(agent.mcpDirectTools ?? []).map((tool) => `mcp:${tool}`),
         ];
-        effectiveTools.set(agent.name, tools);
-        effectiveNames.set(path.resolve(agent.filePath), agent.name);
+        effectiveSelections.set(path.resolve(agent.filePath), {
+            name: agent.name,
+            tools,
+        });
+    }
+    for (const diagnostic of discovery.agentDiagnostics ?? []) {
+        const file = path.resolve(diagnostic.filePath);
+        if (!effectiveSelections.has(file))
+            effectiveSelections.set(file, {
+                name:
+                    diagnostic.runtimeName ??
+                    diagnostic.name ??
+                    path.basename(file, ".md"),
+                tools: [],
+                discoveryError: diagnostic.error,
+            });
     }
     const pkg = await resolveSubagentPackage(
         ctx.cwd,
@@ -196,6 +212,19 @@ async function loadBuiltinOwner(ctx: ExtensionContext): Promise<void> {
         ctx.isProjectTrusted(),
     );
     builtinAgentsDir = path.join(pkg.root, "agents");
+}
+
+function effectiveSelection(
+    filePath: string,
+    fallbackName: string,
+): Pick<AgentInfo, "name" | "tools" | "discoveryError"> {
+    return (
+        effectiveSelections.get(path.resolve(filePath)) ?? {
+            name: fallbackName,
+            tools: [],
+            discoveryError: "Agent is unavailable in native discovery",
+        }
+    );
 }
 
 function readBuiltinAgents(): AgentInfo[] {
@@ -218,13 +247,9 @@ function readBuiltinAgents(): AgentInfo[] {
         const fm = parseAgentFile(filePath);
         if (!fm) continue;
 
-        const agentName =
-            effectiveNames.get(path.resolve(filePath)) ?? (fm.name || name);
-
         agents.push({
-            name: agentName,
+            ...effectiveSelection(filePath, fm.name || name),
             description: fm.description || "",
-            tools: effectiveTools.get(agentName) ?? [],
             model: fm.model || null,
             skills: [],
             source: "builtin",
@@ -245,13 +270,12 @@ function readUserAgents(): AgentInfo[] {
         const fm = parseAgentFile(filePath);
         if (!fm) continue;
 
-        const agentName =
-            effectiveNames.get(path.resolve(filePath)) ??
-            (fm.name || entry.replace(/\.md$/, ""));
         agents.push({
-            name: agentName,
+            ...effectiveSelection(
+                filePath,
+                fm.name || entry.replace(/\.md$/, ""),
+            ),
             description: fm.description || "",
-            tools: effectiveTools.get(agentName) ?? [],
             model: fm.model || null,
             skills: (fm.skills || "")
                 .split(",")
@@ -324,7 +348,12 @@ function formatAgentBlock(
     const toolsLabel = hasOverride ? "Tools*" : "Tools";
     const toolsStr = agent.tools.length > 0 ? agent.tools.join(", ") : "—";
     const overrideMarker = hasOverride ? `  ${YELLOW}← OVERRIDDEN${RESET}` : "";
-    lines.push(`  ${DIM}${toolsLabel}:${RESET} ${toolsStr}${overrideMarker}`);
+    if (agent.discoveryError)
+        lines.push(`  ${RED}Unavailable:${RESET} ${agent.discoveryError}`);
+    else
+        lines.push(
+            `  ${DIM}${toolsLabel}:${RESET} ${toolsStr}${overrideMarker}`,
+        );
 
     const modelStr = agent.model ?? `${DIM}(inherited from default)${RESET}`;
     lines.push(`  ${DIM}Model:${RESET} ${modelStr}`);
@@ -401,12 +430,14 @@ function formatOverview(includeBanner = true): string {
         }
 
         if (others.length > 0) {
+            const unavailable = others.filter((a) => a.discoveryError);
             const notable = others.filter(
                 (a) =>
+                    !a.discoveryError &&
                     a.tools.length > 0 &&
                     !(a.tools.length === 1 && a.tools[0] === "read"),
             );
-            const shown = notable.length > 3 ? notable.slice(0, 3) : notable;
+            const shown = [...unavailable, ...notable.slice(0, 3)];
 
             for (const agent of shown) {
                 lines.push(...formatAgentBlock(agent, overrides));
@@ -537,6 +568,7 @@ function buildOverviewData(): SubagentsOverviewData {
                 skills: agent.skills,
                 source: agent.source,
                 context: agent.context,
+                discoveryError: agent.discoveryError,
                 overrideFields: overrideFields(agent.name),
             };
         }),
@@ -927,7 +959,9 @@ export default function (pi: ExtensionAPI) {
             lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
             lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
             lines.push(
-                `  ${DIM}Tools:${RESET} ${agent.tools.join(", ") || "—"}`,
+                agent.discoveryError
+                    ? `  ${RED}Unavailable:${RESET} ${agent.discoveryError}`
+                    : `  ${DIM}Tools:${RESET} ${agent.tools.join(", ") || "—"}`,
             );
             lines.push(
                 `  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`,

@@ -1,0 +1,27 @@
+{
+  "source": "git:github.com/abdwhb-png/pi-subagents@v0.77.0+fork.2",
+  "version": "0.77.0+fork.2",
+  "commit": "b4657e7ed8e37959888a22dbcad3dfde48a07fba",
+  "managedRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+  "qualificationPaths": [
+    "preflight",
+    "direct-builtin",
+    "builtin-foreground",
+    "builtin-async",
+    "builtin-workflow",
+    "configured-nested",
+    "builtin-hold"
+  ],
+  "regressionTestsPassed": 22,
+  "effectiveDiscovery": {
+    "agents": 36,
+    "diagnostics": 0,
+    "unresolvedAliases": 0
+  },
+  "unrelatedSettingsPreserved": true,
+  "projectSettingsUnchanged": true,
+  "protectedFilesUnchanged": 19,
+  "runtimeRelease": "1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58",
+  "backup": "~/engineering/pi-integrations/.backups/pi-subagents/20261012T154255Z-tool-selection-fixes/",
+  "restartExistingParents": true
+}

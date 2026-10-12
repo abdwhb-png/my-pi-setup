@@ -46,6 +46,19 @@ const theme = {
     underline: (text: string) => text,
 } as unknown as Theme;
 
+it("shows native discovery failures in the interactive catalog details", () => {
+    const data = {
+        agents: [{name:"broken", description:"Fixture", tools:[], model:"inherited", skills:[], source:"user" as const, context:null, overrideFields:[], discoveryError:"Fixture missing group"}],
+        overrides: [],
+        stats: {builtinCount:0, userCount:1, safeBashAgents:[], plainBashAgents:[], skillCount:0},
+    };
+    const view = new SubagentsOverviewView({theme, data, done:()=>{}, getTerminalRows:()=>40});
+    const text = view.render(120).join("\n");
+    expect(text).toContain("Fixture missing group");
+    expect(text).toContain("Unavailable");
+    expect(text).not.toContain("Tools: —");
+});
+
 function parseFrontmatterSimple(raw: string): Record<string, string> | null {
     const match = raw.match(/^---\n([\s\S]*?)\n---\n/);
     if (!match) return null;
