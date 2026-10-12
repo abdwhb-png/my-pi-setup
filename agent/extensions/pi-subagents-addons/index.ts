@@ -1,22 +1,12 @@
 import { readFileSync } from "node:fs";
-import {
-    getAgentDir,
-    type ExtensionAPI,
-} from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readExtensionConfig } from "../_shared/config-loader.ts";
-import { restrictSubagents } from "../_shared/subagents/index.ts";
-import { collectWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import {
     parseFallbackAdviceConfig,
     registerFallbackAdvice,
 } from "./fallback-advice.ts";
-import { syncGeneratedToolSettings } from "./generated-tool-settings.ts";
 import registerSubagentsOverview from "./pi-subagents-overview/index.ts";
 import registerSubagentWaitGuard from "./subagent-wait-guard/index.ts";
-import {
-    compileToolGroupOverrides,
-    parseToolGroupOverridesConfig,
-} from "./tool-group-overrides.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,9 +26,6 @@ export function readAddonsConfig(path?: string | URL) {
         piSubagentsOverview:
             isRecord(parsed.piSubagentsOverview) &&
             parsed.piSubagentsOverview.enabled === true,
-        toolGroupOverrides: parseToolGroupOverridesConfig(
-            parsed.toolGroupOverrides,
-        ),
         fallbackAdvice: parseFallbackAdviceConfig(
             parsed.fallbackAdvice ?? { enabled: false },
         ),
@@ -50,62 +37,21 @@ export default function registerSubagentsAddons(
     configPath?: string | URL,
 ): void {
     let config: ReturnType<typeof readAddonsConfig> | undefined;
-    let loadError: unknown;
     try {
         config = readAddonsConfig(configPath);
-    } catch (error) {
-        // A factory exception would unload the guard as well. Report it at startup instead.
-        loadError = error;
+    } catch {
+        // Report configuration failures from the lifecycle handler so Pi keeps the extension loaded.
     }
-    if (process.env.PI_SUBAGENT_CHILD !== "1") {
-        let denial: ReturnType<typeof restrictSubagents> | undefined;
-        pi.on("session_start", async (event, ctx) => {
-            const gate = restrictSubagents({
-                sessionId:
-                    ctx.sessionManager.getSessionFile() ??
-                    ctx.sessionManager.getSessionId(),
-                source: "pi-subagents-addons:generated-tools",
-                ceiling: { allowedAgents: [] },
-            });
-            denial?.dispose();
-            denial = gate;
-            try {
-                if (event.reason === "startup" && loadError) throw loadError;
-                const current = readAddonsConfig(configPath);
-                if (current.toolGroupOverrides.enabled) {
-                    const workflow = collectWorkflowAgentDefinitions(pi.events);
-                    if (workflow.diagnostics.length)
-                        throw new Error(workflow.diagnostics.join("; "));
-                    const options = {
-                        cwd: ctx.cwd,
-                        agentDir: getAgentDir(),
-                        projectTrusted: ctx.isProjectTrusted(),
-                    };
-                    const compilation = compileToolGroupOverrides({
-                        ...options,
-                        config: current.toolGroupOverrides,
-                        workflowAgents: workflow.entries,
-                    });
-                    if (compilation)
-                        await syncGeneratedToolSettings({
-                            ...options,
-                            compilation,
-                        });
-                }
-                gate.dispose();
-                if (denial === gate) denial = undefined;
-                ctx.ui.setStatus("generated-tools", undefined);
-            } catch (error) {
-                const message = `Subagent launches blocked: ${error instanceof Error ? error.message : String(error)}. Fix configuration or ownership conflict, then /reload.`;
-                ctx.ui.setStatus("generated-tools", message);
-                ctx.ui.notify(message, "error");
-            }
-        });
-        pi.on("session_shutdown", () => {
-            denial?.dispose();
-            denial = undefined;
-        });
-    }
+    pi.on("session_start", (_event, ctx) => {
+        try {
+            readAddonsConfig(configPath);
+            ctx.ui.setStatus("subagents-addons", undefined);
+        } catch (error) {
+            const message = `Invalid subagents addon configuration: ${error instanceof Error ? error.message : String(error)}. Fix it and /reload.`;
+            ctx.ui.setStatus("subagents-addons", message);
+            ctx.ui.notify(message, "error");
+        }
+    });
     if (config?.subagentWaitGuard) registerSubagentWaitGuard(pi);
     if (config?.piSubagentsOverview) registerSubagentsOverview(pi);
     if (config?.fallbackAdvice.enabled)

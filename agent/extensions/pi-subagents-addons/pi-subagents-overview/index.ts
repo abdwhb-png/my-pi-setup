@@ -33,7 +33,10 @@ import type {
     AsyncLiveRun,
     LiveRunSnapshot,
 } from "../../_shared/subagents/fleet-store.ts";
-import { resolveSubagentPackage } from "../../_shared/subagents/index.ts";
+import {
+    discoverSubagents,
+    resolveSubagentPackage,
+} from "../../_shared/subagents/index.ts";
 import { SubagentsLiveRuntime } from "../../_shared/subagents/live-runtime.ts";
 import { hasVisibleLiveRuns, renderLiveWidget } from "./live-ui.ts";
 import {
@@ -169,22 +172,24 @@ function readOverrides(): Record<string, AgentOverride> {
     }
 }
 
-/**
- * Return the effective tool list for an agent, applying overrides from settings.json.
- */
-function getEffectiveTools(
-    agent: AgentInfo,
-    overrides: Record<string, AgentOverride>,
-): string[] {
-    const override = overrides[agent.name];
-    if (!override) return agent.tools;
-    if (override.tools === false) return [];
-    if (Array.isArray(override.tools)) return override.tools;
-    return agent.tools;
-}
+let effectiveTools = new Map<string, string[]>();
+let effectiveNames = new Map<string, string>();
 
 async function loadBuiltinOwner(ctx: ExtensionContext): Promise<void> {
     builtinAgentsDir = undefined;
+    effectiveTools = new Map();
+    effectiveNames = new Map();
+    const discovery = await discoverSubagents(ctx.cwd, {
+        projectTrusted: ctx.isProjectTrusted(),
+    });
+    for (const agent of discovery.agents) {
+        const tools = [
+            ...(agent.tools ?? []),
+            ...(agent.mcpDirectTools ?? []).map((tool) => `mcp:${tool}`),
+        ];
+        effectiveTools.set(agent.name, tools);
+        effectiveNames.set(path.resolve(agent.filePath), agent.name);
+    }
     const pkg = await resolveSubagentPackage(
         ctx.cwd,
         undefined,
@@ -213,16 +218,13 @@ function readBuiltinAgents(): AgentInfo[] {
         const fm = parseAgentFile(filePath);
         if (!fm) continue;
 
-        const toolsRaw = fm.tools || "";
-        const tools = toolsRaw
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean);
+        const agentName =
+            effectiveNames.get(path.resolve(filePath)) ?? (fm.name || name);
 
         agents.push({
-            name: fm.name || name,
+            name: agentName,
             description: fm.description || "",
-            tools,
+            tools: effectiveTools.get(agentName) ?? [],
             model: fm.model || null,
             skills: [],
             source: "builtin",
@@ -243,13 +245,13 @@ function readUserAgents(): AgentInfo[] {
         const fm = parseAgentFile(filePath);
         if (!fm) continue;
 
+        const agentName =
+            effectiveNames.get(path.resolve(filePath)) ??
+            (fm.name || entry.replace(/\.md$/, ""));
         agents.push({
-            name: fm.name || entry.replace(/\.md$/, ""),
+            name: agentName,
             description: fm.description || "",
-            tools: (fm.tools || "")
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean),
+            tools: effectiveTools.get(agentName) ?? [],
             model: fm.model || null,
             skills: (fm.skills || "")
                 .split(",")
@@ -280,9 +282,7 @@ function buildWidgetLine(): string {
     // Agents with safe_bash only (no plain bash) — applying overrides
     const safeBashAgents = [...builtins, ...users]
         .filter(
-            (a) =>
-                getEffectiveTools(a, overrides).includes("safe_bash") &&
-                !getEffectiveTools(a, overrides).includes("bash"),
+            (a) => a.tools.includes("safe_bash") && !a.tools.includes("bash"),
         )
         .map((a) => a.name);
 
@@ -464,12 +464,10 @@ function formatOverview(includeBanner = true): string {
     // Agents with execution tools (applying overrides from settings.json)
     const allAgents = [...builtins, ...users];
     const agentsWithSafeBash = allAgents.filter(
-        (a) =>
-            getEffectiveTools(a, overrides).includes("safe_bash") &&
-            !getEffectiveTools(a, overrides).includes("bash"),
+        (a) => a.tools.includes("safe_bash") && !a.tools.includes("bash"),
     );
     const agentsWithPlainBash = allAgents.filter((a) =>
-        getEffectiveTools(a, overrides).includes("bash"),
+        a.tools.includes("bash"),
     );
 
     lines.push(
@@ -514,12 +512,12 @@ function buildOverviewData(): SubagentsOverviewData {
             }));
     const safeBashAgents = agents
         .filter((agent) => {
-            const tools = getEffectiveTools(agent, overrides);
+            const tools = agent.tools;
             return tools.includes("safe_bash") && !tools.includes("bash");
         })
         .map((agent) => agent.name);
     const plainBashAgents = agents
-        .filter((agent) => getEffectiveTools(agent, overrides).includes("bash"))
+        .filter((agent) => agent.tools.includes("bash"))
         .map((agent) => agent.name);
     const uniqueSkills = new Set(
         agents.flatMap((agent) => agent.skills).filter(Boolean),
@@ -531,7 +529,7 @@ function buildOverviewData(): SubagentsOverviewData {
             return {
                 name: agent.name,
                 description: agent.description,
-                tools: getEffectiveTools(agent, overrides),
+                tools: agent.tools,
                 model:
                     typeof overrideModel === "string"
                         ? overrideModel
@@ -929,7 +927,7 @@ export default function (pi: ExtensionAPI) {
             lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
             lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
             lines.push(
-                `  ${DIM}Tools:${RESET} ${getEffectiveTools(agent, overrides).join(", ") || "—"}`,
+                `  ${DIM}Tools:${RESET} ${agent.tools.join(", ") || "—"}`,
             );
             lines.push(
                 `  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`,

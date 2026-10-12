@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir, type EventBus } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /**
  * Gate workflow-specific subagents behind the active workflow lifecycle by
@@ -8,8 +8,7 @@ import { getAgentDir, type EventBus } from "@earendil-works/pi-coding-agent";
  *
  * Keep Markdown discovery so ordinary upstream agentOverrides apply to workflow
  * agents, just as they do to user agents. Runtime registration has a different
- * override contract. Publishing definitions on the session bus lets startup
- * compile tool overrides without acquiring visibility or writing these files.
+ * override contract.
  */
 
 export type WorkflowAgentEntry = {
@@ -18,57 +17,6 @@ export type WorkflowAgentEntry = {
     /** Full `.md` content: YAML frontmatter + body. */
     markdown: string;
 };
-
-const DEFINITION_REQUEST = "workflow-agents:definitions:v1";
-
-/** Register during the owner factory, before startup collects definitions. No files are written. */
-export function publishWorkflowAgentDefinitions(
-    bus: EventBus,
-    owner: string,
-    entries: readonly WorkflowAgentEntry[],
-): () => void {
-    const snapshot = entries.map((entry) => ({ ...entry }));
-    return bus.on(DEFINITION_REQUEST, (request) => {
-        if (
-            request &&
-            typeof request === "object" &&
-            "accept" in request &&
-            typeof request.accept === "function"
-        )
-            request.accept(owner, snapshot);
-    });
-}
-
-/** Pi dispatches these synchronous listeners before emit returns; never rely on a thrown listener. */
-export function collectWorkflowAgentDefinitions(bus: EventBus): {
-    entries: WorkflowAgentEntry[];
-    diagnostics: string[];
-} {
-    const definitions = new Map<
-        string,
-        { entry: WorkflowAgentEntry; owner: string }
-    >();
-    const diagnostics: string[] = [];
-    bus.emit(DEFINITION_REQUEST, {
-        accept(owner: string, entries: readonly WorkflowAgentEntry[]) {
-            for (const entry of entries) {
-                const previous = definitions.get(entry.name);
-                if (previous && previous.entry.markdown !== entry.markdown)
-                    diagnostics.push(
-                        `Conflicting workflow ${entry.name}: ${previous.owner}, ${owner}`,
-                    );
-                else
-                    definitions.set(entry.name, { entry: { ...entry }, owner });
-            }
-        },
-    });
-    return {
-        entries: diagnostics.length
-            ? []
-            : [...definitions.values()].map((value) => value.entry),
-        diagnostics,
-    };
-}
 
 function agentsDir(): string {
     return join(getAgentDir(), "agents");

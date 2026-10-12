@@ -30,14 +30,10 @@ import {
     subagentSessionKey,
     type RestrictionHandle,
 } from "../_shared/subagents/index.ts";
-import { publishWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
-import {
-    createBrainstormAgentGate,
-    getBrainstormAgentEntries,
-} from "./brainstorm-agents";
+import { createBrainstormAgentGate } from "./brainstorm-agents";
 import {
     createExplorationLedger,
     isExplorationRecord,
@@ -638,11 +634,6 @@ export default function brainstormForcer(
     const processingRunIds = new Set<string>();
     const ceilingManager = createCapabilityCeilingManager();
     const agentGate = createBrainstormAgentGate();
-    const unpublishAgents = publishWorkflowAgentDefinitions(
-        pi.events,
-        "brainstorm-forcer",
-        getBrainstormAgentEntries(),
-    );
     let researchRunner = createResearchRunner(pi.events);
     const verificationCoordinator = createVerificationCoordinator(pi.events);
     const runPreflight = dependencies.preflight ?? preflightVerifierAgents;
@@ -3220,7 +3211,6 @@ export default function brainstormForcer(
     });
 
     pi.on("session_shutdown", async (_event, ctx) => {
-        unpublishAgents();
         widget?.remove(ctx);
         widget = null;
         widgetText = null;

@@ -125,21 +125,16 @@ if (!fixtureHome) {
             });
             if (!result.ok)
                 throw new Error(`${result.code}: ${result.message}`);
-            expect(result.contract.protocol.packageVersion).toBe("0.77.0");
+            expect(result.contract.protocol.packageVersion).toBe(JSON.parse(readFileSync(new URL("../../../node_modules/pi-subagents/package.json", import.meta.url), "utf8")).version);
             return result.contract;
         }
 
-        test("baseline leaves Markdown group selectors unresolved without generated overrides", async () => {
-            const file = writeAgent(
-                join(agentDir, "agents"),
-                "groups-baseline",
-                '"@inspect"',
-            );
-            const launch = await contract("groups-baseline");
-            expect(launch.tools.declaredBuiltin).toEqual(["@inspect"]);
-            expect(launch.tools.requiredChildTools).toContain("@inspect");
-            expect(launch.tools.requiredChildTools).not.toContain("read");
-            expect(readFileSync(file.path, "utf8")).toBe(file.source);
+        test("unresolved aliases fail before launch when no host provider is configured", async () => {
+            writeAgent(join(agentDir, "agents"), "groups-baseline", '"@inspect"');
+            const result = await preflight.resolveSubagentLaunchContract({agent:"groups-baseline", cwd, skill:false});
+            expect(result.ok).toBe(false);
+            if (result.ok) throw new Error("Expected alias diagnostic");
+            expect(result.message).toContain("toolSelectionResolver");
         });
 
         test("ordinary overrides replace built-in and Markdown tools without changing sources", async () => {

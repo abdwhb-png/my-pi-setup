@@ -15,11 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { createMcpToolName } from '@earendil-works/pi-coding-agent';
 import { startFixtureMcp } from '../../extensions/__tests__/integration/fixtures/local-mcp.ts';
 
-const candidateRoot = process.env.PI_SUBAGENTS_CANDIDATE_ROOT;
-if (!candidateRoot)
+const configuredCandidate = process.env.PI_SUBAGENTS_CANDIDATE_ROOT;
+if (!configuredCandidate)
     throw new Error(
         'Set PI_SUBAGENTS_CANDIDATE_ROOT to the built package. Daily settings are never changed.',
     );
+const candidateRoot = resolve(configuredCandidate);
 const installedRoot = dirname(
     realpathSync(fileURLToPath(import.meta.resolve('pi-subagents'))),
 );
@@ -38,6 +39,7 @@ const output = resolve(
         join(tmpdir(), 'pi-delegation-baseline.json'),
 );
 const fixture = join(import.meta.dir, 'fixture-provider.ts');
+const qualifyToolGroups = process.env.PI_BASELINE_TOOL_GROUPS === '1';
 
 async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
     const root = mkdtempSync(join(tmpdir(), 'pi-baseline-'));
@@ -53,11 +55,30 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
         join(agentDir, 'agents', 'reader.md'),
         '---\nname: reader\ndescription: Deterministic baseline reader\n---\nInspect the fixture.\n',
     );
+    const useAliases = qualifyToolGroups && arm === 'candidate';
+    const selectionProvider = join(root, 'tool-selection.ts');
+    if (useAliases) {
+        writeFileSync(
+            selectionProvider,
+            `export { resolveTools } from ${JSON.stringify(join(import.meta.dir, '../../extensions/pi-subagents-addons/tool-selection.ts'))};`,
+        );
+        mkdirSync(join(agentDir, 'config'));
+        writeFileSync(
+            join(agentDir, 'config', 'tool-groups.json'),
+            JSON.stringify({
+                groups: { 'baseline-read': ['read', 'fixture_ping'] },
+            }),
+        );
+    }
     const overrides = Object.fromEntries(
-        ['reader', 'scout'].map((agent) => [
+        ['reader', 'scout', 'coordinator'].map((agent) => [
             agent,
             { model: 'baseline-child/target', thinking: 'high' },
         ]),
+    );
+    writeFileSync(
+        join(agentDir, 'agents', 'coordinator.md'),
+        `---\nname: coordinator\ndescription: Nested tool-selection fixture\ntools: ${useAliases ? '@baseline-read' : 'read'}, subagent\nallowNestedSubagents: true\nallowedAgents: reader\n---\nDelegate the fixture to reader.\n`,
     );
     const projectOverrides = Object.fromEntries(
         ['reader', 'scout'].map((agent) => [
@@ -65,8 +86,16 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
             {
                 tools:
                     scenario === 'foreground'
-                        ? ['read']
-                        : ['read', 'mcp:fixture/echo'],
+                        ? [
+                              useAliases ? '@baseline-read' : 'read',
+                              ...(qualifyToolGroups && !useAliases
+                                  ? ['fixture_ping']
+                                  : []),
+                          ]
+                        : [
+                              useAliases ? '@baseline-read' : 'read',
+                              'mcp:fixture/echo',
+                          ],
             },
         ]),
     );
@@ -95,9 +124,17 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
             packages: [packageRoot],
             extensions: [fixture],
             subagents: {
+                ...(useAliases
+                    ? { toolSelectionResolver: selectionProvider }
+                    : {}),
                 control: { enabled: false },
                 intercomBridge: { mode: 'off' },
-                subagentOnlyExtensions: [fixture],
+                defaultSubagentOnlyExtensions: [
+                    fixture,
+                    ...(qualifyToolGroups
+                        ? [join(import.meta.dir, 'fixture-child-tools.ts')]
+                        : []),
+                ],
                 agentOverrides: overrides,
             },
         }),
@@ -241,7 +278,7 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                 proof[0].reasoning !== 'high'
             )
                 throw new Error(
-                    `Builtin execution contract: ${JSON.stringify(proof)}`,
+                    `Builtin execution contract: ${JSON.stringify(proof)}; preflight: ${JSON.stringify(preflight.result)}; tool results: ${JSON.stringify(events.slice(directOffset).filter((event) => event.type === 'tool_execution_end'))}`,
                 );
             results.push({
                 kind: 'qualification',
@@ -254,6 +291,7 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                     'builtin-foreground',
                     'builtin-async',
                     'builtin-workflow',
+                    'configured-nested',
                     'builtin-hold',
                 ]) {
                     const id = `qualification-${path}`,
@@ -286,6 +324,15 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                             interruptOffset,
                         );
                         await command('/baseline change-model configuration');
+                        if (useAliases) {
+                            writeFileSync(
+                                join(agentDir, 'config', 'tool-groups.json'),
+                                JSON.stringify({
+                                    groups: { 'baseline-read': ['write'] },
+                                }),
+                            );
+                            rmSync(selectionProvider);
+                        }
                         const resumeOffset = events.length;
                         await command(`/baseline resume ${id}`);
                         receipt = await wait(
@@ -297,7 +344,10 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                         if (!receipt.result.resumedFrom)
                             throw new Error('Missing resume lineage.');
                     }
-                    if (path !== 'builtin-foreground') {
+                    if (
+                        path !== 'builtin-foreground' &&
+                        path !== 'configured-nested'
+                    ) {
                         const terminal = await wait(
                             (event) =>
                                 event.type === 'baseline_native_terminal' &&
@@ -331,12 +381,26 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                         );
                     const childProof = evidence().slice(callOffset);
                     if (
+                        path === 'configured-nested' &&
+                        !childProof.some(
+                            (row) =>
+                                row.task.includes('nested-fixture') &&
+                                row.tools.includes('read') &&
+                                !row.tools.includes('subagent'),
+                        )
+                    )
+                        throw new Error(
+                            'Nested configured child did not execute its resolved tool contract.',
+                        );
+                    if (
                         !childProof.length ||
                         childProof.some(
                             (row) =>
                                 row.model !== 'baseline-child/target' ||
                                 row.reasoning !== 'high' ||
-                                row.tools.includes('write'),
+                                row.tools.includes('write') ||
+                                (useAliases &&
+                                    !row.tools.includes('fixture_ping')),
                         )
                     )
                         throw new Error(
@@ -349,8 +413,26 @@ async function* measureArm(scenario: string, arm: 'reference' | 'candidate') {
                         receipt,
                         evidence: childProof,
                     });
-                    if (path === 'builtin-hold')
+                    if (path === 'builtin-hold') {
                         await command('/baseline restore-model configuration');
+                        if (useAliases) {
+                            writeFileSync(
+                                selectionProvider,
+                                `export { resolveTools } from ${JSON.stringify(join(import.meta.dir, '../../extensions/pi-subagents-addons/tool-selection.ts'))};`,
+                            );
+                            writeFileSync(
+                                join(agentDir, 'config', 'tool-groups.json'),
+                                JSON.stringify({
+                                    groups: {
+                                        'baseline-read': [
+                                            'read',
+                                            'fixture_ping',
+                                        ],
+                                    },
+                                }),
+                            );
+                        }
+                    }
                 }
                 writeFileSync(
                     output,

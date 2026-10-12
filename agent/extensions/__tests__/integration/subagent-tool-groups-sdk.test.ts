@@ -20,7 +20,7 @@ import {
 import { resolveSubagentLaunchContract } from "pi-subagents/preflight";
 import { publicExtensionEntrypoint } from "./public-extension-session.ts";
 
-it("generated snapshot reaches the SDK allowlist and enforces native tool calls", async () => {
+it("runtime resolution reaches the SDK allowlist and enforces native tool calls", async () => {
     const originalCwd = process.cwd();
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const tempDir = await mkdtemp(join(tmpdir(), "pi-subagent-groups-sdk-"));
@@ -59,6 +59,8 @@ it("generated snapshot reaches the SDK allowlist and enforces native tool calls"
             `import register from ${JSON.stringify(publicExtensionEntrypoint("pi-subagents-addons"))};\nexport default (pi) => register(pi, ${JSON.stringify(configPath)});\n`,
         );
 
+        const settingsBytes = JSON.stringify({subagents:{toolSelectionResolver:join(import.meta.dir,"../../pi-subagents-addons/tool-selection.ts")}});
+        await writeFile(join(tempDir,"settings.json"), settingsBytes);
         const settings = SettingsManager.inMemory({});
         const modelRuntime = await ModelRuntime.create({
             credentials: new InMemoryCredentialStore(),
@@ -102,13 +104,7 @@ it("generated snapshot reaches the SDK allowlist and enforces native tool calls"
                 },
             });
             expect(startupErrors).toEqual([]);
-            const generated = JSON.parse(
-                await readFile(join(tempDir, "settings.json"), "utf8"),
-            );
-            expect(generated.subagents.agentOverrides.reader.tools).toEqual([
-                "read",
-                "grep",
-            ]);
+            expect(await readFile(join(tempDir, "settings.json"), "utf8")).toBe(settingsBytes);
             const result = await resolveSubagentLaunchContract({
                 agent: "reader",
                 cwd: tempDir,

@@ -66,6 +66,34 @@ export default function fixture(pi: ExtensionAPI): void {
             join(process.cwd(), 'calls.jsonl'),
             JSON.stringify(evidence) + '\n',
         );
+        if (tools.includes('subagent')) {
+            const nested = context.messages.find(
+                (message) =>
+                    message.role === 'toolResult' &&
+                    message.toolName === 'subagent',
+            );
+            if (!nested)
+                return fauxAssistantMessage(
+                    fauxToolCall('subagent', {
+                        agent: 'reader',
+                        task: 'nested-fixture',
+                        context: 'fresh',
+                        async: false,
+                        skill: false,
+                    }),
+                );
+            if (nested.role === 'toolResult' && nested.isError)
+                throw new Error('Nested configured child failed.');
+        }
+        if (
+            tools.includes('fixture_ping') &&
+            !context.messages.some(
+                (message) =>
+                    message.role === 'toolResult' &&
+                    message.toolName === 'fixture_ping',
+            )
+        )
+            return fauxAssistantMessage(fauxToolCall('fixture_ping', {}));
         const probe = tools.includes(mcpProbe) ? mcpProbe : 'read';
         if (
             !context.messages.some(
@@ -175,9 +203,12 @@ export default function fixture(pi: ExtensionAPI): void {
             const start = Date.now();
             try {
                 const launch = {
-                    agent: scenario?.startsWith('builtin-')
-                        ? 'scout'
-                        : 'reader',
+                    agent:
+                        scenario === 'configured-nested'
+                            ? 'coordinator'
+                            : scenario?.startsWith('builtin-')
+                              ? 'scout'
+                              : 'reader',
                     task: `baseline ${id}`,
                     context: 'fresh' as const,
                     cwd: ctx.cwd,
@@ -248,9 +279,6 @@ export default function fixture(pi: ExtensionAPI): void {
                 if (scenario === 'direct') {
                     parent.setResponses([
                         fauxAssistantMessage(
-                            fauxToolCall('subagents_enable', {}),
-                        ),
-                        fauxAssistantMessage(
                             fauxToolCall('subagent', {
                                 agent: 'scout',
                                 task: launch.task,
@@ -274,6 +302,8 @@ export default function fixture(pi: ExtensionAPI): void {
                             end: Date.now(),
                             result: await preflightSubagent({
                                 agent: 'scout',
+                                agentScope: 'both',
+                                projectTrusted: true,
                                 cwd: ctx.cwd,
                                 context: 'fresh',
                                 parentModel: {
@@ -312,16 +342,18 @@ export default function fixture(pi: ExtensionAPI): void {
                                     kind: scenario,
                                 })
                               : await rpc[scenario]({ id: ref.runId });
-                    if (scenario === 'resume')
-                        references.set(
-                            id,
-                            'runId' in result
-                                ? result
-                                : {
-                                      ...ref,
-                                      runId: String(result.details?.asyncId),
-                                  },
-                        );
+                    if (scenario === 'resume') {
+                        if ('runId' in result) references.set(id, result);
+                        else if ('details' in result && result.details?.asyncId)
+                            references.set(id, {
+                                ...ref,
+                                runId: String(result.details.asyncId),
+                            });
+                        else
+                            throw new Error(
+                                'Resume did not return a run identity.',
+                            );
+                    }
                     console.log(
                         JSON.stringify({
                             type: 'baseline_receipt',
@@ -335,7 +367,8 @@ export default function fixture(pi: ExtensionAPI): void {
                 }
                 if (
                     scenario === 'foreground' ||
-                    scenario === 'builtin-foreground'
+                    scenario === 'builtin-foreground' ||
+                    scenario === 'configured-nested'
                 ) {
                     const request = {
                         ...launch,

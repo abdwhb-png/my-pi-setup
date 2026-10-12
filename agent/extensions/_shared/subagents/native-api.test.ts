@@ -71,3 +71,25 @@ test('preflight forwards the resolved project trust decision to the package API'
         expect(await preflightSubagent({agent:'reader',cwd}, {agentDir})).toMatchObject({projectTrusted:true});
     } finally {rmSync(root,{recursive:true,force:true});}
 });
+
+test("effective reader loads a conditional package export and returns native resolved tools", async () => {
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    const root = mkdtempSync(join(tmpdir(), "subagent-effective-reader-"));
+    try {
+        const agentDir = join(root,"agent"), cwd = join(root,"project"), pkg = join(root,"package");
+        mkdirSync(join(agentDir,"agents"),{recursive:true}); mkdirSync(join(agentDir,"config")); mkdirSync(cwd); mkdirSync(pkg);
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        writeFileSync(join(pkg,"package.json"),JSON.stringify({name:"pi-subagents", exports:{"./preflight":"./preflight.ts", "./agents":{types:"./agents.d.ts", default:"./agents.ts"}}}));
+        writeFileSync(join(pkg,"preflight.ts"),"export {};\n");
+        writeFileSync(join(pkg,"agents.ts"),`export { discoverAgents } from ${JSON.stringify(import.meta.resolve("pi-subagents/agents"))};`);
+        writeFileSync(join(agentDir,"settings.json"),JSON.stringify({packages:[pkg],subagents:{toolSelectionResolver:join(import.meta.dir,"../../pi-subagents-addons/tool-selection.ts")}}));
+        writeFileSync(join(agentDir,"config/tool-groups.json"),JSON.stringify({groups:{inspect:["read"]}}));
+        writeFileSync(join(agentDir,"agents/reader.md"),"---\nname: reader\ndescription: Reader fixture\ntools: '@inspect'\n---\nInspect.\n");
+        const {discoverSubagents} = await import("./index.ts");
+        const discovered = await discoverSubagents(cwd,{projectTrusted:false});
+        expect(discovered.agents.find(agent=>agent.name === "reader")?.tools).toEqual(["read"]);
+    } finally {
+        if(previous===undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR=previous;
+        rmSync(root,{recursive:true,force:true});
+    }
+});

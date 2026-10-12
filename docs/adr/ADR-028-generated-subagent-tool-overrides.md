@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. The operator separately approved the daily package/MCP cutover, completed and verified on 2026-09-28.
+Superseded by [ADR-029](ADR-029-runtime-subagent-tool-selection.md). The original package/MCP cutover was completed and verified on 2026-09-28.
 
 ## Date
 

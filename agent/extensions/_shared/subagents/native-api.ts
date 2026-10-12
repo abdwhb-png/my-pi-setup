@@ -39,13 +39,30 @@ export function subagentSessionKey(
     return key;
 }
 
+function publicExport(
+    root: string,
+    exported: string | { default?: string; types?: string } | undefined,
+    name: string,
+): string {
+    const target = typeof exported === "string" ? exported : exported?.default;
+    if (!target?.startsWith("./"))
+        throw new Error(`pi-subagents lacks its public ${name} export.`);
+    const file = realpathSync(resolve(root, target));
+    const distance = relative(root, file);
+    if (distance.startsWith("..") || isAbsolute(distance))
+        throw new Error(
+            `pi-subagents ${name} export escapes its package root.`,
+        );
+    return file;
+}
+
 /** Resolve the configured runtime package, including a local candidate. A bare import could select the old npm copy. */
 export async function resolveSubagentPackage(
     cwd: string,
     agentDir = getAgentDir(),
     projectTrusted = isProjectConfigTrusted(cwd, agentDir),
-): Promise<{ root: string; preflight: string }> {
-    const packages = new Map<string, string>();
+): Promise<{ root: string; preflight: string; agents?: string }> {
+    const packages = new Map<string, { preflight: string; agents?: string }>();
     await forEachConfiguredPackage(
         { cwd, agentDir, includeProject: projectTrusted },
         ({ packageRoot, pkg }) => {
@@ -53,33 +70,24 @@ export async function resolveSubagentPackage(
             const root = realpathSync(packageRoot);
             const exports = pkg.exports;
             const exported =
-                typeof exports === "object"
-                    ? exports["./preflight"]
-                    : undefined;
-            const target =
-                typeof exported === "string"
-                    ? exported
-                    : typeof exported === "object"
-                      ? exported.default
-                      : undefined;
-            if (typeof target !== "string" || !target.startsWith("./"))
-                throw new Error(
-                    "pi-subagents lacks its public preflight export.",
-                );
-            const preflight = realpathSync(resolve(root, target));
-            const distance = relative(root, preflight);
-            if (distance.startsWith("..") || isAbsolute(distance))
-                throw new Error(
-                    "pi-subagents export escapes its package root.",
-                );
-            packages.set(root, preflight);
+                exports && typeof exports === "object" ? exports : {};
+            const preflight = publicExport(
+                root,
+                exported["./preflight"],
+                "preflight",
+            );
+            const agents =
+                exported["./agents"] === undefined
+                    ? undefined
+                    : publicExport(root, exported["./agents"], "agents");
+            packages.set(root, { preflight, agents });
         },
     );
     if (packages.size !== 1)
         throw new Error(
             `Expected one configured pi-subagents package, found ${packages.size}.`,
         );
-    for (const [root, preflight] of packages) return { root, preflight };
+    for (const [root, api] of packages) return { root, ...api };
     throw new Error("Configured pi-subagents package disappeared.");
 }
 
@@ -102,4 +110,33 @@ export async function preflightSubagent(
         pathToFileURL(pkg.preflight).href
     );
     return api.resolveSubagentLaunchContract({ ...input, projectTrusted });
+}
+
+export type {
+    ToolSelectionRequest,
+    ToolSelectionResult,
+} from "pi-subagents/agents";
+
+/** Read the same effective selections used by native launches from the configured package. */
+export async function discoverSubagents(
+    cwd: string,
+    options: {
+        projectTrusted: boolean;
+        scope?: import("pi-subagents/agents").AgentScope;
+    },
+): Promise<import("pi-subagents/agents").AgentDiscoveryResult> {
+    const pkg = await resolveSubagentPackage(
+        cwd,
+        getAgentDir(),
+        options.projectTrusted,
+    );
+    if (!pkg.agents)
+        throw new Error("pi-subagents lacks its public agents export.");
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- A variable URL selects the configured public export with its installed API type.
+    const api: typeof import("pi-subagents/agents") = await import(
+        pathToFileURL(pkg.agents).href
+    );
+    return api.discoverAgents(cwd, options.scope ?? "both", undefined, {
+        projectTrusted: options.projectTrusted,
+    });
 }

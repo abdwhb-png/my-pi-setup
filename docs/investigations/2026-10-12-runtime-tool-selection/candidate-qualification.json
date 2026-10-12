@@ -1,0 +1,307 @@
+{
+  "version": "0.77.0+fork.1",
+  "core": "1.1.0",
+  "forkCommit": "51799a79",
+  "qualifiedPackage": "built candidate",
+  "scenarios": [
+    {
+      "path": "preflight",
+      "version": "0.77.0+fork.1",
+      "model": "baseline-child/target:high",
+      "tools": [
+        "read",
+        "fixture_ping",
+        "contact_supervisor"
+      ]
+    },
+    {
+      "path": "direct-builtin",
+      "observations": [
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "builtin-foreground",
+      "observations": [
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "builtin-async",
+      "observations": [
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "builtin-workflow",
+      "observations": [
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "configured-nested",
+      "observations": [
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "subagent",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "subagent",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "subagent",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "bun",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "subagent",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "builtin-hold",
+      "observations": [
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        },
+        {
+          "runtime": "node",
+          "model": "baseline-child/target",
+          "thinking": "high",
+          "tools": [
+            "read",
+            "fixture_ping",
+            "structured_output",
+            "contact_supervisor"
+          ]
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Deterministic fake models",
+    "Real isolated local MCP server",
+    "Personal provider and MCP configurations not executed"
+  ]
+}

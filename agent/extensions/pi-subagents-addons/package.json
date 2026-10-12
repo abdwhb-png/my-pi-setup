@@ -2,8 +2,16 @@
   "name": "pi-subagents-addons",
   "version": "1.0.0",
   "description": "Local companion UX and integrations for pi-subagents",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./tool-selection": "./tool-selection.ts"
   }
 }

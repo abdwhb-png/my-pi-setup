@@ -23,9 +23,15 @@ export {
     currentSubagentRestriction,
     preflightSubagent,
     resolveSubagentPackage,
+    discoverSubagents,
     subagentSessionKey,
 } from "./native-api.ts";
-export type { Restriction, RestrictionHandle } from "./native-api.ts";
+export type {
+    Restriction,
+    RestrictionHandle,
+    ToolSelectionRequest,
+    ToolSelectionResult,
+} from "./native-api.ts";
 export {
     DelegationDeadlineError,
     DelegationDisposedError,
