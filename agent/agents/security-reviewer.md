@@ -2,7 +2,7 @@
 description: 'Security vulnerability detection specialist (OWASP Top 10, secrets, unsafe patterns)'
 model: 'openai-codex/gpt-6.1-sol'
 name: 'security-reviewer'
-thinking: 'high'
+thinking: 'max'
 tools: '@review-max'
 ---
 

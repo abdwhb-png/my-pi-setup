@@ -7,7 +7,7 @@ description: 'Analyze YouTube videos, local video files, and screen recordings. 
 inheritProjectContext: 'false'
 inheritSkills: 'false'
 maxExecutionTimeMs: '600000'
-model: 'cpa/ocz/mimo-v2.5-free'
+model: 'cpa/ocg/go-mimo-v2.6-flash'
 name: 'videographer'
 output: 'video-analysis.md'
 skills: 'youtube-analysis'

@@ -1,6 +1,7 @@
 ---
 defaultContext: 'fresh'
 description: 'API contracts, backward compatibility, versioning, error semantics (READ-ONLY)'
+model: 'cpa/ocg/go-glm-5.3-flash'
 name: 'api-reviewer'
 thinking: 'xhigh'
 tools: '@review'

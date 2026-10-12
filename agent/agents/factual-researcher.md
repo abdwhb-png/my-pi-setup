@@ -3,11 +3,11 @@ defaultContext: 'fresh'
 description: 'Researcher specialist that use multiple mcp tools for factual research.'
 inheritProjectContext: 'false'
 inheritSkills: 'false'
-model: 'cpa/gemini-3.6-flash-high'
+model: 'cpa/gemini-3.8-flash'
 name: 'factual-researcher'
 skills: 'factual-research, firecrawl, firecrawl-crawl, firecrawl-map, firecrawl-parse, firecrawl-scrape, firecrawl-search'
 systemPromptMode: 'replace'
-tools: '@inspect, safe_bash, @docs, mcp:exa, @web, contact_supervisor'
+tools: '@inspect, safe_bash, @docs, mcp:firecrawl, @web, contact_supervisor'
 turnBudget: '{ "maxTurns": 20, "graceTurns": 8 }'
 ---
 

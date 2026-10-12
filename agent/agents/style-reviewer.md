@@ -1,6 +1,7 @@
 ---
 defaultContext: 'fresh'
 description: 'Formatting, naming conventions, idioms, lint/style conventions (READ-ONLY)'
+model: 'cpa/ocg/go-mimo-v2.6-flash'
 name: 'style-reviewer'
 tools: '@review'
 ---

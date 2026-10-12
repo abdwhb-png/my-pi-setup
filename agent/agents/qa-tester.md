@@ -3,8 +3,10 @@ defaultContext: 'fresh'
 description: 'Interactive CLI testing specialist'
 inheritProjectContext: 'true'
 inheritSkills: 'false'
+model: 'cpa/muse-spark-1.3-contributor'
 name: 'qa-tester'
 systemPromptMode: 'replace'
+thinking: 'xhigh'
 tools: '@inspect, @lens-inspect, safe_bash, write_report'
 ---
 

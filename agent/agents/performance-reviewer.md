@@ -1,6 +1,8 @@
 ---
 description: 'Hotspots, algorithmic complexity, memory/latency tradeoffs, profiling plans'
+model: 'openai-codex/gpt-6.1-sol'
 name: 'performance-reviewer'
+thinking: 'xhigh'
 tools: '@review-max'
 ---
 

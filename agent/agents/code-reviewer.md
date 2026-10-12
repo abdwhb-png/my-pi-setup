@@ -1,7 +1,9 @@
 ---
 allowedAgents: 'qa-tester'
 description: 'Expert code review specialist with severity-rated feedback - (READ ONLY)'
+model: 'openai-codex/gpt-6.1-sol'
 name: 'code-reviewer'
+thinking: 'xhigh'
 tools: '@review-max, @subagents'
 ---
 

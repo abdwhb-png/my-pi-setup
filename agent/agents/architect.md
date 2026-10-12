@@ -1,6 +1,7 @@
 ---
 defaultContext: 'fresh'
 description: 'Strategic Architecture & Debugging Advisor (THOROUGH, READ-ONLY)'
+model: 'openai-codex/gpt-6.1-sol'
 name: 'architect'
 skills: 'improve-codebase-architecture, systems-thinking'
 systemPromptMode: 'replace'
