@@ -1,0 +1,32 @@
+{
+  "source": "git:github.com/abdwhb-png/pi-subagents@v0.77.0+fork.1",
+  "version": "0.77.0+fork.1",
+  "commit": "51799a79183170cde54ee9860491af860b97177b",
+  "managedRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+  "sourceCount": 1,
+  "importLinkVerified": true,
+  "runtimeRelease": "1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58",
+  "migrationTargets": [
+    "~/.pi/agent/settings.json",
+    "~/projects/q-messenger/.pi/settings.json"
+  ],
+  "unrelatedSettingsFieldsPreserved": true,
+  "protectedFileCount": 19,
+  "protectedFilesUnchanged": true,
+  "idempotentMigrationPreview": true,
+  "effectiveDiscovery": {
+    "agents": 36,
+    "diagnostics": 0,
+    "unresolvedAliases": 0
+  },
+  "installedQualificationPaths": [
+    "preflight",
+    "direct-builtin",
+    "builtin-foreground",
+    "builtin-async",
+    "builtin-workflow",
+    "configured-nested",
+    "builtin-hold"
+  ],
+  "restartExistingParents": true
+}
