@@ -23,6 +23,7 @@ it("discovers global providers at launch and enforces the child's native allowli
         writeFileSync(join(root, "settings.json"), settingsBytes);
         writeFileSync(join(root, "addons.json"), "{}");
         writeFileSync(join(root, "extensions", "addons.ts"), `import register from ${JSON.stringify(publicExtensionEntrypoint("pi-subagents-addons"))}; export default pi => register(pi, ${JSON.stringify(join(root, "addons.json"))});`);
+        writeFileSync(join(root, "extensions", "groups.ts"), `import { createToolGroupsExtension } from ${JSON.stringify(publicExtensionEntrypoint("tool-groups"))}; export default createToolGroupsExtension(() => ({ groups: { inspect: ["fixture_inspect"] } }));`);
         const provider = join(root, "extensions", "provider.ts");
         const loaded = join(root, "loaded.txt");
         writeFileSync(provider, `import { appendFileSync } from "node:fs"; export default pi => { appendFileSync(${JSON.stringify(loaded)}, "loaded\\n"); for (const name of ["fixture_inspect", "fixture_write"]) pi.registerTool({ name, label:name, description:name, parameters:{type:"object",properties:{}}, async execute() { return {content:[{type:"text",text:name+" executed"}],details:{}}; } }); };`);
@@ -43,6 +44,7 @@ it("discovers global providers at launch and enforces the child's native allowli
         await parent.bindExtensions({ mode: "print", onError: error => errors.push(error.error) });
         expect(errors).toEqual([]);
         expect(parent.getAllTools().find(tool => tool.name === "fixture_inspect")?.sourceInfo.scope).toBe("user");
+        expect(parent.getAllTools().find(tool => tool.name === "@inspect")?.sourceInfo.scope).toBe("user");
         const contract = await resolveSubagentLaunchContract({ agent: "inspector", cwd: root, context: "fresh", skill: false, intercomBridge: { mode: "off" }, parentSessionId: parent.sessionManager.getSessionId() });
         expect(contract.ok).toBe(true);
         if (!contract.ok) throw new Error(contract.message);

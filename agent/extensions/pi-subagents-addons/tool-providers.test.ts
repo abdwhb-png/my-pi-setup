@@ -14,12 +14,15 @@ test("groups canonical global tool owners and excludes project, synthetic, and c
         mkdirSync(native);
         const provider = join(root, "provider.ts"), alias = join(root, "alias.ts"), own = join(native, "index.ts"), adjacent = join(root, "subagents-extra.ts");
         for (const file of [provider, own, adjacent]) writeFileSync(file, "export default () => {};");
+        writeFileSync(join(root, "aliases-only.ts"), "export default () => {};");
         symlinkSync(provider, alias);
         const tools = [
             { name: "inspect_z", sourceInfo: source(alias) },
             { name: "inspect_a", sourceInfo: source(provider) },
             { name: "inspect_a", sourceInfo: source(provider) },
             { name: "read", sourceInfo: source(provider) },
+            { name: "@inspect", sourceInfo: source(provider) },
+            { name: "@aliases_only", sourceInfo: source(join(root, "aliases-only.ts")) },
             { name: "adjacent", sourceInfo: source(adjacent) },
             { name: "subagent", sourceInfo: source(own) },
             { name: "project", sourceInfo: source(provider, "project") },

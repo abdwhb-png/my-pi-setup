@@ -8,6 +8,7 @@ import {
     type RequiredChildExtension,
     type RequiredChildExtensionRegistration,
 } from "../_shared/subagents/index.ts";
+import { fromToolGroupAlias } from "../_shared/tool-groups/types.ts";
 
 /** Use the registered owner of each global tool, including overrides of built-ins. */
 export function collectToolProviders(
@@ -17,6 +18,7 @@ export function collectToolProviders(
     const providers = new Map<string, Set<string>>();
     const canonicalPaths = new Map<string, string>();
     for (const tool of tools) {
+        if (fromToolGroupAlias(tool.name) !== undefined) continue;
         const source = tool.sourceInfo;
         if (source.scope !== "user" || !isAbsolute(source.path)) continue;
         let file = canonicalPaths.get(source.path);
