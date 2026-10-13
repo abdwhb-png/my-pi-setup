@@ -67,16 +67,14 @@ test('native stdio MCP resolves both environment forms and inherits the parent e
         expect(result?.text).toContain('"bare":true');
         expect(result?.text).toContain('"inherited":true');
     } finally {
-        if (session) {
-            await session.session.extensionRunner.emit({
-                type: 'session_shutdown',
-                reason: 'quit',
-            });
-            session.dispose();
+        try {
+            await session?.close();
+        } finally {
+            if (previous === undefined)
+                delete process.env.PI_MCP_FIXTURE_PARENT;
+            else process.env.PI_MCP_FIXTURE_PARENT = previous;
+            rmSync(root, { recursive: true, force: true });
         }
-        if (previous === undefined) delete process.env.PI_MCP_FIXTURE_PARENT;
-        else process.env.PI_MCP_FIXTURE_PARENT = previous;
-        rmSync(root, { recursive: true, force: true });
     }
 }, 20000);
 
@@ -139,16 +137,17 @@ test('native HTTP MCP expands environment variables in authentication headers', 
         expect(authenticated.length).toBeGreaterThan(0);
         expect(authenticated.every(Boolean)).toBe(true);
     } finally {
-        if (session) {
-            await session.session.extensionRunner.emit({
-                type: 'session_shutdown',
-                reason: 'quit',
-            });
-            session.dispose();
+        try {
+            await session?.close();
+        } finally {
+            try {
+                await server.stop(true);
+            } finally {
+                if (previous === undefined)
+                    delete process.env.PI_MCP_FIXTURE_PARENT;
+                else process.env.PI_MCP_FIXTURE_PARENT = previous;
+                rmSync(root, { recursive: true, force: true });
+            }
         }
-        await server.stop(true);
-        if (previous === undefined) delete process.env.PI_MCP_FIXTURE_PARENT;
-        else process.env.PI_MCP_FIXTURE_PARENT = previous;
-        rmSync(root, { recursive: true, force: true });
     }
 }, 20000);

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+    createMcpFixture,
     createTestSession,
     when,
     calls,
@@ -14,7 +15,7 @@ import {
     createToolSearchExtension,
     type ExtensionAPI,
 } from '@earendil-works/pi-coding-agent';
-import { startFixtureMcp } from './fixtures/local-mcp.ts';
+import { echoTool } from './fixtures/local-mcp.ts';
 import { publicExtensionEntrypoint } from './public-extension-session.ts';
 
 test.each([true, false])(
@@ -22,11 +23,18 @@ test.each([true, false])(
     async (allowed) => {
         const root = mkdtempSync(join(tmpdir(), 'native-mcp-policy-'));
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const observed: string[] = [];
-        const server = startFixtureMcp(observed);
+        const fixture = createMcpFixture({
+            tools: [
+                {
+                    tool: echoTool,
+                    response: {
+                        content: [{ type: 'text', text: 'echo:nested' }],
+                    },
+                },
+            ],
+        });
         let host: ExtensionAPI | undefined;
         let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
-        const nested: Array<{ name: string; parent?: string }> = [];
         try {
             process.env.PI_CODING_AGENT_DIR = root;
             session = await createTestSession({
@@ -35,30 +43,9 @@ test.each([true, false])(
                 extensionFactories: [
                     createCodemodeExtension(),
                     createToolSearchExtension(),
-                    createMcpExtension({
-                        logPath: join(root, 'mcp.log'),
-                        loadConfig: () => ({
-                            errors: [],
-                            servers: [
-                                {
-                                    name: 'fixture',
-                                    source: join(root, 'mcp.json'),
-                                    config: {
-                                        url: `${server.url}mcp`,
-                                        exposure: 'codemode',
-                                    },
-                                },
-                            ],
-                        }),
-                    }),
+                    createMcpExtension(fixture.extensionOptions),
                     (pi: ExtensionAPI) => {
                         host = pi;
-                        pi.on('tool_call', (event) => {
-                            nested.push({
-                                name: event.toolName,
-                                parent: event.parentToolCallId,
-                            });
-                        });
                         pi.on('before_agent_start', () => {
                             pi.events.emit('pi-roles:tool-policy', {
                                 version: 1,
@@ -90,23 +77,45 @@ test.each([true, false])(
             expect(session.session.getActiveToolNames()).not.toContain(
                 'mcp__fixture__echo',
             );
-            const result = session.events.toolResultsFor('codemode')[0];
+            const parents = session.events.toolCallsFor('codemode');
+            expect(parents).toHaveLength(1);
+            const parent = parents[0];
+            const result = session.events
+                .toolResultsFor('codemode')
+                .find((record) => record.toolCallId === parent.toolCallId);
             expect(result).toBeDefined();
+            const children = session.events.toolCallsFor('mcp__fixture__echo');
+            expect(children).toHaveLength(1);
+            const child = children[0];
+            expect(child.parentToolCallId).toBe(parent.toolCallId);
+            expect(child.input).toEqual({ message: 'nested' });
+            const childResult = session.events
+                .toolResultsFor(child.toolName)
+                .find((record) => record.toolCallId === child.toolCallId);
+            expect(childResult).toMatchObject({
+                parentToolCallId: parent.toolCallId,
+                isError: !allowed,
+            });
+            expect(fixture.closed).toBe(false);
             if (allowed) {
                 expect(result?.isError).toBe(false);
                 expect(result?.text).toContain('echo:nested');
-                expect(observed).toEqual(['nested']);
+                expect(fixture.calls).toHaveLength(1);
+                expect(fixture.calls[0]).toMatchObject({
+                    toolName: 'echo',
+                    arguments: { message: 'nested' },
+                });
+                expect(child.blocked).toBe(false);
             } else {
                 expect(result?.isError).toBe(true);
-                expect(observed).toEqual([]);
+                expect(fixture.calls).toEqual([]);
                 expect(result?.text).toContain('mcp__fixture__echo');
                 expect(result?.text).toContain('not allowed');
+                expect(child.blocked).toBe(true);
+                expect(child.blockReason).toContain(
+                    'active role / workflow tool policy',
+                );
             }
-            expect(
-                nested.some(
-                    (call) => call.name === 'mcp__fixture__echo' && call.parent,
-                ),
-            ).toBe(allowed);
             await session.run(
                 when('Find the echo tool', [
                     calls('tool_search', { query: 'fixture echo' }),
@@ -119,18 +128,15 @@ test.each([true, false])(
                     .includes('mcp__fixture__echo'),
             ).toBe(allowed);
         } finally {
-            if (session) {
-                await session.session.extensionRunner.emit({
-                    type: 'session_shutdown',
-                    reason: 'quit',
-                });
-                session.dispose();
+            try {
+                await session?.close();
+                expect(fixture.closed).toBe(true);
+            } finally {
+                if (previousAgentDir === undefined)
+                    delete process.env.PI_CODING_AGENT_DIR;
+                else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+                rmSync(root, { recursive: true, force: true });
             }
-            await server.stop(true);
-            if (previousAgentDir === undefined)
-                delete process.env.PI_CODING_AGENT_DIR;
-            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            rmSync(root, { recursive: true, force: true });
         }
     },
     20000,

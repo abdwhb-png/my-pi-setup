@@ -46,20 +46,39 @@ test('native codemode cannot bypass the shell admission gate', async () => {
                 says('done'),
             ]),
         );
-        const result = session.events.toolResultsFor('codemode')[0];
+        const parents = session.events.toolCallsFor('codemode');
+        expect(parents).toHaveLength(1);
+        const parent = parents[0];
+        const children = session.events.toolCallsFor('bash');
+        expect(children).toHaveLength(1);
+        const child = children[0];
+        expect(child.parentToolCallId).toBe(parent.toolCallId);
+        expect(child.input).toEqual({ command: 'touch ' + marker });
+        // Shell admission fails inside the real tool, after tool_call hooks.
+        expect(child.blocked).toBe(false);
+        const childResult = session.events
+            .toolResultsFor('bash')
+            .find((record) => record.toolCallId === child.toolCallId);
+        expect(childResult).toMatchObject({
+            parentToolCallId: parent.toolCallId,
+            isError: true,
+            mocked: false,
+        });
+        expect(childResult?.text).toContain('authorization-required');
+        expect(childResult?.text).toContain('Shell policy is not initialized');
+        const result = session.events
+            .toolResultsFor('codemode')
+            .find((record) => record.toolCallId === parent.toolCallId);
         expect(result?.isError).toBe(true);
-        expect(JSON.stringify(result)).toMatch(/shell|sandbox|authorization/i);
+        expect(result?.text).toContain('authorization-required');
         expect(existsSync(marker)).toBe(false);
     } finally {
-        if (session) {
-            await session.session.extensionRunner.emit({
-                type: 'session_shutdown',
-                reason: 'quit',
-            });
-            session.dispose();
+        try {
+            await session?.close();
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previous;
+            rmSync(root, { recursive: true, force: true });
         }
-        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = previous;
-        rmSync(root, { recursive: true, force: true });
     }
 }, 30000);

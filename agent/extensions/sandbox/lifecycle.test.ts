@@ -1264,9 +1264,8 @@ describe("sandbox lifecycle", () => {
             await expect(stat(join(cwd,"escaped-access"))).rejects.toMatchObject({code:"ENOENT"});
             await expectUnavailable("initialization failed");
         } finally {
-            await session.session.extensionRunner.emit({type:"session_shutdown",reason:"quit"});
+            await session.close();
             await running;
-            session.dispose();
         }
     });
 
@@ -1285,8 +1284,7 @@ describe("sandbox lifecycle", () => {
             await session.session.prompt("/sandbox status");
             expect(session.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("Mode: sandbox");
         } finally {
-            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-            session.dispose();
+            await session.close();
         }
     });
 
@@ -1322,8 +1320,7 @@ describe("sandbox lifecycle", () => {
                 expect(status).toContain(line);
             }
         } finally {
-            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-            session.dispose();
+            await session.close();
         }
     });
 
@@ -1336,8 +1333,7 @@ describe("sandbox lifecycle", () => {
             expect(startup?.args[0]).toContain("Docker full access is active and is equivalent to host control.");
             expect(startup?.args[1]).toBe("warning");
         } finally {
-            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-            session.dispose();
+            await session.close();
         }
     });
 
@@ -1350,8 +1346,7 @@ describe("sandbox lifecycle", () => {
             expect(startup?.args[0]).toContain("Sandbox initialization failed: startup fixture failed");
             expect(startup?.args[1]).toBe("error");
         } finally {
-            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-            session.dispose();
+            await session.close();
         }
     });
 
@@ -1397,8 +1392,7 @@ describe("sandbox lifecycle", () => {
             expect(renderWidget()).toContain("host · unsandboxed");
             expect(renderWidget()).not.toContain("CLI unavailable");
         } finally {
-            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-            session.dispose();
+            await session.close();
         }
     });
 
