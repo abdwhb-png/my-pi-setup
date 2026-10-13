@@ -18,7 +18,7 @@ export interface CommandDeps {
     state: RuntimeState;
     config: TranslateConfig;
     /** Repaint the status widget after a state change. */
-    refresh: (ctx: ExtensionContext) => void;
+    refresh: (ctx: ExtensionContext) => void | Promise<void>;
 }
 
 /** Register all translate commands (static + dynamic per-language). */
@@ -29,7 +29,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
         description: "Enable auto-translation of input",
         handler: async (_args, ctx) => {
             state.enabled = true;
-            refresh(ctx);
+            await refresh(ctx);
             ctx.ui.notify(
                 `Translation on → ${config.languages[state.target] ?? state.target}`,
                 "info",
@@ -41,7 +41,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
         description: "Disable auto-translation of input",
         handler: async (_args, ctx) => {
             state.enabled = false;
-            refresh(ctx);
+            await refresh(ctx);
             ctx.ui.notify("Translation off", "info");
         },
     });
@@ -51,7 +51,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             "Toggle whether translated text is sent to the agent (on) or only displayed (off)",
         handler: async (_args, ctx) => {
             state.sendEnabled = !state.sendEnabled;
-            refresh(ctx);
+            await refresh(ctx);
             ctx.ui.notify(
                 state.sendEnabled
                     ? "Send mode: translated text replaces your input"
@@ -67,7 +67,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             handler: async (_args, ctx) => {
                 state.target = code;
                 state.enabled = true;
-                refresh(ctx);
+                await refresh(ctx);
                 ctx.ui.notify(
                     `Target → ${name} (${code}). Translation enabled.`,
                     "info",

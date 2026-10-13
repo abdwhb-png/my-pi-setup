@@ -1,0 +1,16 @@
+{
+  "committed": {
+    "runtime-bundle.ts": "40d5931c39d8abaf8a6cd44efc2a8ba36104a754dfa6934c4c66adaa9c112952",
+    "zerobox-backend.ts": "5ef7c133b93383c0741a472e275b4c9d080ea173501ee1399fb432dfd73930ea"
+  },
+  "followup": {
+    "runtime-bundle.ts": "98fb23f1ad81d7f92d608d854a1a4d4f455fdf8f280acd77890146193c80ea2b",
+    "zerobox-backend.ts": "58b0b700d488f9157d9692e3da79016d2c4cedb9428174427dcfdf9eed0b7e4a"
+  },
+  "chunked": {
+    "runtime-bundle.ts": "5d39c54812710b16c9203b5312fc54ddb477d8c3c2db19da02e186b4dbbbd41d",
+    "runtime-bundle-chunked.test.ts": "587065a02dc3d6a4e596cdec7144b4af46b1609cee0c8452a700cfca6c158654",
+    "zerobox-backend.ts": "58b0b700d488f9157d9692e3da79016d2c4cedb9428174427dcfdf9eed0b7e4a"
+  },
+  "note": "Chunked hashes describe the final formatted proposal. Timings preceded formatting and a local variable rename only."
+}

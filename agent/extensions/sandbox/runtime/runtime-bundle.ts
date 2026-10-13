@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir, realpath, readlink } from "node:fs/promises";
+import {
+    lstat,
+    open,
+    readFile,
+    readdir,
+    realpath,
+    readlink,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SandboxExecutionError } from "./contracts.ts";
 
@@ -68,11 +75,7 @@ function child(root: string, value: unknown): string {
         throw new Error("Distribution entry must be a safe relative path");
     return join(root, value);
 }
-async function secure(
-    path: string,
-    directory = false,
-    signal?: AbortSignal,
-): Promise<void> {
+async function secure(path: string, directory = false, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const stat = await lstat(path);
     signal?.throwIfAborted();
@@ -83,16 +86,56 @@ async function secure(
         (process.getuid && stat.uid !== process.getuid() && stat.uid !== 0)
     )
         throw new Error(`Untrusted distribution path: ${path}`);
+    return stat;
+}
+
+const HASH_BLOCK_BYTES = 1024 * 1024;
+
+async function hashFile(
+    path: string,
+    size: number,
+    signal?: AbortSignal,
+): Promise<string> {
+    signal?.throwIfAborted();
+    if (size <= HASH_BLOCK_BYTES) {
+        const bytes = await readFile(path, { signal });
+        signal?.throwIfAborted();
+        return hash(bytes);
+    }
+    const file = await open(path, "r");
+    try {
+        const buffer = Buffer.allocUnsafe(HASH_BLOCK_BYTES);
+        const hasher = createHash("sha256");
+        while (true) {
+            signal?.throwIfAborted();
+            const { bytesRead } = await file.read(
+                buffer,
+                0,
+                buffer.length,
+                null,
+            );
+            signal?.throwIfAborted();
+            if (bytesRead === 0) return hasher.digest("hex");
+            hasher.update(buffer.subarray(0, bytesRead));
+        }
+    } finally {
+        // Keep ownership of the descriptor until pending reads and close settle.
+        await file.close();
+    }
 }
 
 /** Resolve once so an atomic entry switch cannot pair two releases' metadata. */
 export async function readPrivateRuntimeEntry(
     entry: string,
     legacyProvenance: URL,
+    signal?: AbortSignal,
 ): Promise<{ binaryPath: string; provenance: RuntimeProvenance }> {
     try {
+        signal?.throwIfAborted();
         const binaryPath = await realpath(entry);
+        signal?.throwIfAborted();
         const managed = (await lstat(entry)).isSymbolicLink();
+        signal?.throwIfAborted();
         const release = dirname(dirname(binaryPath));
         if (managed) {
             if (
@@ -104,17 +147,18 @@ export async function readPrivateRuntimeEntry(
                 throw new Error(
                     "Managed runtime points outside its release directory",
                 );
-            await secure(release, true);
-            await secure(binaryPath);
-            await secure(join(release, "provenance.json"));
-            await secure(join(release, "manifest.json"));
+            await secure(release, true, signal);
+            await secure(binaryPath, false, signal);
+            await secure(join(release, "provenance.json"), false, signal);
+            await secure(join(release, "manifest.json"), false, signal);
         }
         const value: unknown = JSON.parse(
             await readFile(
                 managed ? join(release, "provenance.json") : legacyProvenance,
-                "utf8",
+                { encoding: "utf8", signal },
             ),
         );
+        signal?.throwIfAborted();
         if (
             !record(value) ||
             !version(value.version) ||
@@ -125,12 +169,14 @@ export async function readPrivateRuntimeEntry(
             managed &&
             (!digest(value.runtimeManifestSha256) ||
                 !digest(value.helperSha256) ||
-                hash(await readFile(join(release, "manifest.json"))) !==
-                    value.runtimeManifestSha256)
+                hash(
+                    await readFile(join(release, "manifest.json"), { signal }),
+                ) !== value.runtimeManifestSha256)
         )
             throw new Error(
                 "Runtime manifest differs from its release provenance",
             );
+        signal?.throwIfAborted();
         return {
             binaryPath,
             provenance: {
@@ -145,6 +191,7 @@ export async function readPrivateRuntimeEntry(
             },
         };
     } catch (error) {
+        signal?.throwIfAborted();
         throw new SandboxExecutionError("provenance-mismatch", {
             diagnostic:
                 error instanceof Error
@@ -207,10 +254,11 @@ async function tree(
                     throw new Error("Component entry has a redirected parent");
                 signal?.throwIfAborted();
                 if (file.sha256 !== undefined) {
-                    await secure(path, false, signal);
-                    const bytes = await readFile(path, { signal });
-                    signal?.throwIfAborted();
-                    if (hash(bytes) !== file.sha256)
+                    const stat = await secure(path, false, signal);
+                    if (
+                        (await hashFile(path, stat.size, signal)) !==
+                        file.sha256
+                    )
                         throw new Error(
                             `Runtime file digest mismatch: ${file.path}`,
                         );
@@ -272,11 +320,11 @@ export async function resolvePrivateRuntime(
     try {
         signal?.throwIfAborted();
         const binaryPath = await realpath(options.binaryPath);
-        await secure(binaryPath, false, signal);
+        const binaryStat = await secure(binaryPath, false, signal);
         if (((await lstat(binaryPath)).mode & 0o111) === 0)
             throw new Error("Runtime executable lacks execute permission");
         if (
-            hash(await readFile(binaryPath, { signal })) !==
+            (await hashFile(binaryPath, binaryStat.size, signal)) !==
             options.expectedBinarySha256
         )
             throw new Error("Runtime executable digest mismatch");
@@ -325,10 +373,11 @@ export async function resolvePrivateRuntime(
         )
             throw new Error("Unsupported runtime manifest");
         const helper = child(root, manifest.helper.path);
-        await secure(helper, false, signal);
+        const helperStat = await secure(helper, false, signal);
         if (
             (await realpath(helper)) !== helper ||
-            hash(await readFile(helper, { signal })) !== manifest.helper.sha256
+            (await hashFile(helper, helperStat.size, signal)) !==
+                manifest.helper.sha256
         )
             throw new Error("Runtime helper digest mismatch");
         const shell = await tree(root, manifest.components.shell, signal);

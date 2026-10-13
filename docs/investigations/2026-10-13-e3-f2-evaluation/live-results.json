@@ -1,0 +1,130 @@
+[
+  {
+    "variant": "followup",
+    "exitCode": 0,
+    "processSeconds": 12.43633523499011,
+    "pressurePercent": 34.447551622336164,
+    "shutdownComplete": true,
+    "measurements": [
+      {
+        "phase": "startup-command",
+        "isError": false,
+        "output": "warning: proceeding without Linux sandbox helper alias: refusing to create helper aliases under temporary dir \"/tmp\" (ZEROBOX_HOME: \"/tmp/e3-BHRCtm/z/l-1aa1a3/zerobox-home\")\nE3_SHELL_OK",
+        "execution": {
+          "status": "sandboxed",
+          "profile": "bash-general",
+          "backend": "zerobox",
+          "tmpNamespace": "lease-private",
+          "phase": "process",
+          "outcome": "succeeded",
+          "timingsMs": {
+            "configuration": 2.5670000000000073,
+            "preparation": 3.3065809999998237,
+            "admission": 4.129376999999749,
+            "execution": 1089.6714849999998
+          },
+          "exitCode": 0,
+          "localProcess": "exited",
+          "mode": "sandbox",
+          "shellProfile": "custom"
+        },
+        "verificationMs": 1447.343172
+      },
+      {
+        "phase": "replacement-command",
+        "isError": false,
+        "output": "warning: proceeding without Linux sandbox helper alias: refusing to create helper aliases under temporary dir \"/tmp\" (ZEROBOX_HOME: \"/tmp/e3-BHRCtm/z/l-db1daf/zerobox-home\")\nE3_SHELL_OK",
+        "execution": {
+          "status": "sandboxed",
+          "profile": "bash-general",
+          "backend": "zerobox",
+          "tmpNamespace": "lease-private",
+          "phase": "process",
+          "outcome": "succeeded",
+          "timingsMs": {
+            "configuration": 4.861593999999968,
+            "verification": 4482.198291,
+            "shutdown": 649.4829819999995,
+            "preparation": 5182.018491,
+            "admission": 0.13801600000078906,
+            "execution": 1314.710862
+          },
+          "exitCode": 0,
+          "localProcess": "exited",
+          "mode": "sandbox",
+          "shellProfile": "custom"
+        },
+        "verificationMs": 3451.881281
+      }
+    ],
+    "startup": {
+      "admissionMs": 2003.009965,
+      "verificationMs": 1447.343172,
+      "state": "enabled"
+    }
+  },
+  {
+    "variant": "chunked",
+    "exitCode": 0,
+    "processSeconds": 12.468489895021776,
+    "pressurePercent": 34.377715634283824,
+    "shutdownComplete": true,
+    "measurements": [
+      {
+        "phase": "startup-command",
+        "isError": false,
+        "output": "warning: proceeding without Linux sandbox helper alias: refusing to create helper aliases under temporary dir \"/tmp\" (ZEROBOX_HOME: \"/tmp/e3-CnEzBs/z/l-027605/zerobox-home\")\nE3_SHELL_OK",
+        "execution": {
+          "status": "sandboxed",
+          "profile": "bash-general",
+          "backend": "zerobox",
+          "tmpNamespace": "lease-private",
+          "phase": "process",
+          "outcome": "succeeded",
+          "timingsMs": {
+            "configuration": 2.8034809999999197,
+            "preparation": 3.903921999999966,
+            "admission": 0.24375400000008085,
+            "execution": 989.8716669999994
+          },
+          "exitCode": 0,
+          "localProcess": "exited",
+          "mode": "sandbox",
+          "shellProfile": "custom"
+        },
+        "verificationMs": 1448.8789460000003
+      },
+      {
+        "phase": "replacement-command",
+        "isError": false,
+        "output": "warning: proceeding without Linux sandbox helper alias: refusing to create helper aliases under temporary dir \"/tmp\" (ZEROBOX_HOME: \"/tmp/e3-CnEzBs/z/l-93d878/zerobox-home\")\nE3_SHELL_OK",
+        "execution": {
+          "status": "sandboxed",
+          "profile": "bash-general",
+          "backend": "zerobox",
+          "tmpNamespace": "lease-private",
+          "phase": "process",
+          "outcome": "succeeded",
+          "timingsMs": {
+            "configuration": 7.1755190000003495,
+            "verification": 4600.416432000001,
+            "shutdown": 579.8902720000006,
+            "preparation": 5236.978586,
+            "admission": 0.10634199999913108,
+            "execution": 1031.482546000001
+          },
+          "exitCode": 0,
+          "localProcess": "exited",
+          "mode": "sandbox",
+          "shellProfile": "custom"
+        },
+        "verificationMs": 3689.6617350000006
+      }
+    ],
+    "startup": {
+      "admissionMs": 1912.880207,
+      "verificationMs": 1448.8789460000003,
+      "state": "enabled"
+    }
+  }
+]

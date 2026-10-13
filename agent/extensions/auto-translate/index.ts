@@ -10,15 +10,16 @@
  * `_shared/config-loader.ts`.
  */
 
-import { complete } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "./commands.ts";
 import { loadTranslateConfig } from "./config.ts";
 import { createState, buildStatusText, translatingText } from "./state.ts";
-import { translate } from "./translator.ts";
 import type { TranslateConfig } from "./types.ts";
-import { createTranslateWidget } from "./widget.ts";
+import type { createTranslateWidget } from "./widget.ts";
 
 /** Resolve the effective model spec: configured model, else the active session model. */
 function effectiveModel(
@@ -40,10 +41,20 @@ export default function (pi: ExtensionAPI): void {
     const widgetText = (): string =>
         state.enabled ? buildStatusText(state, config) : "";
 
-    const widget = createTranslateWidget(pi, widgetText, () => state.enabled);
+    let widget: ReturnType<typeof createTranslateWidget> | undefined;
 
-    const refresh = (ctx: Parameters<typeof widget.update>[0]): void => {
-        widget.update(ctx, widgetText());
+    const refresh = async (ctx: ExtensionContext): Promise<void> => {
+        if (!widget && state.enabled) {
+            const { createTranslateWidget } = await import("./widget.ts");
+            if (state.enabled) {
+                widget ??= createTranslateWidget(
+                    pi,
+                    widgetText,
+                    () => state.enabled,
+                );
+            }
+        }
+        widget?.update(ctx, widgetText());
     };
 
     registerCommands(pi, { state, config, refresh });
@@ -55,11 +66,12 @@ export default function (pi: ExtensionAPI): void {
         );
         Object.assign(state, createState(config));
         registerCommands(pi, { state, config, refresh });
-        refresh(ctx);
+        await refresh(ctx);
     });
 
     pi.on("session_shutdown", async (_event, ctx) => {
-        widget.remove(ctx);
+        state.enabled = false;
+        widget?.remove(ctx);
     });
 
     pi.on("input", async (event, ctx) => {
@@ -85,11 +97,12 @@ export default function (pi: ExtensionAPI): void {
         );
         let translated: string | null;
         try {
+            const { translate } = await import("./translator.ts");
             translated = await translate(
                 text,
                 targetName,
                 { ...config, model: modelSpec },
-                { complete },
+                {},
                 ctx,
             );
         } finally {

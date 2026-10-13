@@ -100,25 +100,35 @@ describe('auto-translate factory', () => {
         expect(out).toEqual({ action: 'continue' });
     });
 
-    it('hides the footer widget until translation is enabled', async () => {
-        const { pi, commands } = mockPi();
+    it('creates the footer widget only on activation and reuses it across toggles', async () => {
+        const { pi, commands, handlers } = mockPi();
         contributions.length = 0;
         factory(pi);
+        expect(contributions).toHaveLength(0);
+        await commands.get('translate-send')!.handler('', mockCtx());
+        await commands.get('translate-off')!.handler('', mockCtx());
+        expect(contributions).toHaveLength(0);
+        await commands.get('translate-send')!.handler('', mockCtx());
+        await Promise.all([
+            commands.get('translate-on')!.handler('', mockCtx()),
+            commands.get('translate-on')!.handler('', mockCtx()),
+        ]);
+        expect(contributions).toHaveLength(1);
         const def = contributions.at(-1) as {
             visible: () => boolean;
             render: () => string;
         };
 
-        expect(def.visible()).toBe(false);
-        expect(def.render()).toBe('');
-
-        await commands.get('translate-on')!.handler('', mockCtx());
         expect(def.visible()).toBe(true);
         expect(def.render()).toBe(buildStatusRenderText('English', 'send'));
 
         await commands.get('translate-off')!.handler('', mockCtx());
         expect(def.visible()).toBe(false);
         expect(def.render()).toBe('');
+        await commands.get('translate-on')!.handler('', mockCtx());
+        expect(contributions).toHaveLength(1);
+        await handlers.get('session_shutdown')![0]({}, mockCtx());
+        expect(def.visible()).toBe(false);
     });
 
     it('input handler shows translating status then clears it', async () => {

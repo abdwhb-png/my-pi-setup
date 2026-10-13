@@ -12,6 +12,29 @@ const io: {
     readFile: (...args: Parameters<typeof fs.readFile>) => ReturnType<typeof fs.readFile>;
 } = fs;
 
+test("engine verification reads the executable once with the admission signal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-engine-read-"));
+    const deadline = new ExecutionDeadline(30);
+    let read: ReturnType<typeof spyOn<typeof io, "readFile">> | undefined;
+    try {
+        const binaryPath = join(root, "zerobox");
+        await writeFile(binaryPath, "fixture engine", { mode: 0o700 });
+        const fixture = await createRuntimeBundleFixture(binaryPath, "fixture-version");
+        read = spyOn(io, "readFile");
+        const backend = createZeroboxBackend({ ...fixture, binaryPath,
+            runCommand: (_file, args) => ({ exitCode: 0, stdout: args.includes("--version") ? "zerobox fixture-version\n" : "", stderr: "" }),
+        });
+        await backend.probe(deadline);
+        const reads = read.mock.calls.filter(([path]) => String(path) === binaryPath);
+        expect(reads).toHaveLength(1);
+        expect(reads[0][1]).toMatchObject({ signal: deadline.signal });
+    } finally {
+        read?.mockRestore();
+        deadline.dispose();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test("a stalled asynchronous engine probe respects its startup deadline", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-probe-deadline-"));
     let deadline: ExecutionDeadline | undefined;

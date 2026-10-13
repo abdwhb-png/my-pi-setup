@@ -113,6 +113,52 @@ test("verifies files concurrently within a fixed bound and preserves manifest or
     }
 });
 
+test("entry resolution preserves cancellation before any filesystem work", async () => {
+    const controller = new AbortController();
+    const reason = new Error("entry cancelled");
+    controller.abort(reason);
+    const canonical = spyOn(io, "realpath");
+    try {
+        await expect(readPrivateRuntimeEntry("/missing-entry", new URL("file:///unused"), controller.signal)).rejects.toBe(reason);
+        expect(canonical).not.toHaveBeenCalled();
+    } finally { canonical.mockRestore(); }
+});
+
+test("entry cancellation reaches a pending provenance read and prevents manifest reads", async () => {
+    const f = await fixture();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const reason = new Error("entry cancelled during read");
+    const originalRead = fs.readFile;
+    let read: ReturnType<typeof spyOn<typeof io, "readFile">> | undefined;
+    let pending: Promise<unknown> | undefined;
+    let receivedSignal: AbortSignal | undefined;
+    try {
+        await writeFile(join(f.root, "provenance.json"), JSON.stringify({ version: "test", binarySha256: sha("engine"), runtimeManifestSha256: sha(JSON.stringify(f.manifest)), helperSha256: sha("helper") }), { mode: 0o600 });
+        read = spyOn(io, "readFile").mockImplementation(async (path, options) => {
+            if (String(path) === join(f.root, "provenance.json")) {
+                receivedSignal = typeof options === "object" ? options?.signal : undefined;
+                entered.resolve();
+                await release.promise;
+            }
+            return originalRead(path, options);
+        });
+        pending = readPrivateRuntimeEntry(f.entry, new URL("file:///unused"), controller.signal).catch(error => error);
+        await entered.promise;
+        controller.abort(reason);
+        release.resolve();
+        expect(await pending).toBe(reason);
+        expect(receivedSignal).toBe(controller.signal);
+        expect(read.mock.calls.filter(([path]) => String(path) === join(f.root, "manifest.json"))).toHaveLength(0);
+    } finally {
+        release.resolve();
+        await pending;
+        read?.mockRestore();
+        await rm(f.parent, { recursive: true, force: true });
+    }
+});
+
 test("cancellation between filesystem operations prevents the next file read", async () => {
     const f = await fixture();
     const controller = new AbortController();

@@ -1,6 +1,6 @@
 import { expect, test, spyOn } from "bun:test";
-import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
@@ -8,9 +8,14 @@ import { createSandboxExtension } from "./index.ts";
 import { localMachineId } from "./capabilities/authority.ts";
 import { createPrivateTempLease } from "./runtime/private-temp.ts";
 import { createRuntimeBundleFixture } from "./runtime/test-runtime-fixture.ts";
+import { resolvePrivateRuntime } from "./runtime/runtime-bundle.ts";
 import { ExecutionDeadline } from "../_shared/command-execution/deadline.ts";
 import { getSandboxRuntime, getSandboxAnalysisPort } from "../_shared/sandbox-runtime/index.ts";
 import { resolveShellPolicyForExecution } from "../_shared/shell-runtime/index.ts";
+
+const io: {
+    readFile: (...args: Parameters<typeof fs.readFile>) => ReturnType<typeof fs.readFile>;
+} = fs;
 
 test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement preserves admission across %s", async scenario => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -26,6 +31,14 @@ test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement p
     let waiter: ExecutionDeadline | undefined;
     let root: string | undefined;
     let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
+    const releaseRead = Promise.withResolvers<void>();
+    const readEntered = Promise.withResolvers<void>();
+    const originalRead = fs.readFile;
+    let read: ReturnType<typeof spyOn<typeof io, "readFile">> | undefined;
+    let cancelledSignal: AbortSignal | undefined;
+    let activeRead = false;
+    const engineSignals: (AbortSignal | undefined)[] = [];
+    const resolutions: Promise<unknown>[] = [];
     try {
         root = await mkdtemp(join(tmpdir(), "pp-"));
         const agentDir = join(root, "agent"), cwd = join(root, "project"), binaryPath = join(root, "runtime/zerobox");
@@ -42,8 +55,17 @@ test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement p
         let probes = 0;
         session = await createTestSession({ cwd, extensionFactories: [pi => createSandboxExtension(pi, {
             zeroboxBackend: { ...bundle, binaryPath,
-                hashFile: async path => { probes++; await Bun.sleep(40); return createHash("sha256").update(await readFile(path)).digest("hex"); },
-                runCommand: (_file, args) => ({ exitCode: 0, stdout: args.includes("--version") ? "zerobox fixture-version\n" : "", stderr: "" }),
+                resolveRuntime: async options => {
+                    probes++;
+                    await Bun.sleep(40);
+                    const pending = resolvePrivateRuntime(options);
+                    resolutions.push(pending.catch(error => error));
+                    return pending;
+                },
+                runCommand: (_file, args, options) => {
+                    engineSignals.push(options.signal);
+                    return { exitCode: 0, stdout: args.includes("--version") ? "zerobox fixture-version\n" : "", stderr: "" };
+                },
             },
             sandboxServiceOptions: { createLease: () => createPrivateTempLease({ rootDir: join(root!, "l") }), recoverStaleLeases: async () => {} },
             analysisServiceOptions: { runHost: async request => {
@@ -76,6 +98,20 @@ test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement p
             return;
         }
         const initialProbes = probes;
+        if (scenario === "supersede") {
+            read = spyOn(io, "readFile").mockImplementation(async (path, options) => {
+                if (!cancelledSignal && String(path) === join(root!, "runtime/components/shell/bin/bash")) {
+                    cancelledSignal = typeof options === "object" ? options?.signal : undefined;
+                    activeRead = true;
+                    readEntered.resolve();
+                    try {
+                        await releaseRead.promise;
+                        return await originalRead(path, options);
+                    } finally { activeRead = false; }
+                }
+                return originalRead(path, options);
+            });
+        }
         await writeFile(configPath, JSON.stringify({ ...config, environment: { variables: { PI_PREPARATION_FIXTURE: "next" } } }), { mode: 0o600 });
         if (cancelWaiter) waiter = new ExecutionDeadline(0.01);
         const first = resolveShellPolicyForExecution(cwd, waiter);
@@ -83,6 +119,7 @@ test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement p
         const firstResult = first.then(value => ({ status: "fulfilled" as const, value }), reason => ({ status: "rejected" as const, reason }));
         if (scenario === "supersede" || scenario === "shutdown") {
             while (probes === initialProbes) await Bun.sleep(1);
+            if (scenario === "supersede") await readEntered.promise;
             if (scenario === "shutdown") {
                 await session.session.extensionRunner!.emit({ type: "session_shutdown", reason: "quit" });
                 stopped = true;
@@ -96,8 +133,24 @@ test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement p
         expect([firstOutcome.status, secondOutcome.status]).toEqual([cancelWaiter || scenario === "supersede" ? "rejected" : "fulfilled", "fulfilled"]);
         expect(getSandboxRuntime().state).toBe("enabled");
         expect(probes - initialProbes).toBe(scenario === "supersede" ? 2 : 1);
+        if (scenario === "supersede") {
+            expect(activeRead).toBe(true);
+            expect(cancelledSignal?.aborted).toBe(true);
+            expect(engineSignals).not.toContain(cancelledSignal);
+            const callsBeforeDrain = engineSignals.length;
+            releaseRead.resolve();
+            await Promise.all(resolutions);
+            await new Promise(resolve => setImmediate(resolve));
+            expect(activeRead).toBe(false);
+            expect(engineSignals).toHaveLength(callsBeforeDrain);
+            expect(engineSignals).not.toContain(cancelledSignal);
+            expect(getSandboxRuntime().state).toBe("enabled");
+        }
 
     } finally {
+        releaseRead.resolve();
+        await Promise.all(resolutions);
+        read?.mockRestore();
         clock?.mockRestore();
         releaseHost?.();
         await pendingRun;

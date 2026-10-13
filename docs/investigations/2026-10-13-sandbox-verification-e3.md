@@ -2,7 +2,7 @@
 
 ## Result
 
-The runtime distribution verifier now checks up to eight entries concurrently. Shell and Analysis remain mandatory for admission and are verified in that order, so the total concurrency never exceeds eight. Five fresh-process qualifications passed both startup and replacement against the installed Zerobox distribution. All ten admissions finished below the agreed 20-second acceptance threshold. The production 30-second deadline is unchanged.
+The runtime distribution verifier now checks up to eight entries concurrently per resolver invocation. Shell and Analysis remain mandatory for admission and are verified in that order. A newer admission can overlap residual filesystem operations from a cancelled invocation, so this is not a global concurrency limit. Five fresh-process qualifications passed both startup and replacement against the installed Zerobox distribution. All ten admissions finished below the agreed 20-second acceptance threshold. The production 30-second deadline is unchanged.
 
 This change addresses the sequential distribution verification identified in [the E3 diagnosis](./2026-10-13-live-delegation-e2e/verified-causes.md). It does not establish why host filesystem latency varied in the original failing runs.
 

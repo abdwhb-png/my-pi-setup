@@ -236,7 +236,6 @@ describe("Zerobox backend", () => {
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
                 platform: "linux",
-                hashFile: async () => EXPECTED_SHA,
                 runCommand,
             });
             await backend.probe();
@@ -426,7 +425,6 @@ describe("Zerobox backend", () => {
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
                 platform: "linux",
-                hashFile: async () => EXPECTED_SHA,
                 runCommand: successfulRun,
             });
             const policy = createBashPolicy({
@@ -477,7 +475,6 @@ describe("Zerobox backend", () => {
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
                 platform: "linux",
-                hashFile: async () => EXPECTED_SHA,
                 runCommand: successfulRun,
             });
             const policy = createBashPolicy({
@@ -516,7 +513,6 @@ describe("Zerobox backend", () => {
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
                 platform: "linux",
-                hashFile: async () => EXPECTED_SHA,
                 runCommand: successfulRun,
             });
             const policy = createAnalysisPolicy({
@@ -551,7 +547,6 @@ describe("Zerobox backend", () => {
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
                 platform: "linux",
-                hashFile: async () => EXPECTED_SHA,
                 runCommand: successfulRun,
                 createStatusChannel: async () => {
                     throw new Error("status setup failed");
@@ -601,7 +596,6 @@ describe("Zerobox backend", () => {
                     version: "0.3.3-fork.17",
                     binarySha256: EXPECTED_SHA,
                 },
-                hashFile: async () => EXPECTED_SHA,
                 runCommand: successfulRun,
             });
 
@@ -631,14 +625,13 @@ describe("Zerobox backend", () => {
                     code: "backend-unavailable",
                 },
                 {
-                    options: { binaryPath, platform: "linux" as NodeJS.Platform, hashFile: async () => "wrong" },
+                    options: { binaryPath, platform: "linux" as NodeJS.Platform, expectedProvenance: { ...expectedProvenance, binarySha256: "0".repeat(64) } },
                     code: "provenance-mismatch",
                 },
                 {
                     options: {
                         binaryPath,
                         platform: "linux" as NodeJS.Platform,
-                        hashFile: async () => EXPECTED_SHA,
                         runCommand: () => ({ exitCode: 0, stdout: "zerobox 9.9.9\n", stderr: "" }),
                     },
                     code: "provenance-mismatch",
@@ -647,7 +640,6 @@ describe("Zerobox backend", () => {
                     options: {
                         binaryPath,
                         platform: "linux" as NodeJS.Platform,
-                        hashFile: async () => EXPECTED_SHA,
                         runCommand: () => {
                             throw new Error("private spawn detail");
                         },
@@ -658,7 +650,6 @@ describe("Zerobox backend", () => {
                     options: {
                         binaryPath,
                         platform: "linux" as NodeJS.Platform,
-                        hashFile: async () => EXPECTED_SHA,
                         runCommand: (file: string, args: string[]) =>
                             args.includes("--version")
                                 ? successfulRun(file, args)

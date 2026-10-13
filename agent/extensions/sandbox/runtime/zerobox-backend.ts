@@ -1,10 +1,9 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
     chmod,
     lstat,
     mkdir,
     mkdtemp,
-    readFile,
     realpath,
     rename,
     rm,
@@ -59,7 +58,6 @@ export interface ZeroboxBackendOptions {
     binaryPath?: string;
     platform?: NodeJS.Platform;
     probeRoot?: string;
-    hashFile?: (path: string) => Promise<string>;
     runCommand?: (
         file: string,
         args: string[],
@@ -124,12 +122,6 @@ export async function inspectManagedPrivateRuntime(
     });
     assertRuntimeProvenance(runtime, pinned.provenance);
     return runtime;
-}
-
-async function defaultHashFile(path: string): Promise<string> {
-    return createHash("sha256")
-        .update(await readFile(path))
-        .digest("hex");
 }
 
 async function defaultRunCommand(
@@ -448,7 +440,6 @@ class ZeroboxBackend implements SandboxBackend {
     #binaryPath: string;
     readonly #platform: NodeJS.Platform;
     readonly #probeRoot: string;
-    readonly #hashFile: (path: string) => Promise<string>;
     readonly #runCommand: ZeroboxBackendOptions["runCommand"] & {};
     readonly #expectedProvenance?: ZeroboxProvenance;
     readonly #createStatusChannel: typeof createZeroboxStatusChannel;
@@ -467,7 +458,6 @@ class ZeroboxBackend implements SandboxBackend {
             (options.binaryPath
                 ? dirname(options.binaryPath)
                 : join(homedir(), ".pi", "zbx"));
-        this.#hashFile = options.hashFile ?? defaultHashFile;
         this.#runCommand = options.runCommand ?? defaultRunCommand;
         this.#expectedProvenance = options.expectedProvenance;
         this.#createStatusChannel =
@@ -508,32 +498,26 @@ class ZeroboxBackend implements SandboxBackend {
                 throw new SandboxExecutionError("backend-unavailable");
             }
         } catch (error) {
+            deadline.check();
             if (error instanceof SandboxExecutionError) throw error;
             throw new SandboxExecutionError("backend-unavailable", {
                 cause: error,
             });
         }
 
+        deadline.check();
         const pinned = this.#expectedProvenance
             ? {
                   binaryPath: this.#binaryPath,
                   provenance: this.#expectedProvenance,
               }
-            : await readPrivateRuntimeEntry(this.#binaryPath, PROVENANCE_URL);
+            : await readPrivateRuntimeEntry(
+                  this.#binaryPath,
+                  PROVENANCE_URL,
+                  deadline.signal,
+              );
         this.#binaryPath = pinned.binaryPath;
         const expected = pinned.provenance;
-        let hash: string;
-        try {
-            hash = await deadline.wait(this.#hashFile(this.#binaryPath));
-        } catch (error) {
-            deadline.check();
-            throw new SandboxExecutionError("backend-unavailable", {
-                cause: error,
-            });
-        }
-        if (hash !== expected.binarySha256) {
-            throw new SandboxExecutionError("provenance-mismatch");
-        }
         this.#runtime = await this.#resolveRuntime({
             binaryPath: this.#binaryPath,
             expectedBinarySha256: expected.binarySha256,

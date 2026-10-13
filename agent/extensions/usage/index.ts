@@ -1,10 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { computeAllWindows, computeWindow } from "./aggregator";
-import { UsageInlineView } from "./inline-view";
-import { lookupPricing } from "./pricing";
-import { walkAllSessions } from "./scanner";
 import type { UsageReport } from "./types";
-import { UsageReportWidget } from "./widget";
 
 export default function (pi: ExtensionAPI) {
     pi.registerCommand("usage", {
@@ -13,6 +8,9 @@ export default function (pi: ExtensionAPI) {
         handler: async (args: string, ctx: any) => {
             // ── Non-interactive mode fallback ──────────────
             if (!ctx.hasUI) {
+                const { walkAllSessions } = await import("./scanner");
+                const { computeAllWindows } = await import("./aggregator");
+                const { lookupPricing } = await import("./pricing");
                 const records = walkAllSessions();
                 const sourceKeys = [
                     ...new Set(records.map((r) => r.sourceKey)),
@@ -43,6 +41,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify("🔍 Scanning session files...", "info");
 
             try {
+                const { walkAllSessions } = await import("./scanner");
                 const records = walkAllSessions();
 
                 if (records.length === 0) {
@@ -53,6 +52,8 @@ export default function (pi: ExtensionAPI) {
                 // ── Inline mode: no args → show today's usage inline ──
                 const isFullReport = args.trim() === "--full";
                 if (!isFullReport) {
+                    const { computeWindow } = await import("./aggregator");
+                    const { UsageInlineView } = await import("./inline-view");
                     const todayWindow = computeWindow(records, 1, new Map());
 
                     await (ctx.ui.custom as any)(
@@ -76,8 +77,10 @@ export default function (pi: ExtensionAPI) {
                     ...new Set(records.map((r) => r.sourceKey)),
                 ];
                 ctx.ui.notify("💵 Looking up pricing...", "info");
+                const { lookupPricing } = await import("./pricing");
                 const pricing = await lookupPricing(sourceKeys);
 
+                const { computeAllWindows } = await import("./aggregator");
                 const windows = computeAllWindows(records, pricing);
                 const pricingNotes: string[] = [];
                 for (const [key, rates] of pricing) {
@@ -96,6 +99,7 @@ export default function (pi: ExtensionAPI) {
                 };
 
                 // ── Show detached overlay dialog (like yeet) ──
+                const { UsageReportWidget } = await import("./widget");
                 await (ctx.ui.custom as any)(
                     (
                         _tui: unknown,
