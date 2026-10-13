@@ -36,7 +36,7 @@ test.each([
     } finally { for (const client of clients) client.dispose(); rmSync(root, { recursive: true, force: true }); }
 });
 
-function fixture(autoComplete = true, statusResult?: object) {
+function fixture(autoComplete = true, statusResult?: object, sessionFile?: string) {
     const handlers = new Map<string, Set<(data: unknown) => void>>();
     const methods: string[] = [];
     const requests: unknown[] = [];
@@ -61,7 +61,7 @@ function fixture(autoComplete = true, statusResult?: object) {
         });
         bus.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
             version: 1, ...request, success: true,
-            data: request.method === "ping" ? { session: { sessionId: "session-1" } } : request.method === "status" ? statusResult ?? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: "child-1", state: "running" }] } } : { details: { asyncId: request.method === "resume" ? "child-2" : "child-1" } },
+            data: request.method === "ping" ? { session: { sessionId: "session-1", sessionFile } } : request.method === "status" ? statusResult ?? { asyncSnapshot: { version: 1, kind: "pi-subagents.async-status-snapshot", runs: [{ id: "child-1", state: "running" }] } } : { details: { asyncId: request.method === "resume" ? "child-2" : "child-1" } },
         });
     });
     return { bus, methods, requests, handlers };
@@ -329,3 +329,37 @@ test('public preflight forwards the live native MCP host', async () => {
         rmSync(root,{recursive:true,force:true});
     }
 });
+
+
+test("preflight resolves UUID providers while restrictions and ownership retain the session file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "subagent-provider-preflight-"));
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    const sessionFile = join(root, "parent.jsonl");
+    const client = new boundary.SubagentIntegration(fixture(false, undefined, sessionFile).bus);
+    let registration: ReturnType<typeof boundary.registerRequiredChildExtensions> | undefined;
+    let restriction: boundary.RestrictionHandle | undefined;
+    try {
+        process.env.PI_CODING_AGENT_DIR = root;
+        mkdirSync(join(root, "agents"));
+        mkdirSync(join(root, ".pi"));
+        const packageRoot = new URL(".", import.meta.resolve("pi-subagents")).pathname;
+        writeFileSync(join(root, "settings.json"), JSON.stringify({packages: [packageRoot]}));
+        writeFileSync(join(root, "agents", "reader.md"), "---\nname: reader\ndescription: Fixture\ntools: fixture_inspect, write\n---\nInspect.\n");
+        const provider = join(root, "provider.ts");
+        writeFileSync(provider, "export default () => {};");
+        let captures = 0;
+        registration = boundary.registerRequiredChildExtensions({sessionId:"session-1", extensions:() => { captures++; return [{id:"fixture-provider", path:provider, whenTools:["fixture_inspect"]}]; }});
+        restriction = await client.restrict({allowedTools:["fixture_inspect"]});
+        const result = await client.preflight({agent:"reader",task:"inspect",cwd:root, context:"fresh", skill:false, intercomBridge:{mode:"off"}});
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.message);
+        expect(result.contract.tools.requiredExtensionIds).toEqual(["fixture-provider"]);
+        expect(captures).toBe(1);
+        expect(result.contract.tools.effectiveAllowlist).toEqual(["fixture_inspect"]);
+        expect(await client.reference("run-1")).toEqual({runId:"run-1",sessionId:sessionFile});
+    } finally {
+        registration?.dispose(); restriction?.dispose(); client.dispose();
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+        rmSync(root, {recursive:true, force:true});
+    }
+}, 30_000);

@@ -185,7 +185,7 @@ export class SubagentIntegration extends ForegroundClient {
     private readonly pendingLaunches = new Map<string, number>();
     private readonly early = new Map<string, SubagentEvent>();
     private unscopedSubscribers = 0;
-    private sessionCheck?: Promise<string>;
+    private sessionCheck?: ReturnType<SubagentIntegration["session"]>;
     private readonly recovery = new Map<string, RecoveryWatch>();
     private readonly waiting = new Set<(error: Error) => void>();
     private closed = false;
@@ -316,9 +316,7 @@ export class SubagentIntegration extends ForegroundClient {
         return completion;
     }
 
-    private async session(
-        options?: SubagentRpcRequestOptions,
-    ): Promise<string> {
+    private async session(options?: SubagentRpcRequestOptions) {
         const ping = await this.rpc.ping(options);
         if (
             !record(ping.session) ||
@@ -328,24 +326,24 @@ export class SubagentIntegration extends ForegroundClient {
             throw new Error(
                 "Subagent runtime did not provide a trusted session identity.",
             );
-        return subagentSessionKey(
-            ping.session.sessionId,
+        const id = ping.session.sessionId;
+        const file =
             typeof ping.session.sessionFile === "string"
                 ? ping.session.sessionFile
-                : undefined,
-        );
+                : undefined;
+        return { id, file, key: subagentSessionKey(id, file) };
     }
 
     private async assertSession(ref: RunRef): Promise<void> {
         const session = (this.sessionCheck ??= this.session().finally(() => {
             this.sessionCheck = undefined;
         }));
-        if (!ref.runId.trim() || ref.sessionId !== (await session))
+        if (!ref.runId.trim() || ref.sessionId !== (await session).key)
             throw new Error("Subagent reference belongs to another session.");
     }
 
     async reference(runId: string): Promise<RunRef> {
-        const ref = { runId, sessionId: await this.session() };
+        const ref = { runId, sessionId: (await this.session()).key };
         this.observeReference(ref);
         return ref;
     }
@@ -356,7 +354,7 @@ export class SubagentIntegration extends ForegroundClient {
 
     async restrict(policy: Restriction) {
         return restrictSubagents({
-            sessionId: await this.session(),
+            sessionId: (await this.session()).key,
             source: "subagents-integration",
             ceiling: policy,
         });
@@ -370,7 +368,7 @@ export class SubagentIntegration extends ForegroundClient {
         } = {},
     ) {
         if (!request.cwd) throw new Error("Preflight requires cwd.");
-        const sessionId = await this.session();
+        const session = await this.session();
         return preflightSubagent(
             {
                 agent: request.agent,
@@ -387,9 +385,10 @@ export class SubagentIntegration extends ForegroundClient {
                         : undefined,
                 extensionBindings: request.extensionBindings,
                 intercomBridge: request.intercomBridge,
-                parentSessionId: sessionId,
+                parentSessionId: session.id,
+                parentSessionFile: session.file,
                 runtimeSnapshotHost: options.runtimeSnapshotHost,
-                capabilityCeiling: currentSubagentRestriction(sessionId),
+                capabilityCeiling: currentSubagentRestriction(session.key),
             },
             options,
         );
@@ -399,7 +398,7 @@ export class SubagentIntegration extends ForegroundClient {
         request: DetachedRequest,
         options?: SubagentRpcRequestOptions,
     ): Promise<RunRef> {
-        const sessionId = await this.session(options);
+        const sessionId = (await this.session(options)).key;
         const params =
             "stages" in request
                 ? {

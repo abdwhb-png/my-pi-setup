@@ -3,6 +3,7 @@ import { rejects } from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
     fauxAssistantMessage,
     fauxProvider,
@@ -59,7 +60,7 @@ it("runtime resolution reaches the SDK allowlist and enforces native tool calls"
             `import register from ${JSON.stringify(publicExtensionEntrypoint("pi-subagents-addons"))};\nexport default (pi) => register(pi, ${JSON.stringify(configPath)});\n`,
         );
 
-        const settingsBytes = JSON.stringify({subagents:{toolSelectionResolver:join(import.meta.dir,"../../pi-subagents-addons/tool-selection.ts")}});
+        const settingsBytes = JSON.stringify({packages:[fileURLToPath(new URL(".",import.meta.resolve("pi-subagents")))],subagents:{toolSelectionResolver:join(import.meta.dir,"../../pi-subagents-addons/tool-selection.ts")}});
         await writeFile(join(tempDir,"settings.json"), settingsBytes);
         const settings = SettingsManager.inMemory({});
         const modelRuntime = await ModelRuntime.create({

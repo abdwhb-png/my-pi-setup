@@ -7,6 +7,7 @@ import {
 } from "./fallback-advice.ts";
 import registerSubagentsOverview from "./pi-subagents-overview/index.ts";
 import registerSubagentWaitGuard from "./subagent-wait-guard/index.ts";
+import { registerGlobalToolProviders } from "./tool-providers.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,6 +37,7 @@ export default function registerSubagentsAddons(
     pi: ExtensionAPI,
     configPath?: string | URL,
 ): void {
+    registerGlobalToolProviders(pi);
     let config: ReturnType<typeof readAddonsConfig> | undefined;
     try {
         config = readAddonsConfig(configPath);

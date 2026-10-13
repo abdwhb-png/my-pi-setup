@@ -1,0 +1,99 @@
+import { expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import type { RequiredChildExtension } from "pi-subagents/required-child-extensions";
+import { resolveSubagentLaunchContract } from "pi-subagents/preflight";
+import { publicExtensionEntrypoint } from "./public-extension-session.ts";
+
+it("discovers global providers at launch and enforces the child's native allowlist", async () => {
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    const root = mkdtempSync(join(tmpdir(), "subagent-global-providers-"));
+    const sessions: AgentSession[] = [];
+    try {
+        process.env.PI_CODING_AGENT_DIR = root;
+        mkdirSync(join(root, "extensions"));
+        mkdirSync(join(root, "agents"));
+        mkdirSync(join(root, ".pi", "extensions"), { recursive: true });
+        const packageRoot = dirname(fileURLToPath(import.meta.resolve("pi-subagents")));
+        const settingsBytes = JSON.stringify({ packages: [{ source: packageRoot, extensions: [] }] });
+        writeFileSync(join(root, "settings.json"), settingsBytes);
+        writeFileSync(join(root, "addons.json"), "{}");
+        writeFileSync(join(root, "extensions", "addons.ts"), `import register from ${JSON.stringify(publicExtensionEntrypoint("pi-subagents-addons"))}; export default pi => register(pi, ${JSON.stringify(join(root, "addons.json"))});`);
+        const provider = join(root, "extensions", "provider.ts");
+        const loaded = join(root, "loaded.txt");
+        writeFileSync(provider, `import { appendFileSync } from "node:fs"; export default pi => { appendFileSync(${JSON.stringify(loaded)}, "loaded\\n"); for (const name of ["fixture_inspect", "fixture_write"]) pi.registerTool({ name, label:name, description:name, parameters:{type:"object",properties:{}}, async execute() { return {content:[{type:"text",text:name+" executed"}],details:{}}; } }); };`);
+        writeFileSync(join(root, ".pi", "extensions", "project.ts"), `export default pi => pi.registerTool({name:"project_only",label:"project",description:"project",parameters:{type:"object",properties:{}},async execute(){return {content:[],details:{}};}});`);
+        writeFileSync(join(root, "agents", "inspector.md"), "---\nname: inspector\ndescription: Fixture\ntools: fixture_inspect\n---\nInspect only.\n");
+        const settings = SettingsManager.inMemory({});
+        const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), modelsPath: null });
+        const faux = fauxProvider({ provider: "fixture-provider-catalogue" });
+        modelRuntime.registerNativeProvider(faux.provider);
+        const alias = join(root, "provider-link.ts");
+        symlinkSync(provider, alias);
+        const loader = new DefaultResourceLoader({ cwd: root, agentDir: root, settingsManager: settings, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
+        await loader.reload();
+        expect(loader.getExtensions().errors).toEqual([]);
+        const { session: parent } = await createAgentSession({ cwd: root, agentDir: root, settingsManager: settings, sessionManager: SessionManager.inMemory(root), modelRuntime, resourceLoader: loader });
+        sessions.push(parent);
+        const errors: string[] = [];
+        await parent.bindExtensions({ mode: "print", onError: error => errors.push(error.error) });
+        expect(errors).toEqual([]);
+        expect(parent.getAllTools().find(tool => tool.name === "fixture_inspect")?.sourceInfo.scope).toBe("user");
+        const contract = await resolveSubagentLaunchContract({ agent: "inspector", cwd: root, context: "fresh", skill: false, intercomBridge: { mode: "off" }, parentSessionId: parent.sessionManager.getSessionId() });
+        expect(contract.ok).toBe(true);
+        if (!contract.ok) throw new Error(contract.message);
+        expect(contract.contract.tools.requiredExtensionIds).toHaveLength(1);
+        const { buildInProcessChildLaunch } = await import(new URL("./src/runs/shared/child-launch.ts", import.meta.resolve("pi-subagents")).href);
+        const launch = buildInProcessChildLaunch({parentSessionId:parent.sessionManager.getSessionId(),cwd:root,sessionEnabled:false,inheritProjectContext:false,inheritGlobalContext:false,inheritSkills:false,childAgentName:"inspector",childIndex:0,host:"parent",tools:contract.contract.tools.effectiveAllowlist});
+        expect(launch.session.extensionPaths).toContain(provider);
+        expect(readFileSync(loaded, "utf8").trim().split("\n")).toHaveLength(1);
+        const childLoader = new DefaultResourceLoader({ cwd:root, agentDir:root, settingsManager:settings, additionalExtensionPaths:launch.session.extensionPaths, noExtensions:true, noSkills:true, noThemes:true, noPromptTemplates:true, noContextFiles:true });
+        await childLoader.reload();
+        expect(childLoader.getExtensions().errors).toEqual([]);
+        const {session:child} = await createAgentSession({cwd:root,agentDir:root,settingsManager:settings,sessionManager:SessionManager.inMemory(root),modelRuntime,model:faux.getModel(),resourceLoader:childLoader,tools:contract.contract.tools.effectiveAllowlist});
+        sessions.push(child);
+        await child.bindExtensions({mode:"print"});
+        expect(child.getActiveToolNames()).toContain("fixture_inspect");
+        expect(child.getActiveToolNames()).not.toContain("fixture_write");
+        const results: Array<{toolName:string;isError:boolean}> = [];
+        const unsubscribe = child.subscribe(event => { if(event.type === "tool_execution_end") results.push(event); });
+        try {
+            faux.setResponses([fauxAssistantMessage(fauxToolCall("fixture_inspect",{})),fauxAssistantMessage(fauxToolCall("fixture_write",{})),fauxAssistantMessage("done")]);
+            await child.prompt("Exercise the tool boundary");
+            expect(results.map(entry => [entry.toolName,entry.isError])).toEqual([["fixture_inspect",false],["fixture_write",true]]);
+        } finally {unsubscribe();}
+        expect(readFileSync(loaded, "utf8").trim().split("\n")).toHaveLength(2);
+        const duplicateLoader = new DefaultResourceLoader({cwd:root,agentDir:root,settingsManager:settings,additionalExtensionPaths:[alias,provider],noSkills:true,noThemes:true,noPromptTemplates:true,noContextFiles:true});
+        await duplicateLoader.reload();
+        expect(duplicateLoader.getExtensions().errors).toEqual([]);
+        expect(readFileSync(loaded, "utf8").trim().split("\n")).toHaveLength(3);
+        const projectContract = await resolveSubagentLaunchContract({agent:"inspector",cwd:root,context:"fresh",skill:false,intercomBridge:{mode:"off"},parentSessionId:"unrelated-session"});
+        expect(projectContract.ok && projectContract.contract.tools.requiredExtensionIds).toEqual([]);
+        const parentId = parent.sessionManager.getSessionId();
+        const lateProvider = join(root,"extensions","late.ts");
+        writeFileSync(lateProvider, `export default pi => pi.registerTool({name:"late_inspect",label:"late",description:"late",parameters:{type:"object",properties:{}},async execute(){return {content:[],details:{}};}});`);
+        await parent.reload();
+        expect(errors).toEqual([]);
+        const fresh = buildInProcessChildLaunch({parentSessionId:parentId,cwd:root,sessionEnabled:false,inheritProjectContext:false,inheritGlobalContext:false,inheritSkills:false,childAgentName:"late",childIndex:0,host:"parent",tools:["late_inspect"]});
+        expect(fresh.session.extensionPaths).toContain(lateProvider);
+        expect(launch.config.requiredExtensions.some((entry: RequiredChildExtension) => entry.path === lateProvider)).toBe(false);
+        expect(fresh.config.requiredExtensions.some((entry: RequiredChildExtension) => entry.whenTools?.includes("project_only"))).toBe(false);
+        const reloaded = await resolveSubagentLaunchContract({agent:"inspector",cwd:root,context:"fresh",skill:false,intercomBridge:{mode:"off"},parentSessionId:parentId});
+        expect(reloaded.ok && reloaded.contract.tools.requiredExtensionIds).toEqual(contract.contract.tools.requiredExtensionIds);
+        await parent.extensionRunner.emit({type:"session_shutdown",reason:"quit"});
+        const disposed = await resolveSubagentLaunchContract({agent:"inspector",cwd:root,context:"fresh",skill:false,intercomBridge:{mode:"off"},parentSessionId:parentId});
+        expect(disposed.ok && disposed.contract.tools.requiredExtensionIds).toEqual([]);
+        expect(readFileSync(join(root, "settings.json"), "utf8")).toBe(settingsBytes);
+    } finally {
+        for (const session of sessions.reverse()) {
+            await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+        rmSync(root, { recursive: true, force: true });
+    }
+}, 30_000);

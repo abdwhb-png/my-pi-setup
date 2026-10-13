@@ -140,3 +140,9 @@ export async function discoverSubagents(
         projectTrusted: options.projectTrusted,
     });
 }
+
+export { registerRequiredChildExtensions } from "pi-subagents/required-child-extensions";
+export type {
+    RequiredChildExtension,
+    RequiredChildExtensionRegistration,
+} from "pi-subagents/required-child-extensions";

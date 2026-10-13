@@ -1,0 +1,191 @@
+{
+  "date": "2026-10-13",
+  "scope": "O3: global tool providers only; native children; no per-agent provider lists",
+  "fork": {
+    "base": "b4657e7ed8e37959888a22dbcad3dfde48a07fba",
+    "candidateCommit": "77741169d455bd4ab4f65037c226c4ce644ff8e4",
+    "productionFiles": 5,
+    "versionChanged": false
+  },
+  "harness": {
+    "base": "22df6f06158006bda39a05b348e61adc64e6a4c2",
+    "branch": "feat/global-tool-providers"
+  },
+  "checks": {
+    "forkUnitBaseline": {
+      "tests": 4028,
+      "pass": 4008,
+      "fail": 4,
+      "skipped": 16
+    },
+    "forkUnitCandidate": {
+      "tests": 4034,
+      "pass": 4012,
+      "fail": 6,
+      "skipped": 16,
+      "note": "Full run preceded the final single-capture preflight adjustment. The complete affected preflight suite was rerun afterwards. Four failures also occurred on baseline. Two additional failures passed isolated rechecks."
+    },
+    "forkUnitAdditionalFailureRechecks": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0
+    },
+    "forkFocusedContractsAndRecovery": {
+      "tests": 43,
+      "pass": 43,
+      "fail": 0,
+      "skipped": 0
+    },
+    "forkFinalPreflightAndConditions": {
+      "tests": 41,
+      "pass": 41,
+      "fail": 0,
+      "skipped": 0
+    },
+    "forkWorkflowRetention": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0
+    },
+    "forkIntegration": {
+      "tests": 1210,
+      "pass": 1185,
+      "fail": 18,
+      "skipped": 7,
+      "note": "Full suite is not green. All 18 failing cases passed subsequent targeted reruns. The terminal-timeout case required a separate single-test rerun after its initial subset rerun still failed."
+    },
+    "forkIntegrationRechecks": [
+      {
+        "file": "test/integration/async-execution.part-1.test.ts",
+        "exitCode": 0,
+        "counts": {
+          "tests": 6,
+          "pass": 6,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "file": "test/integration/async-execution.part-2.test.ts",
+        "exitCode": 1,
+        "counts": {
+          "tests": 8,
+          "pass": 7,
+          "fail": 1,
+          "skipped": 0
+        }
+      },
+      {
+        "file": "test/integration/external-cli-runner.test.ts",
+        "exitCode": 0,
+        "counts": {
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "file": "test/integration/foreign-workflow-steering.test.ts",
+        "exitCode": 0,
+        "counts": {
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "file": "test/integration/single-execution.part-1.test.ts",
+        "exitCode": 0,
+        "counts": {
+          "tests": 2,
+          "pass": 2,
+          "fail": 0,
+          "skipped": 0
+        }
+      }
+    ],
+    "terminalTimeoutBaselineIsolated": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0
+    },
+    "terminalTimeoutCandidateIsolated": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0
+    },
+    "forkTypecheck": {
+      "exitCode": 0
+    },
+    "forkFocusedLint": {
+      "baselineErrors": 677,
+      "candidateErrors": 676,
+      "newDiagnostics": 0,
+      "note": "Existing anti-slop diagnostics remain. Added callback/name boundary typeof checks have narrowly documented suppressions."
+    },
+    "harnessFocusedTests": {
+      "tests": 26,
+      "pass": 26,
+      "fail": 0,
+      "note": "Includes real SDK composition, reload, provider deduplication, forbidden-tool execution, addon lifecycle, and shared integration. The final preflight single-capture assertion also passed in a targeted rerun."
+    },
+    "harnessExtensionBoundaries": {
+      "exitCode": 0
+    },
+    "harnessFocusedLint": {
+      "exitCode": 0,
+      "baselineWarnings": 9,
+      "candidateWarnings": 9,
+      "newDiagnostics": 0
+    },
+    "harnessTypecheck": {
+      "exitCode": 1,
+      "baselineEquivalent": true,
+      "errors": [
+        "extensions/sandbox/preparation.test.ts:104: signal on never",
+        "extensions/sandbox/runtime/runtime-bundle.test.ts:141: signal on never",
+        "extensions/sandbox/runtime/runtime-bundle.test.ts:216: signal on never"
+      ]
+    }
+  },
+  "live": {
+    "runtime": "Promoted Pi 1.1.0; daily wrapper with an isolated PI_CODING_AGENT_DIR",
+    "resolvedForkRoot": "~/engineering/pi-integrations/.worktrees/pi-subagents-global-providers",
+    "foreground": {
+      "status": "completed",
+      "model": "cpa/gemini-3.8-flash",
+      "runId": "3b52f124-836e-475e-a7a0-67926971fe4a"
+    },
+    "async": {
+      "status": "completed",
+      "model": "cpa/gemini-3.8-flash",
+      "runId": "19386b19-9d41-4175-882e-6d532a14a4be"
+    },
+    "successfulChildTools": [
+      "module_report",
+      "write_report"
+    ],
+    "parentLensCalls": {
+      "lifecycle-parent-before": true,
+      "lifecycle-parent-after-foreground": true,
+      "lifecycle-parent-after-async": true
+    },
+    "scopedReportsCreated": 4,
+    "personalSettingsUnchanged": true,
+    "privateEvidence": "/tmp/pi-global-providers-live-a4rrv36n",
+    "privateCredentialCopiesRemoved": true
+  },
+  "limitations": [
+    "Full-suite timing failures remain visible despite passing isolated rechecks.",
+    "Four unit failures reproduced on the original fork; three harness type errors and existing lint diagnostics remain.",
+    "No independent delegated review was requested or performed.",
+    "No publication, installation, activation, merge, or push was performed."
+  ],
+  "rawCheckLogs": "/tmp/pi-global-providers-validation"
+}

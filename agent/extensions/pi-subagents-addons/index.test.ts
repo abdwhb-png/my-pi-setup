@@ -16,6 +16,8 @@ import {
     when,
     type TestSession,
 } from "@abdwhb-png/pi-test-harness";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import registerSubagentsAddons, { readAddonsConfig } from "./index.ts";
 
@@ -32,6 +34,9 @@ beforeEach(() => {
     cwd = join(root, "project");
     mkdirSync(join(agentDir, "agents"), { recursive: true });
     mkdirSync(cwd);
+    mkdirSync(join(cwd, ".pi"));
+    writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ packages:[fileURLToPath(new URL(".", import.meta.resolve("pi-subagents")))] }));
+    new ProjectTrustStore(agentDir).set(cwd, true);
     process.env.PI_CODING_AGENT_DIR = agentDir;
     configPath = join(root, "addon.json");
     writeFileSync(

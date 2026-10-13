@@ -19,6 +19,7 @@ export type {
     DetachedRequest,
 } from "./workflow.ts";
 export {
+    registerRequiredChildExtensions,
     restrictSubagents,
     currentSubagentRestriction,
     preflightSubagent,
@@ -27,6 +28,8 @@ export {
     subagentSessionKey,
 } from "./native-api.ts";
 export type {
+    RequiredChildExtension,
+    RequiredChildExtensionRegistration,
     Restriction,
     RestrictionHandle,
     ToolSelectionRequest,
