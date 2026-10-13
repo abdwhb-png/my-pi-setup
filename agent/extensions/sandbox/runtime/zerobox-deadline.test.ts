@@ -1,10 +1,16 @@
-import { expect, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
+import * as fs from "node:fs/promises";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
 import { createRuntimeBundleFixture } from "./test-runtime-fixture.ts";
 import { ExecutionDeadline } from "../../_shared/command-execution/deadline.ts";
+import { resolvePrivateRuntime } from "./runtime-bundle.ts";
+
+const io: {
+    readFile: (...args: Parameters<typeof fs.readFile>) => ReturnType<typeof fs.readFile>;
+} = fs;
 
 test("a stalled asynchronous engine probe respects its startup deadline", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-probe-deadline-"));
@@ -26,4 +32,52 @@ test("a stalled asynchronous engine probe respects its startup deadline", async 
         await expect(backend.probe(deadline)).rejects.toThrow("timeout:");
         expect(started).toBe(true);
     } finally { deadline?.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+test.each(["timeout:30", "aborted"])("%s during distribution verification prevents even a late engine start", async reasonText => {
+    const root = await mkdtemp(join(tmpdir(), "pi-verification-deadline-"));
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const originalRead = fs.readFile;
+    let deadline: ExecutionDeadline | undefined;
+    let read: ReturnType<typeof spyOn<typeof io, "readFile">> | undefined;
+    let resolution: ReturnType<typeof resolvePrivateRuntime> | undefined;
+    let probe: Promise<unknown> | undefined;
+    try {
+        const binaryPath = join(root, "zerobox");
+        await writeFile(binaryPath, "fixture engine", { mode: 0o700 });
+        const fixture = await createRuntimeBundleFixture(binaryPath, "fixture-version");
+        read = spyOn(io, "readFile").mockImplementation(async (path, options) => {
+            if (String(path) === join(root, "components/shell/bin/bash")) {
+                entered.resolve();
+                await release.promise;
+            }
+            return originalRead(path, options);
+        });
+        const runCommand = mock(() => ({ exitCode: 0, stdout: "", stderr: "" }));
+        const backend = createZeroboxBackend({ ...fixture, binaryPath, runCommand,
+            resolveRuntime: options => {
+                resolution = resolvePrivateRuntime(options);
+                return resolution;
+            },
+        });
+        deadline = new ExecutionDeadline(30);
+        probe = backend.probe(deadline).catch(error => error);
+        await entered.promise;
+        const reason = new Error(reasonText);
+        deadline.cancel(reason);
+        expect(await probe).toBe(reason);
+        expect(runCommand).not.toHaveBeenCalled();
+        release.resolve();
+        await expect(resolution).rejects.toBe(reason);
+        await new Promise(resolve => setImmediate(resolve));
+        expect(runCommand).not.toHaveBeenCalled();
+    } finally {
+        release.resolve();
+        await probe;
+        await resolution?.catch(() => {});
+        read?.mockRestore();
+        deadline?.dispose();
+        await rm(root, { recursive: true, force: true });
+    }
 });

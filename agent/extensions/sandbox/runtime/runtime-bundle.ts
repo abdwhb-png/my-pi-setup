@@ -68,8 +68,14 @@ function child(root: string, value: unknown): string {
         throw new Error("Distribution entry must be a safe relative path");
     return join(root, value);
 }
-async function secure(path: string, directory = false): Promise<void> {
+async function secure(
+    path: string,
+    directory = false,
+    signal?: AbortSignal,
+): Promise<void> {
+    signal?.throwIfAborted();
     const stat = await lstat(path);
+    signal?.throwIfAborted();
     if (
         stat.isSymbolicLink() ||
         (directory ? !stat.isDirectory() : !stat.isFile()) ||
@@ -153,6 +159,7 @@ async function tree(
     value: unknown,
     signal?: AbortSignal,
 ): Promise<PrivateRuntimeComponent> {
+    signal?.throwIfAborted();
     if (
         !record(value) ||
         !onlyKeys(value, ["root", "files"]) ||
@@ -160,7 +167,7 @@ async function tree(
     )
         throw new Error("Invalid component manifest");
     const componentRoot = child(root, value.root);
-    await secure(componentRoot, true);
+    await secure(componentRoot, true, signal);
     if ((await realpath(componentRoot)) !== componentRoot)
         throw new Error(
             "Component root redirects outside its recorded location",
@@ -175,40 +182,77 @@ async function tree(
         const name = relative(componentRoot, path);
         if (declared.has(name)) throw new Error("Duplicate component entry");
         declared.add(name);
-        if ((await realpath(dirname(path))) !== dirname(path))
-            throw new Error("Component entry has a redirected parent");
         if (digest(item.sha256) && item.symlink === undefined) {
-            await secure(path);
-            // Cancellation is checked between files. The outer deadline bounds the caller while a pending read settles.
-            if (hash(await readFile(path)) !== item.sha256)
-                throw new Error(`Runtime file digest mismatch: ${name}`);
             files.push({ path: name, sha256: item.sha256 });
         } else if (
             typeof item.symlink === "string" &&
             item.sha256 === undefined
         ) {
-            const link = await readlink(path);
-            if (
-                link !== item.symlink ||
-                isAbsolute(link) ||
-                !contained(componentRoot, resolve(dirname(path), link)) ||
-                !contained(componentRoot, await realpath(path))
-            )
-                throw new Error(
-                    `Runtime symlink leaves its component: ${name}`,
-                );
-            files.push({ path: name, symlink: link });
+            files.push({ path: name, symlink: item.symlink });
         } else
             throw new Error(
                 "Runtime entry requires exactly one digest or symlink",
             );
     }
+    let next = 0;
+    const failures: { index: number; error: unknown }[] = [];
+    async function verifyNext(): Promise<void> {
+        while (failures.length === 0 && next < files.length) {
+            const index = next++;
+            const file = files[index];
+            try {
+                signal?.throwIfAborted();
+                const path = join(componentRoot, file.path);
+                if ((await realpath(dirname(path))) !== dirname(path))
+                    throw new Error("Component entry has a redirected parent");
+                signal?.throwIfAborted();
+                if (file.sha256 !== undefined) {
+                    await secure(path, false, signal);
+                    const bytes = await readFile(path, { signal });
+                    signal?.throwIfAborted();
+                    if (hash(bytes) !== file.sha256)
+                        throw new Error(
+                            `Runtime file digest mismatch: ${file.path}`,
+                        );
+                } else {
+                    const link = await readlink(path);
+                    signal?.throwIfAborted();
+                    if (
+                        link !== file.symlink ||
+                        isAbsolute(link) ||
+                        !contained(
+                            componentRoot,
+                            resolve(dirname(path), link),
+                        ) ||
+                        !contained(componentRoot, await realpath(path))
+                    )
+                        throw new Error(
+                            `Runtime symlink leaves its component: ${file.path}`,
+                        );
+                }
+            } catch (error) {
+                failures.push({ index, error });
+            }
+        }
+    }
+    // Each worker owns its pending I/O until it settles, including after another worker fails.
+    await Promise.all(
+        Array.from({ length: Math.min(8, files.length) }, verifyNext),
+    );
+    signal?.throwIfAborted();
+    if (failures.length > 0) {
+        failures.sort((a, b) => a.index - b.index);
+        throw failures[0].error;
+    }
     async function checkListed(directory: string): Promise<void> {
-        for (const item of await readdir(directory, { withFileTypes: true })) {
+        signal?.throwIfAborted();
+        const entries = await readdir(directory, { withFileTypes: true });
+        signal?.throwIfAborted();
+        for (const item of entries) {
             signal?.throwIfAborted();
             const path = join(directory, item.name);
             if (item.isDirectory()) {
-                await secure(path, true);
+                await secure(path, true, signal);
                 await checkListed(path);
             } else if (!declared.has(relative(componentRoot, path)))
                 throw new Error(
@@ -224,22 +268,27 @@ async function tree(
 export async function resolvePrivateRuntime(
     options: ResolvePrivateRuntimeOptions,
 ): Promise<PrivateRuntimeBundle> {
+    const { signal } = options;
     try {
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         const binaryPath = await realpath(options.binaryPath);
-        await secure(binaryPath);
+        await secure(binaryPath, false, signal);
         if (((await lstat(binaryPath)).mode & 0o111) === 0)
             throw new Error("Runtime executable lacks execute permission");
-        if (hash(await readFile(binaryPath)) !== options.expectedBinarySha256)
+        if (
+            hash(await readFile(binaryPath, { signal })) !==
+            options.expectedBinarySha256
+        )
             throw new Error("Runtime executable digest mismatch");
         const root = options.bundlePath
             ? resolve(options.bundlePath)
             : dirname(dirname(binaryPath));
-        await secure(root, true);
+        await secure(root, true, signal);
         if ((await realpath(root)) !== root)
             throw new Error(
                 "Bundle root redirects outside its recorded location",
             );
+        signal?.throwIfAborted();
         if (
             (await lstat(options.binaryPath)).isSymbolicLink() &&
             !options.bundlePath &&
@@ -252,8 +301,9 @@ export async function resolvePrivateRuntime(
                 "Managed executable points outside the release directory",
             );
         const manifestPath = join(root, "manifest.json");
-        await secure(manifestPath);
-        const bytes = await readFile(manifestPath);
+        await secure(manifestPath, false, signal);
+        const bytes = await readFile(manifestPath, { signal });
+        signal?.throwIfAborted();
         const manifest: unknown = JSON.parse(bytes.toString("utf8"));
         if (
             !record(manifest) ||
@@ -275,20 +325,18 @@ export async function resolvePrivateRuntime(
         )
             throw new Error("Unsupported runtime manifest");
         const helper = child(root, manifest.helper.path);
-        await secure(helper);
+        await secure(helper, false, signal);
         if (
             (await realpath(helper)) !== helper ||
-            hash(await readFile(helper)) !== manifest.helper.sha256
+            hash(await readFile(helper, { signal })) !== manifest.helper.sha256
         )
             throw new Error("Runtime helper digest mismatch");
-        const [shell, analysis] = await Promise.all([
-            tree(root, manifest.components.shell, options.signal),
-            tree(root, manifest.components.analysis, options.signal),
-        ]);
+        const shell = await tree(root, manifest.components.shell, signal);
+        const analysis = await tree(root, manifest.components.analysis, signal);
         for (const command of ["bin/bash", "bin/env"])
             if (!shell.files.some((file) => file.path === command))
                 throw new Error(`Private shell command missing: ${command}`);
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         return {
             root,
             binaryPath,
@@ -299,7 +347,7 @@ export async function resolvePrivateRuntime(
             components: { shell, analysis },
         };
     } catch (error) {
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         throw new SandboxExecutionError("provenance-mismatch", {
             diagnostic:
                 error instanceof Error
