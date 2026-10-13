@@ -57,3 +57,7 @@ Both candidate branches and worktrees are retained for review. Publication and d
 ## A1 corrective review follow-up
 
 The targeted review found and reproduced two additional cases outside the original live scenarios: an empty catalogue rejected native remote placement, and empty catalogues were not retained through workflow admission and recovery. Both are corrected in the candidate worktree. The [corrective review](review-corrections.md) records the RED/GREEN evidence, final checks, reviewed scope, and remaining validation limits. The original results above remain historical evidence for the initial candidate.
+
+## A2 activation follow-up
+
+The fork and matching addon are now integrated into the daily installation. The [activation report](activation.md) records the versioned Git release, installed provenance, the alias-placeholder correction discovered with the full daily configuration, and the successful foreground/asynchronous smoke test. Earlier sections remain historical evidence for their respective qualification stages.
