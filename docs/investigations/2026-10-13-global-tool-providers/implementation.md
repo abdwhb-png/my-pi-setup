@@ -53,3 +53,7 @@ The focused harness suite passed all 26 tests. The final fork preflight/conditio
 The full fork unit run recorded 4,012 passes, six failures, and 16 skips. Four failures also occurred on the original fork. The other two passed isolated reruns. The full integration run recorded 1,185 passes, 18 failures, and seven skips. All 18 failing cases passed later targeted runs, including a separate isolated rerun of the last timeout case. This is not a green full-suite result, and the timing sensitivity remains a qualification limitation. The harness typecheck retains the same three sandbox test errors seen on its baseline.
 
 Both candidate branches and worktrees are retained for review. Publication and daily activation remain separate steps.
+
+## A1 corrective review follow-up
+
+The targeted review found and reproduced two additional cases outside the original live scenarios: an empty catalogue rejected native remote placement, and empty catalogues were not retained through workflow admission and recovery. Both are corrected in the candidate worktree. The [corrective review](review-corrections.md) records the RED/GREEN evidence, final checks, reviewed scope, and remaining validation limits. The original results above remain historical evidence for the initial candidate.
