@@ -106,9 +106,9 @@ mockUI: {
 }
 ```
 
-## Pi 0.83 fire-and-forget methods
+## Pi 1.1 fire-and-forget methods
 
-Pi 0.83's `ExtensionUIContext` adds indicator/autocomplete methods that fire and forget — they return nothing, and the mock records their arguments instead of answering:
+Pi 1.1's `ExtensionUIContext` adds indicator/autocomplete methods that fire and forget — they return nothing, and the mock records their arguments instead of answering:
 
 - `setWorkingVisible(visible: boolean)` — show/hide the working indicator
 - `setWorkingIndicator(options?: { frames?: string[]; intervalMs?: number })` — set the working indicator animation; `frames: []` hides the indicator entirely, `frames: ["●"]` renders a static indicator, and omitting the argument restores the default spinner
@@ -125,7 +125,7 @@ expect(t.events.uiCallsFor("setHiddenThinkingLabel")).toHaveLength(1);
 expect(t.events.uiCallsFor("addAutocompleteProvider")).toHaveLength(1);
 ```
 
-The mock is typed as Pi 0.83's `ExtensionUIContext`, so a future Pi minor that adds a mandatory member breaks the typecheck instead of failing at runtime.
+The mock is typed as Pi 1.1's `ExtensionUIContext`, so a future Pi minor that adds a mandatory member breaks the typecheck instead of failing at runtime.
 
 ## Asserting on UI calls
 

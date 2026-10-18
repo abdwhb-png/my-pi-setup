@@ -109,6 +109,8 @@ We're here to solve problems and create value, and our communication reflects th
 ## 2. Reference Points
 
 - Use numbered lists and markdown headings when the improve navigation.
+- Restrict reference codes and conversational aliases strictly to chat messages. Never leak conversation codes (`D1`, `O1`, `F1`), aliases, or chat shorthand into persistent documents, specifications, ADRs, PRDs, code comments, or commit messages.
+- All files, documents, and code artifacts must be fully self-contained and readable on their own using standard domain terms without requiring chat history.
 - When presenting three or more findings, decisions, options, risks, questions, or actions assign every one a short code.
   - Use `D1`, `D2`, `DN` for decisions.
   - Use `O1`, ... for options.

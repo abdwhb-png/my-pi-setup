@@ -54,7 +54,7 @@
     "@earendil-works/pi-mcp": "file:../runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/packed/tarballs/earendil-works-pi-mcp-1.1.0-c462b0beedd2.tgz"
   },
   "devDependencies": {
-    "@abdwhb-png/pi-test-harness": "file:../runtime/pi-test-harness/releases/0.8.1-fork.3-be5b44088212/pi-test-harness.tgz",
+    "@abdwhb-png/pi-test-harness": "0.10.0",
     "@types/bun": "^1.3.14",
     "@types/node": "^25.9.3",
     "@types/node-notifier": "8.0.5",

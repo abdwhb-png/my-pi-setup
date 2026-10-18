@@ -1,0 +1,416 @@
+{
+  "date": "2026-10-13",
+  "provenance": {
+    "harnessCommit": "4e75550dfd870c988bc5a18f5becc7c3d2a74bbf",
+    "source": "git:github.com/abdwhb-png/pi-subagents@v0.77.0+fork.2",
+    "packageVersion": "0.77.0+fork.2",
+    "packageCommit": "b4657e7ed8e37959888a22dbcad3dfde48a07fba",
+    "managedRoot": "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents",
+    "runtimeRelease": "1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58"
+  },
+  "evidenceDirectory": "/tmp/pi-live-e2e-20261013-omewkf4d",
+  "modelsExercised": [
+    "cpa/ocg/go-deepseek-v4.1-flash",
+    "cpa/gemini-3.8-flash",
+    "cpa/muse-spark-1.3-contributor",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6.1-sol"
+  ],
+  "protectedFiles": {
+    "checked": 38,
+    "changed": 0
+  },
+  "checks": [
+    {
+      "id": "T1",
+      "name": "Real default parent read",
+      "seconds": 127.68,
+      "processExitCode": 0,
+      "toolResults": [
+        {
+          "tool": "read",
+          "isError": false,
+          "execution": {
+            "mode": "host",
+            "shellProfile": "host",
+            "status": "unsandboxed",
+            "profile": "none",
+            "backend": "host",
+            "tmpNamespace": "host",
+            "phase": "source",
+            "outcome": "succeeded"
+          },
+          "text": "LIVE_E2E_PROOF=9e742d18\n"
+        }
+      ]
+    },
+    {
+      "id": "T2",
+      "name": "Native preflight in the daily process",
+      "status": true,
+      "model": "cpa/gemini-3.8-flash",
+      "unresolvedAliases": 0
+    },
+    {
+      "id": "T3",
+      "name": "Shared foreground scout",
+      "scope": "Temporary read-only capability ceiling",
+      "seconds": 12.479,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/foreground-scout.json"
+    },
+    {
+      "id": "T4",
+      "name": "Shared foreground architect",
+      "scope": "Temporary read-only capability ceiling",
+      "seconds": 19.709,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/foreground-architect.json"
+    },
+    {
+      "id": "T5",
+      "name": "Async worker and completion wait",
+      "scope": "Temporary read-only capability ceiling; ambient child extensions retained",
+      "seconds": 64.192,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/async-worker.json"
+    },
+    {
+      "id": "T6",
+      "name": "Async scout with its full configured tool selection",
+      "scope": "Unmodified personal agent configuration; full ambient child extensions",
+      "seconds": 75.93,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/unrestricted-async.json"
+    },
+    {
+      "id": "T7",
+      "name": "Two-stage workflow with structured dependency",
+      "scope": "Temporary read-only capability ceiling; proof passed through a structured output",
+      "seconds": 81.424,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/workflow-scout.json"
+    },
+    {
+      "id": "T8",
+      "name": "Completed-run resume",
+      "scope": "Temporary read-only capability ceiling",
+      "seconds": 77.891,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/resume-scout.json",
+      "resumedStatus": "completed"
+    },
+    {
+      "id": "T9",
+      "name": "Active interruption, paused state, and resume",
+      "scope": "Configured architect model; read-only ceiling and denyExtensions=true",
+      "seconds": 43.602,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/last-interrupt-ready-architect.json",
+      "pausedState": "paused"
+    },
+    {
+      "id": "T10",
+      "name": "Configured nested code-reviewer to qa-tester",
+      "scope": "Temporary read-only ceiling; current allowedAgents permission preserved",
+      "seconds": 25.362,
+      "status": "completed",
+      "proofObserved": true,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/nested-nested-code-reviewer.json"
+    },
+    {
+      "id": "T11",
+      "name": "Forbidden nested target rejected",
+      "outerStatus": "completed",
+      "nestedToolIsError": true,
+      "requestedTarget": "scout",
+      "configuredAllowedTarget": "qa-tester",
+      "proofObserved": false,
+      "traceVerified": true
+    },
+    {
+      "id": "T12",
+      "name": "Configured oracle launch",
+      "scope": "Unmodified model override",
+      "seconds": 0.23,
+      "status": "failed",
+      "proofObserved": false,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/foreground-oracle.json",
+      "error": "Unknown subagent model 'openai-codex/gtp-6-sol' in the active Pi model registry. Closest registry models: openai-codex/gpt-6-sol, cpa/gpt-6-sol, openai-codex/gpt-5.6-sol, cpa/gpt-5.6-sol."
+    },
+    {
+      "id": "T13",
+      "name": "Shared foreground scout with full configured selection",
+      "scope": "Unmodified personal agent configuration",
+      "seconds": 1.031,
+      "status": "failed",
+      "proofObserved": false,
+      "source": "/tmp/pi-live-e2e-20261013-omewkf4d/unrestricted-foreground.json",
+      "error": "Agent 'scout' ran as a foreground child, which never loads the parent's ambient extensions, and these child tools were unavailable: ast_grep_search, ast_grep_outline, lsp_navigation, symbol_search, module_report, read_symbol, read_enclosing, lens_diagnostics, ast_grep_replace, lens_diagnostic_mark, write_report.\nThe `tools` field is a strict allowlist; it does not load extension code.\nMCP tools require background children (`async: true`) because only they load ambient extensions.\nFor extension tools a foreground child can load, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`."
+    },
+    {
+      "id": "T14a",
+      "name": "Initial shell attempt",
+      "seconds": 143.63,
+      "processExitCode": 0,
+      "toolResults": [
+        {
+          "tool": "safe_bash",
+          "isError": true,
+          "execution": {
+            "status": "unknown",
+            "profile": "unknown",
+            "backend": "unknown",
+            "tmpNamespace": "unknown",
+            "phase": "policy",
+            "outcome": "blocked",
+            "mode": "sandbox",
+            "shellProfile": "custom",
+            "timingsMs": {
+              "configuration": 28.541142999994918,
+              "preparation": 30093.119288
+            }
+          },
+          "text": "Command timed out after 30 seconds"
+        }
+      ]
+    },
+    {
+      "id": "T14b",
+      "name": "Shell with existing dotenv channel",
+      "seconds": 35.45,
+      "processExitCode": 0,
+      "toolResults": [
+        {
+          "tool": "safe_bash",
+          "isError": false,
+          "execution": {
+            "status": "sandboxed",
+            "profile": "bash-general",
+            "backend": "zerobox",
+            "tmpNamespace": "host",
+            "phase": "process",
+            "outcome": "succeeded",
+            "timingsMs": {
+              "configuration": 8.560939999999391,
+              "preparation": 9.375215000000026,
+              "admission": 0.23802499999874271,
+              "execution": 2088.8066499999986
+            },
+            "exitCode": 0,
+            "localProcess": "exited",
+            "mode": "sandbox",
+            "shellProfile": "custom"
+          },
+          "text": "LIVE_SHELL_OK"
+        }
+      ]
+    }
+  ],
+  "mcpWithDotenv": {
+    "exitCode": 1,
+    "timedOut": false,
+    "seconds": 19.35,
+    "topLevelKeys": [
+      "servers",
+      "errors"
+    ],
+    "servers": [
+      {
+        "name": "context7",
+        "state": "connected",
+        "exposure": "codemode",
+        "toolsCount": 2,
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools",
+          "resources",
+          "resourceTemplates"
+        ]
+      },
+      {
+        "name": "deepwiki",
+        "state": "connected",
+        "exposure": "direct",
+        "toolsCount": 3,
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools",
+          "resources",
+          "resourceTemplates"
+        ]
+      },
+      {
+        "name": "exa",
+        "state": "connected",
+        "exposure": "codemode",
+        "toolsCount": 3,
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools",
+          "toolExposure",
+          "resources",
+          "resourceTemplates"
+        ]
+      },
+      {
+        "name": "firecrawl",
+        "state": "connected",
+        "exposure": "codemode",
+        "toolsCount": 28,
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools"
+        ]
+      },
+      {
+        "name": "vision-mcp-server",
+        "state": "failed",
+        "exposure": "codemode",
+        "toolsCount": 0,
+        "error": "MCP HTTP request failed with status 404: 404 page not found",
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools",
+          "error"
+        ]
+      },
+      {
+        "name": "youtube-transcript",
+        "state": "connected",
+        "exposure": "codemode",
+        "toolsCount": 4,
+        "keys": [
+          "name",
+          "scope",
+          "source",
+          "enabled",
+          "exposure",
+          "transport",
+          "state",
+          "tools",
+          "resources",
+          "resourceTemplates"
+        ]
+      }
+    ]
+  },
+  "sandboxDistributionInspection": {
+    "ok": true,
+    "seconds": 21.911835009999997,
+    "components": [
+      "shell",
+      "analysis"
+    ]
+  },
+  "nestedChildTrace": [
+    {
+      "models": [
+        "cpa/muse-spark-1.3-contributor"
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "path": "<temporary workspace>/proof.txt"
+        }
+      ],
+      "proofObserved": true
+    }
+  ],
+  "findings": [
+    {
+      "id": "E1",
+      "state": "reproduced",
+      "summary": "Oracle model override uses gtp-6-sol instead of a known registry model."
+    },
+    {
+      "id": "E2",
+      "state": "reproduced",
+      "summary": "Configured scout foreground launch rejects extension tools whose providers were not loaded."
+    },
+    {
+      "id": "E3",
+      "state": "reproduced with instrumentation; failing operation identified",
+      "summary": "Full analysis-bundle verification exhausts the 30-second shell startup and replacement deadlines before any Zerobox process starts. The lower-level cause of filesystem latency variation remains unverified.",
+      "followUpEvidence": "verified-causes.json"
+    },
+    {
+      "id": "E4",
+      "state": "reproduced after dotenv correction",
+      "summary": "vision-mcp-server initialization returns HTTP 404."
+    }
+  ],
+  "limitations": [
+    "Most delegation scenarios use a temporary read-only ceiling; unfiltered foreground failure and unfiltered async success are recorded separately.",
+    "MCP qualification covers connection and discovery, not invocation of every server tool.",
+    "Cold ambient CPA interruption attempts timed out before a tool call; the successful active interruption test uses the configured Codex model without ambient extensions.",
+    "Temporary probe setup errors and premature MCP snapshots were corrected; they are not repository defects.",
+    "No project-wide unit, integration, lint, or typecheck suite was rerun because production code was unchanged.",
+    "Backend capability flags are returned by the native probe; they do not independently test every security invariant."
+  ],
+  "sandboxBackendProbe": {
+    "ok": true,
+    "seconds": 3.5129081829999995,
+    "timingsMs": {
+      "verification": 3512.2945510000004
+    },
+    "capabilities": {
+      "platforms": [
+        "linux"
+      ],
+      "strict": true,
+      "exactReadDeny": true,
+      "exactWriteDeny": true,
+      "domainAllowlist": true,
+      "hostDomainRouting": true,
+      "outboundLoopback": true,
+      "networkDenyAll": true,
+      "nestedUserNamespacesBlocked": true,
+      "privateTemp": true,
+      "environmentFiltering": true,
+      "processTreeTermination": true,
+      "dynamicDenyGlobs": true,
+      "mediatedDirectTcp": true,
+      "inboundBinding": true,
+      "privateNetworkListeners": true,
+      "arbitraryUnixSockets": true
+    }
+  }
+}

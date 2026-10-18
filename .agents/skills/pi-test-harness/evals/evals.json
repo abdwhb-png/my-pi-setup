@@ -11,8 +11,8 @@
         {
             "id": 2,
             "name": "hook-blocking-vs-error",
-            "prompt": "My Pi 0.83 extension registers a `tool_call` hook that blocks `bash` whenever the command contains `rm -rf`. Show me a deterministic test that proves the hook blocked the call before the mocked bash handler ran and distinguishes that block from an ordinary tool error using @abdwhb-png/pi-test-harness.",
-            "expected_output": "A test that loads the real extension, supplies a bash mock handler with an observable call counter, drives the blocked command through when/calls/says, and asserts the canonical event records: ToolCallRecord.blocked is true, blockReason explains the block, the matching ToolResultRecord.isError is true, and its text contains the reason. It also proves the mock handler count stayed zero. It must not expect createTestSession.run() to throw ToolBlockedError; that class remains exported only for source compatibility in normal Pi 0.83 AgentSession runs.",
+            "prompt": "My Pi 1.1 extension registers a `tool_call` hook that blocks `bash` whenever the command contains `rm -rf`. Show me a deterministic test that proves the hook blocked the call before the mocked bash handler ran and distinguishes that block from an ordinary tool error using @abdwhb-png/pi-test-harness.",
+            "expected_output": "A test that loads the real extension, supplies a bash mock handler with an observable call counter, drives the blocked command through when/calls/says, and asserts the canonical event records: ToolCallRecord.blocked is true, blockReason explains the block, the matching ToolResultRecord.isError is true, and its text contains the reason. It also proves the mock handler count stayed zero. It must not expect createTestSession.run() to throw ToolBlockedError; that class remains exported only for source compatibility in normal Pi 1.1 AgentSession runs.",
             "files": []
         },
         {

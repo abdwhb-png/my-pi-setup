@@ -1,0 +1,48 @@
+{
+  "source": "git:github.com/abdwhb-png/pi-lens@v4.4.3+fork.1",
+  "commit": "401c9791c4f61de871bf05ce0f6401a715748996",
+  "base_commit": "bbb0ce798ed58b84068154f4d627a36a20265fe6",
+  "original_settings_sha256": "a0f5a72539f31d4ca2072de1b6d8ff2c834bef99f21660c7a3468eeb1489a2e1",
+  "original_mcp_sha256": "9bb52d9ff5513cd8842e46a91c0feac849088c32038e80aba46284bc15c9a369",
+  "daily_resolution": {
+    "source": "git:github.com/abdwhb-png/pi-lens@v4.4.3+fork.1",
+    "extension_count": 1,
+    "enabled_package_skills": 0,
+    "package_root": "~/.pi/agent/git/github.com/abdwhb-png/pi-lens",
+    "entrypoint": "~/.pi/agent/git/github.com/abdwhb-png/pi-lens/dist/index.js",
+    "tool_groups_last": true
+  },
+  "daily_protocol_probe": {
+    "sha": "401c9791c4f61de871bf05ce0f6401a715748996",
+    "package_root": "/tmp/pi-lens-git-migration-w6txtqoz/daily-verify-agent/git/github.com/abdwhb-png/pi-lens",
+    "physical_package_root": "~/.pi/agent/git/github.com/abdwhb-png/pi-lens",
+    "pi_commands": [
+      "lens-toggle",
+      "lens-context-toggle",
+      "lens-widget-toggle",
+      "lens-tdi",
+      "lens-map",
+      "lens-health",
+      "lens-perf",
+      "lens-tools",
+      "lens-allow-edit"
+    ],
+    "mcp_tool_count": 18,
+    "mcp_command": [
+      "node",
+      "~/.pi/agent/git/github.com/abdwhb-png/pi-lens/dist/mcp/server.js",
+      "--cwd=~/.pi"
+    ],
+    "package_skills_loaded": 0,
+    "model_calls": 0
+  },
+  "tsconfig_tests": {
+    "files": 1,
+    "passed": 5
+  },
+  "isolated_install_selftest": {
+    "passed": 12,
+    "failed": 0
+  },
+  "private_backup": "~/.pi/migration-backups/pi-lens-git-migration-20261018T103544Z"
+}

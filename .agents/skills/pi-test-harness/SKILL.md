@@ -9,16 +9,16 @@ metadata:
   package_author: "abdwhb-png (maintained fork of marcfargas' MIT-licensed pi-test-harness; pi itself is by Mario Zechner / earendil-works)"
   skill_author: abdwhb-png
   source: https://github.com/abdwhb-png/pi-test-harness
-  version: "0.7.0"
+  version: "0.10.0"
   languages: [TypeScript, JavaScript]
   category: testing
 ---
 
 # pi-test-harness
 
-`@abdwhb-png/pi-test-harness` is a maintained fork of Marc Fargas' MIT-licensed [pi-test-harness](https://github.com/marcfargas/pi-test-harness) for [Pi](https://github.com/earendil-works/pi-coding-agent) extensions, targeting **Pi 0.83.x only**. It keeps the upstream API and credits Marc Fargas' original work (pi-powershell, pi-tramp, pi-planner, etc.; note that pi itself is maintained by Mario Zechner / earendil-works, not the same person). Its job: let you exercise **real** extension code paths (tool registration, hooks, session events, UI prompts) in any test runner with zero LLM calls and full determinism.
+`@abdwhb-png/pi-test-harness` is a maintained fork of Marc Fargas' MIT-licensed [pi-test-harness](https://github.com/marcfargas/pi-test-harness) for [Pi](https://github.com/earendil-works/pi-coding-agent) extensions, targeting **Pi 1.1.x only**. It keeps the upstream API and credits Marc Fargas' original work (pi-powershell, pi-tramp, pi-planner, etc.; note that pi itself is maintained by Mario Zechner / earendil-works, not the same person). Its job: let you exercise **real** extension code paths (tool registration, hooks, session events, UI prompts) in any test runner with zero LLM calls and full determinism.
 
-> **Verify before use**: this skill snapshots the fork README as of harness v0.7.0 (Pi 0.83.x). If the API ends up looking subtly different, re-fetch the README from https://github.com/abdwhb-png/pi-test-harness before trusting any snippet here. Note: the harness version (e.g. `0.7.0`) and the Pi version (e.g. `0.83.x`) are **independent release tracks** — do not compare them numerically.
+> **Verify before use**: this guide targets harness v0.10.0 (Pi 1.1.x), including native MCP/codemode workflows. Match the README and installed package version before using a snippet. Note: the harness version (e.g. `0.10.0`) and the Pi version (e.g. `1.1.x`) are **independent release tracks** — do not compare them numerically.
 
 ## The mental model: "let pi be pi"
 
@@ -48,7 +48,7 @@ The harness minimizes faking. Everything runs through Pi's real code (extension 
 | `tool.execute()`| Mock handler   | Control what built-in tools "return" (hooks still fire) |
 | `ctx.ui.*`      | Mock UI        | Control what the user "answers"                  |
 
-Read this as: **only the LLM is non-deterministic, so only the LLM is faked.** Real-provider smoke tests belong in app code with the provider configured, not here.
+The playbook replaces the model boundary. Optional tool and UI mocks control external side effects and user responses. Real-provider smoke tests belong in the application that owns the provider configuration.
 
 ## Which layer do I need?
 
@@ -83,11 +83,13 @@ This skill's snippets use the Vitest import for concreteness (the upstream READM
 This harness pays the cost of booting a real Pi session (jiti, tool wrapping, hook runner, event system). That cost is justified when you actually need it and pure noise when you don't.
 
 **Use plain `bun:test` / Vitest / Jest instead when:**
+
 - Testing **pure helpers** (string formatting, JSON transforms, schema validation, math) that don't touch `ctx`, the tool registry, or hooks.
 - Testing **imports** in isolation — `mock.module()` + `await import()` is faster and sufficient.
 - Testing **type shapes** — `tsc --noEmit` or a `expectTypeOf` check needs no runtime.
 
 **Reach for this harness when the test must exercise:**
+
 - Tool registration (your extension calls `ctx.registerTool(...)`).
 - Hook behavior (`tool_call`, `tool_result`, `session_start`, plan-mode gating).
 - Multi-step agent flow (tool A output feeds tool B input).
@@ -144,13 +146,13 @@ Read it like this: `createTestSession` boots a real Pi session, loads `./src/ind
 Each entry in the `extensions` array follows Pi's normal extension resolution rules. The harness itself does not invent a new format. Pi's loader accepts **literal paths only — no glob expansion** (`*`, `?`, `{}` are treated as literal characters and the entry is silently skipped if the resulting path doesn't exist). Any of these work:
 
 | Form | Example | Resolves to |
-|------------|------------------------------------------|-----------------------------------------------|
+| ------------ | ------------------------------------------ | ----------------------------------------------- |
 | Relative path | `"./src/index.ts"` | Relative to the test process CWD |
 | Absolute path | `"/abs/path/to/index.ts"` | Used as-is |
 | Tilde path | `"~/path/to/ext.ts"` | Expanded via tilde, then used as-is |
 | Directory path | `"./extensions"` | Pi enumerates `*.ts` / `*.js` direct children (one level deep, not glob) |
 
-If your test runs from your package root, `"./src/index.ts"` is correct. Paths are resolved by Pi's real extension loader (via jiti), so anything Pi's CLI accepts in `-e` or `settings.json` `extensions:` config is accepted here too.
+If your test runs from your package root, `"./src/index.ts"` is correct. Paths are resolved by Pi's real extension loader (via jiti), so anything Pi's CLI accepts in `-e` or `settings.json` `extensions:` config is accepted here too. Entrypoints are evaluated in the loader configuration Pi's shipped runtimes use, so `extensions: [...]` behaves the same under vitest and `bun test` — including entrypoints that use a module-level `await import(...)`.
 
 **Distributed packages are a different field.** Don't put them in `extensions:`. Use Pi's `packages:` config (with `npm:`/`git:`/`github:` prefixes) or `pi install <pkg>`, then let the package's `package.json` `pi.extensions` field point at the entry file(s):
 
@@ -283,7 +285,7 @@ For `ToolCallRecord`, `ToolResultRecord`, and `UICallRecord` shapes — and the 
 
 ## Handling blocked tools
 
-When an extension hook blocks a mocked tool, the canonical signal is the event record: `blocked: true` + `blockReason` on the `ToolCallRecord`, and `isError: true` + result text on the `ToolResultRecord`. Assert those fields — `ToolBlockedError` is still exported for source compatibility, but normal Pi 0.83 runs through `AgentSession` do not promise to throw it:
+When an extension hook blocks a mocked tool, the canonical signal is the event record: `blocked: true` + `blockReason` on the `ToolCallRecord`, and `isError: true` + result text on the `ToolResultRecord`. Assert those fields — `ToolBlockedError` is still exported for source compatibility, but normal Pi 1.1 runs through `AgentSession` do not promise to throw it:
 
 ```typescript
 import {
@@ -359,7 +361,7 @@ mockPi.uninstall();                     // restore PATH, delete temp dir
 ```
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `output` | `string` | echo task | Text in the `message_end` event |
 | `exitCode` | `number` | `0` | Process exit code |
 | `stderr` | `string` | — | Written to stderr |
@@ -371,48 +373,41 @@ Lifecycle: `install()` → `onCall(...)` (queue N responses) → `reset()` (clea
 
 The key-validation behavior (throws on typos like `{ ouptut: ... }`), the concurrency caveat (serial spawns only — queued responses are consumed FIFO across spawned subprocesses), and the safety features (exit handler auto-restores PATH; 30s timeout) are documented in `references/mock-pi-cli.md`.
 
-## Windows + SQLite: use `safeRmSync` in `afterEach`
+## Native MCP/codemode and asynchronous cleanup
 
-This is the single biggest Windows footgun, and it always bites users who haven't seen it before. `session.dispose()` does **not** fire `session_shutdown`; that event fires on Node process exit. Extensions that open SQLite databases in `session_start` (memory extensions, brainiac, etc.) keep those files locked for the entire test runner lifetime.
+Harness 0.10.0 includes native workflows. The 0.9.0 release predates these additions. Compose `createCodemodeExtension({ models: false })`, `createMcpExtension(fixture.extensionOptions)` and optionally `createToolSearchExtension()` explicitly in `extensionFactories`. Use `createMcpFixture()` for native tool schemas and deterministic external responses. The [README native example](../../README.md#native-mcpcodemode) documents the complete composition and error response forms.
 
-On Windows, `rmSync(dbPath)` in `afterEach` will throw `EPERM` because the file is still locked. Use the bundled `safeRmSync` instead, which swallows only `EPERM`/`EBUSY`:
+Native observations retain `toolCallId`, `parentToolCallId` and `structuredContent`. Native MCP structured results contain the MCP response envelope. `mocked` reflects actual handler execution for direct and nested calls. Fixture responses are not `mockTools` replacements. IDs are scoped to a run, and overlapping runs reject.
+
+Always use `await t.close()` for native workflows. It settles execution, awaits Pi shutdown and removes only an owned temporary directory. Check `fixture.closed` after teardown. `dispose()` remains legacy synchronous cleanup without shutdown hooks, and `close()` after `dispose()` rejects. For caller-owned files, clean up after `close()`. `safeRmSync` only suppresses `EPERM`/`EBUSY` and cannot close a resource.
 
 ```typescript
-import { safeRmSync } from "@abdwhb-png/pi-test-harness";
-
-let dbPath: string;
-
-afterEach(() => {
-  t?.dispose();                 // dispose session first
-  safeRmSync(dbPath);
-  safeRmSync(dbPath + "-wal");
-  safeRmSync(dbPath + "-shm");
+afterEach(async () => {
+  await t?.close();
 });
 ```
 
-Files get cleaned up by the OS when the test process exits anyway. For isolation across tests, give each one a unique DB path (typically `mkdtempSync` + the test name).
-
-`safeRmSync` only suppresses `EPERM` and `EBUSY` — every other error still propagates.
+Only in-memory native MCP/codemode core flows are qualified. Third-party package workflows, real transports, OAuth, `models.*`, resources and reconnection are excluded. Windows CI must pass before publication.
 
 ## Common pitfalls / anti-patterns
 
 **1. Mocking your own extension's tools.**
 If your extension registers a tool named `my_tool`, don't also put `my_tool` in `mockTools`. The mock intercepts `tool.execute()` and your tool's real logic never runs — the test passes vacuously. Mock **built-in** tools (`bash`, `read`, `write`, `edit`); let your extension's own tools execute for real.
 
-**2. Forgetting `afterEach(() => t?.dispose())`.**
-Pi extensions that open a SQLite DB (memory extensions, etc.) keep the file handle for the test process's lifetime. Skipping `dispose()` + `safeRmSync()` causes cross-test contamination and `EPERM` on Windows. See the "Windows + SQLite" section.
+**2. Forgetting asynchronous cleanup.**
+Pi extensions that open a SQLite DB (memory extensions, etc.) keep the file handle for the test process's lifetime. Use `await t.close()` before deleting caller-owned files. Verify resource closure when handles matter.
 
 **3. Mocking a tool that an extension hook will block.**
-When your hook blocks a call (plan mode, dangerous command), the mock handler never executes. Assert the block via the event records — `blocked: true`/`blockReason` on the `ToolCallRecord` and `isError: true` on the `ToolResultRecord` — rather than expecting a `ToolBlockedError` throw from normal Pi 0.83 runs.
+When your hook blocks a call (plan mode, dangerous command), the mock handler never executes. Assert the block via the event records — `blocked: true`/`blockReason` on the `ToolCallRecord` and `isError: true` on the `ToolResultRecord` — rather than expecting a `ToolBlockedError` throw from normal Pi 1.1 runs.
 
 **4. Assuming hooks fire on the mock path.**
-Pi's `tool_call` / `tool_result` hooks **do** fire for mocked tools through `AgentSession`'s hook pipeline, but lifecycle hooks (`session_start`, `session_shutdown`) follow Pi's normal timing. `session_shutdown` only fires on process exit — `dispose()` will not trigger it. Plan accordingly.
+Pi's `tool_call` / `tool_result` hooks **do** fire for mocked tools through `AgentSession`'s hook pipeline, but lifecycle hooks (`session_start`, `session_shutdown`) follow Pi's normal timing. `close()` awaits native `session_shutdown`; `dispose()` does not emit it.
 
 **5. Reimplementing extension logic inside the test.**
 `createMockPi` replaces only the `pi` executable. Load or import the real extension code that spawns it; never paste a local copy of the subprocess helper into the test, because that can pass while the extension is broken.
 
 **6. Trusting the snapshot blindly.**
-The `description` and code in this skill are pinned to fork v0.7.0 (Pi 0.83.x). On any minor bump, re-fetch the fork README and reconcile before trusting snippets.
+This guide targets harness v0.10.0 (Pi 1.1.x). Confirm that the installed artifact matches the guide before using its snippets. On a version bump, reconcile the skill with the matching README and package metadata.
 
 ## Test-layer summary
 
@@ -428,14 +423,15 @@ The `description` and code in this skill are pinned to fork v0.7.0 (Pi 0.83.x). 
 npm install --save-dev @abdwhb-png/pi-test-harness
 ```
 
-In `~/.pi/agent`, the fork is consumed as a local dev dependency:
-`bun add --dev file:../../engineering/pi-integrations/pi-test-harness/dist/package.tgz`
+For local consumer qualification, build this checkout with `npm run build`, then install its `dist/package.tgz` through the consumer’s established package manager and security controls. Use an absolute path to the tarball. Keep runtime installation and promotion separate from package qualification.
 
-Peer dependencies (Pi line `0.83.x` only):
+Peer dependencies (Pi line `1.1.x` only):
 
-- `@earendil-works/pi-coding-agent` ^0.83.0
-- `@earendil-works/pi-ai` ^0.83.0
-- `@earendil-works/pi-agent-core` ^0.83.0
+- `@earendil-works/pi-coding-agent` ~1.1.0
+- `@earendil-works/pi-ai` ~1.1.0
+- `@earendil-works/pi-agent-core` ~1.1.0
+- `@earendil-works/pi-codemode` ~1.1.0
+- `@earendil-works/pi-mcp` ~1.1.0 (native MCP fixture)
 
 ## Reference index
 

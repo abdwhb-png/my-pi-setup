@@ -1,6 +1,6 @@
 # API reference
 
-Type definitions and the event-collection API for `@abdwhb-png/pi-test-harness` v0.7.0 (Pi 0.83.x). Use this as a reference when authoring assertions or tracing through snippets.
+Type definitions and the event-collection API for `@abdwhb-png/pi-test-harness` v0.10.0 (Pi 1.1.x). Use this as a reference when authoring assertions or tracing through snippets.
 
 ## Table of contents
 
@@ -12,6 +12,7 @@ Type definitions and the event-collection API for `@abdwhb-png/pi-test-harness` 
     - [`run(...turns)`](#runturns)
     - [`events`](#events)
     - [`playbook`](#playbook)
+    - [`close()`](#close)
     - [`dispose()`](#dispose)
   - [`TestEvents`](#testevents)
     - [Method cheatsheet](#method-cheatsheet)
@@ -45,7 +46,7 @@ The package's top-level exports are:
 ```typescript
 import {
   // Session testing
-  createTestSession,
+  createTestSession, createMcpFixture,
   // Playbook builders
   when, calls, says,
   // Sandbox / subprocess
@@ -79,7 +80,7 @@ function createTestSession(options?: TestSessionOptions): Promise<TestSession>;
 
 | Option               | Type                              | Default       | Notes                                               |
 | -------------------- | --------------------------------- | ------------- | --------------------------------------------------- |
-| `extensions`         | `string[]`                        | `[]`          | Extension file paths to load (via real jiti)        |
+| `extensions`         | `string[]`                        | `[]`          | Extension file paths to load (via real jiti, in Pi's shipped loader configuration) |
 | `extensionFactories` | `Function[]`                      | `[]`          | Inline extension factory functions (no file needed) |
 | `cwd`                | `string`                          | auto temp dir | Working directory (auto-cleanup on `dispose()`)     |
 | `systemPrompt`       | `string`                          | (default)     | Override the system prompt                          |
@@ -102,7 +103,8 @@ interface TestSession {
   cwd: string;                    // working directory
   events: TestEvents;             // all collected events
   playbook: { consumed: number; remaining: number };
-  dispose(): void;                // cleanup temp dir and session
+  close(): Promise<void>;         // await native shutdown, then clean owned state
+  dispose(): void;                // legacy synchronous cleanup
 }
 ```
 
@@ -132,9 +134,21 @@ After `run()`, you can inspect how much of the script was consumed:
 
 If `remaining > 0`, the harness will also throw a diagnostic — see "Playbook not fully consumed" in `playbook-dsl.md`. This field is mostly useful for debugging mid-test where you'd want to assert `remaining === 0`.
 
+### `close()`
+
+Use `await t.close()` in teardown, especially for native MCP/codemode sessions. It prevents pending prompts and later turns from starting, settles an active run, restores interception and awaits native `session_shutdown` before deleting an owned temporary `cwd`. A supplied `cwd` is preserved. Repeated calls, including calls from abort listeners, share one promise and one shutdown.
+
+```typescript
+afterEach(async () => {
+  await t?.close();
+});
+```
+
+On Windows, await shutdown before deleting caller-owned files. `safeRmSync` can ignore `EPERM`/`EBUSY`, but it cannot release resource handles or replace shutdown.
+
 ### `dispose()`
 
-Cleans up the session resources and (if auto-generated) the temp `cwd`. Always call in `afterEach`. Note that `dispose()` does **not** fire `session_shutdown` — that event fires on process exit. See `safeRmSync` for why this matters on Windows.
+Legacy synchronous cleanup of the session and an owned temporary `cwd`. It does **not** emit `session_shutdown` and can leave resources owned by shutdown hooks open. Prefer `close()` for native workflows. Calling `close()` after `dispose()` rejects because the native extension context has already been invalidated.
 
 ---
 
@@ -199,13 +213,15 @@ The shape returned by `t.events.toolCallsFor(name)`. Use it when you want to ass
 interface ToolCallRecord {
   step: number;                              // playbook step index
   toolName: string;
+  toolCallId: string;
+  parentToolCallId?: string;
   input: Record<string, unknown>;           // the params object from calls(tool, params)
   blocked: boolean;                          // true if an extension hook blocked this call
   blockReason?: string;                      // the reason string if blocked
 }
 ```
 
-**Source**: verified against `dist/types.d.ts` in v0.7.0. Note the field is `input` (not `params`); it carries the params you passed via `calls(tool, params)`. There is no `toolCallId` on `ToolCallRecord` — pair with results by index (e.g. `toolCallsFor(name)[i]` ↔ `toolResultsFor(name)[i]`) since both arrays are in call order.
+**Source**: `src/types.ts` in harness v0.10.0. Note the field is `input` (not `params`); it carries the params you passed via `calls(tool, params)`. Correlate `toolCallId` within the current run. `parentToolCallId` identifies native nested calls.
 
 ### Reading it
 
@@ -221,7 +237,7 @@ expect(c.blocked).toBe(false);              // no hook blocked
 
 ### Pairing calls with results
 
-Pair `toolCallsFor(name)` with `toolResultsFor(name)` by index — both arrays are in call order:
+Correlate calls and results by `toolCallId` within a run. Nested calls also carry `parentToolCallId`. Playbook IDs restart between runs. For a single call:
 
 ```typescript
 const call = t.events.toolCallsFor("summarize_doc")[0];
@@ -258,15 +274,17 @@ interface ToolResultRecord {
   step: number;                              // playbook step index
   toolName: string;
   toolCallId: string;
+  parentToolCallId?: string;
   text: string;                              // concatenated text content
   content: Array<{ type: string; text?: string }>;
   isError: boolean;
+  structuredContent?: unknown;
   details?: unknown;                         // optional details object (mock-provided or real)
   mocked: boolean;                           // true if mockTools handled it
 }
 ```
 
-**Source**: verified against `dist/types.d.ts` in v0.7.0.
+**Source**: `src/types.ts` in harness v0.10.0.
 
 ### Reading it
 
@@ -300,7 +318,7 @@ interface UICallRecord {
 }
 ```
 
-**Source**: verified against `dist/types.d.ts` in v0.7.0. `notify` calls are recorded here too — `returnValue` is typically omitted for outbound methods.
+**Source**: `src/types.ts` in harness v0.10.0. `notify` calls are recorded here too — `returnValue` is typically omitted for outbound methods.
 
 ### Reading it
 
@@ -338,7 +356,7 @@ expect(text).toMatch(/couldn't|unable|sorry/i); // friendly message present
 type MockToolHandler =
   | string
   | ToolResult
-  | ((params: Record<string, unknown>) => string | ToolResult);
+  | ((params: Record<string, unknown>) => string | ToolResult | Promise<string | ToolResult>);
 ```
 
 | Variant      | Returns                                        | Use case                            |
@@ -433,11 +451,11 @@ interface MockPi {
 
 ## `ToolBlockedError`
 
-Exported for source compatibility with upstream consumers, but **not promised** by normal Pi 0.83 runs through `AgentSession`. The canonical block signal is the event records: `blocked: true`/`blockReason` on the `ToolCallRecord` and `isError: true` + result text on the `ToolResultRecord` — assert those instead.
+Exported for source compatibility with upstream consumers, but **not promised** by normal Pi 1.1 runs through `AgentSession`. The canonical block signal is the event records: `blocked: true`/`blockReason` on the `ToolCallRecord` and `isError: true` + result text on the `ToolResultRecord` — assert those instead.
 
 ```typescript
 import {
-  createTestSession, when, calls, says,
+  createTestSession, createMcpFixture, when, calls, says,
 } from "@abdwhb-png/pi-test-harness";
 
 const t = await createTestSession({ mockTools: { bash: "ok" } });
@@ -450,7 +468,7 @@ const result = t.events.toolResultsFor("bash")[0];
 expect(result.isError).toBe(true);
 ```
 
-Do not rely on `instanceof ToolBlockedError` to detect a hook block from a normal Pi 0.83 run. See `mock-tools.md` for the event-assertion patterns.
+Do not rely on `instanceof ToolBlockedError` to detect a hook block from a normal Pi 1.1 run. See `mock-tools.md` for the event-assertion patterns.
 
 ---
 
@@ -462,7 +480,7 @@ function safeRmSync(filePath: string): void;
 
 Removes a file, swallowing `EPERM` and `EBUSY` errors only. All other errors propagate.
 
-Use it in `afterEach` on Windows when an extension opened a SQLite database in `session_start` (memory, brainiac, etc.) and `session.dispose()` doesn't release the file lock (because `session_shutdown` only fires on process exit).
+Use it in `afterEach` on Windows when an extension opened a SQLite database in `session_start` (memory, brainiac, etc.) and `session.dispose()` doesn't release the file lock (because `session_shutdown` is not emitted by `dispose()`).
 
 ```typescript
 import { safeRmSync } from "@abdwhb-png/pi-test-harness";
@@ -478,3 +496,9 @@ afterEach(() => {
 ```
 
 For isolation across tests, give each one a unique DB path (typically `mkdtempSync` + test name). Files get cleaned by the OS at process exit; this is just about avoiding `EPERM` mid-suite.
+
+## Native fixture and shutdown
+
+`createMcpFixture({ name?, exposure?, toolExposure?, tools })` returns `extensionOptions`, `calls` and `closed`. Each tool entry has a native MCP `tool` definition and a fixed or asynchronous `response`. See the [README](../../../README.md#native-mcpcodemode) for the complete contract and composition example.
+
+`await t.close()` settles any active run, restores interception and awaits native shutdown before removing owned temporary state. A supplied cwd is preserved. Repeated closes share one operation. New runs reject once closure starts. Closing after legacy `dispose()` rejects.

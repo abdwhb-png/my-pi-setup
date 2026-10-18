@@ -1,0 +1,369 @@
+{
+  "date": "2026-10-13",
+  "evidenceDirectory": "/tmp/pi-e123-causes-20261013",
+  "E1": {
+    "cause": "Configured model ID has gtp instead of gpt",
+    "configuredModel": "openai-codex/gtp-6-sol",
+    "failure": "Unknown subagent model 'openai-codex/gtp-6-sol' in the active Pi model registry. Closest registry models: openai-codex/gpt-6-sol, cpa/gpt-6-sol, openai-codex/gpt-5.6-sol, cpa/gpt-5.6-sol.",
+    "successfulControlModel": "openai-codex/gpt-6-sol:xhigh"
+  },
+  "E2": {
+    "cause": "Foreground tool allowlist selects extension tools without loading their providers",
+    "providerBindings": {
+      "toolExtensionPaths": [],
+      "configuredExtensions": [],
+      "requiredExtensionIds": [],
+      "extensionArgs": [
+        "~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/runs/shared/subagent-prompt-runtime.ts"
+      ]
+    },
+    "failure": "Agent 'scout' ran as a foreground child, which never loads the parent's ambient extensions, and these child tools were unavailable: ast_grep_search, ast_grep_outline, lsp_navigation, symbol_search, module_report, read_symbol, read_enclosing, lens_diagnostics, ast_grep_replace, lens_diagnostic_mark, write_report.\nThe `tools` field is a strict allowlist; it does not load extension code.\nMCP tools require background children (`async: true`) because only they load ambient extensions.\nFor extension tools a foreground child can load, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.",
+    "modelInputTokens": 0
+  },
+  "E3": {
+    "cause": "Full analysis distribution verification exhausts the shell initialization or replacement deadline before any Zerobox process starts",
+    "manifest": {
+      "shellEntries": 211,
+      "analysisEntries": 4014,
+      "analysisRegularFiles": 4012,
+      "analysisRegularBytes": 283437554
+    },
+    "isolatedBackend": {
+      "verificationMs": 17410.537458,
+      "runtimeResolutionMs": 16560.296738,
+      "commands": [
+        {
+          "ms": 19777.743,
+          "pid": 2495594,
+          "event": "zerobox-end",
+          "childPid": 2496503,
+          "kind": "version",
+          "code": 0,
+          "durationMs": 22.73078700000042
+        },
+        {
+          "ms": 20383.985,
+          "pid": 2495594,
+          "event": "zerobox-end",
+          "childPid": 2496504,
+          "kind": "strict",
+          "code": 0,
+          "durationMs": 591.6176019999984
+        },
+        {
+          "ms": 20404.548,
+          "pid": 2495594,
+          "event": "zerobox-end",
+          "childPid": 2496579,
+          "kind": "help",
+          "code": 0,
+          "durationMs": 19.58309999999983
+        }
+      ]
+    },
+    "dailyRpc": {
+      "runtimeState": "error",
+      "runnerExitCode": 0,
+      "deadline": [
+        {
+          "ms": 48634.967,
+          "durationMs": 30006.022428999997,
+          "stack": [
+            "    at new ExecutionDeadline (~/.pi/agent/extensions/_shared/command-execution/deadline.ts:24:27)",
+            "    at <anonymous> (~/.pi/agent/extensions/sandbox/index.ts:2075:35)",
+            "    at async emit (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:873:49)",
+            "    at async bindExtensions (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:2618:37)",
+            "    at async <anonymous> (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-mode.js:230:23)",
+            "    at async runRpcMode (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-mode.js:289:11)"
+          ]
+        }
+      ],
+      "finalFilesystemTotals": {
+        "distribution.lstat": {
+          "count": 11,
+          "totalMs": 114.25252700000783,
+          "maxMs": 52.32316300000093
+        },
+        "distribution.readFile": {
+          "count": 5,
+          "totalMs": 195.17039099999602,
+          "maxMs": 97.3930020000007
+        },
+        "distribution.realpath": {
+          "count": 6,
+          "totalMs": 56.378098999997746,
+          "maxMs": 39.17447199999879
+        },
+        "shell.lstat": {
+          "count": 219,
+          "totalMs": 1153.7812359999734,
+          "maxMs": 231.13062999999966
+        },
+        "shell.realpath": {
+          "count": 221,
+          "totalMs": 944.5052250000263,
+          "maxMs": 210.5661570000011
+        },
+        "shell.readFile": {
+          "count": 202,
+          "totalMs": 1191.5657529999844,
+          "maxMs": 107.23738400000002
+        },
+        "analysis.realpath": {
+          "count": 1913,
+          "totalMs": 7449.041257000154,
+          "maxMs": 100.37184200000047
+        },
+        "analysis.lstat": {
+          "count": 1910,
+          "totalMs": 6443.306533999868,
+          "maxMs": 83.8417929999996
+        },
+        "shell.readlink": {
+          "count": 10,
+          "totalMs": 56.350583000010374,
+          "maxMs": 21.116757000003417
+        },
+        "analysis.readFile": {
+          "count": 1910,
+          "totalMs": 13401.745460999908,
+          "maxMs": 683.626655
+        },
+        "analysis.readlink": {
+          "count": 2,
+          "totalMs": 36.828583999998955,
+          "maxMs": 19.026667999998608
+        },
+        "distribution.readdir": {
+          "count": 1,
+          "totalMs": 26.3314790000004,
+          "maxMs": 26.3314790000004
+        },
+        "shell.readdir": {
+          "count": 17,
+          "totalMs": 34.187064000001556,
+          "maxMs": 13.77216799999951
+        }
+      },
+      "zeroboxSpawnCount": 0,
+      "maxHeartbeatDelayDuringVerificationMs": 20.299035000000003
+    },
+    "dailyShell": {
+      "deadlines": [
+        {
+          "ms": 52618.127,
+          "durationMs": 30003.147365,
+          "stack": [
+            "    at new ExecutionDeadline (~/.pi/agent/extensions/_shared/command-execution/deadline.ts:24:27)",
+            "    at <anonymous> (~/.pi/agent/extensions/sandbox/index.ts:2075:35)",
+            "    at async emit (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:873:49)",
+            "    at async bindExtensions (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:2618:37)",
+            "    at async <anonymous> (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/modes/print-mode.js:53:23)",
+            "    at async runPrintMode (~/.pi/runtime/pi-core/releases/1.1.0-00c5e7e300ba-dirty-79f8bc0b6a58/install/node_modules/@earendil-works/pi-coding-agent/dist/modes/print-mode.js:103:15)"
+          ],
+          "active": [
+            {
+              "operation": "realpath",
+              "path": "~/.pi/runtimes/zerobox/2026.10.01.docker-trust.1/components/analysis/node_modules/@jsonjoy.com/json-pack/lib/ws",
+              "started": 52683.688234,
+              "ageMs": 13.352002999999968
+            }
+          ],
+          "totals": {
+            "distribution.lstat": {
+              "count": 11,
+              "totalMs": 114.50577699999849,
+              "maxMs": 42.364541999999346
+            },
+            "distribution.readFile": {
+              "count": 5,
+              "totalMs": 263.40186799999356,
+              "maxMs": 101.73353700000007
+            },
+            "distribution.realpath": {
+              "count": 6,
+              "totalMs": 27.03484099999696,
+              "maxMs": 22.81089399999837
+            },
+            "shell.lstat": {
+              "count": 219,
+              "totalMs": 1551.7275879999725,
+              "maxMs": 218.20458700000017
+            },
+            "shell.realpath": {
+              "count": 221,
+              "totalMs": 1157.0456029999914,
+              "maxMs": 62.959413000000495
+            },
+            "shell.readFile": {
+              "count": 202,
+              "totalMs": 2669.271753999994,
+              "maxMs": 174.19370999999956
+            },
+            "analysis.realpath": {
+              "count": 1150,
+              "totalMs": 9090.386862000112,
+              "maxMs": 403.3906859999988
+            },
+            "analysis.lstat": {
+              "count": 1147,
+              "totalMs": 6221.068476000048,
+              "maxMs": 164.15815799999837
+            },
+            "shell.readlink": {
+              "count": 10,
+              "totalMs": 81.79310800000167,
+              "maxMs": 30.320463000000018
+            },
+            "analysis.readFile": {
+              "count": 1147,
+              "totalMs": 12488.26033100003,
+              "maxMs": 604.2031179999976
+            },
+            "analysis.readlink": {
+              "count": 2,
+              "totalMs": 48.418453999998746,
+              "maxMs": 48.1866829999999
+            },
+            "distribution.readdir": {
+              "count": 1,
+              "totalMs": 0.3572600000006787,
+              "maxMs": 0.3572600000006787
+            },
+            "shell.readdir": {
+              "count": 17,
+              "totalMs": 111.79728600001181,
+              "maxMs": 43.28289300000324
+            }
+          }
+        },
+        {
+          "ms": 104794.135,
+          "durationMs": 30014.455363999994,
+          "stack": [
+            "    at new ExecutionDeadline (~/.pi/agent/extensions/_shared/command-execution/deadline.ts:24:27)",
+            "    at reconfigureServices (~/.pi/agent/extensions/sandbox/index.ts:1534:26)",
+            "    at <anonymous> (~/.pi/agent/extensions/sandbox/index.ts:1664:29)",
+            "    at processTicksAndRejections (native)"
+          ],
+          "active": [
+            {
+              "operation": "readFile",
+              "path": "~/.pi/runtimes/zerobox/2026.10.01.docker-trust.1/components/analysis/node_modules/@jsonjoy.com/json-pack/lib/nfs/v3/locks/NlmEncoder.js.map",
+              "started": 104848.107494,
+              "ageMs": 24.930739000003086
+            }
+          ],
+          "totals": {
+            "distribution.lstat": {
+              "count": 22,
+              "totalMs": 117.8466149999731,
+              "maxMs": 42.364541999999346
+            },
+            "distribution.readFile": {
+              "count": 10,
+              "totalMs": 525.40869199999,
+              "maxMs": 160.43296000000555
+            },
+            "distribution.realpath": {
+              "count": 12,
+              "totalMs": 30.950714999980846,
+              "maxMs": 22.81089399999837
+            },
+            "shell.lstat": {
+              "count": 438,
+              "totalMs": 2933.1841049999857,
+              "maxMs": 239.2759459999943
+            },
+            "shell.realpath": {
+              "count": 442,
+              "totalMs": 2581.0012149999384,
+              "maxMs": 166.52036699999007
+            },
+            "shell.readFile": {
+              "count": 404,
+              "totalMs": 5136.012621000067,
+              "maxMs": 174.19370999999956
+            },
+            "analysis.realpath": {
+              "count": 2078,
+              "totalMs": 16963.920134000084,
+              "maxMs": 403.3906859999988
+            },
+            "analysis.lstat": {
+              "count": 2072,
+              "totalMs": 13901.718913999826,
+              "maxMs": 232.34104599998682
+            },
+            "shell.readlink": {
+              "count": 20,
+              "totalMs": 181.386208000029,
+              "maxMs": 43.18057199999748
+            },
+            "analysis.readFile": {
+              "count": 2071,
+              "totalMs": 24697.182445999937,
+              "maxMs": 604.2031179999976
+            },
+            "analysis.readlink": {
+              "count": 4,
+              "totalMs": 48.73454300001322,
+              "maxMs": 48.1866829999999
+            },
+            "distribution.readdir": {
+              "count": 2,
+              "totalMs": 0.5188920000036887,
+              "maxMs": 0.3572600000006787
+            },
+            "shell.readdir": {
+              "count": 34,
+              "totalMs": 115.67455199999313,
+              "maxMs": 43.28289300000324
+            }
+          }
+        }
+      ],
+      "zeroboxSpawnCount": 0,
+      "toolResult": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_00_vj67nbv29578zvid174ngw4d",
+        "toolName": "safe_bash",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Command timed out after 30 seconds"
+            }
+          ],
+          "details": {
+            "execution": {
+              "status": "unknown",
+              "profile": "unknown",
+              "backend": "unknown",
+              "tmpNamespace": "unknown",
+              "phase": "policy",
+              "outcome": "blocked",
+              "mode": "sandbox",
+              "shellProfile": "custom",
+              "timingsMs": {
+                "configuration": 32.794810999999754,
+                "preparation": 30126.871790000005
+              }
+            }
+          }
+        },
+        "isError": true,
+        "durationMs": 30552
+      },
+      "runnerExitCode": 143,
+      "shutdownQualified": false,
+      "shutdownLimitation": "Runner received SIGTERM after terminal tool and assistant events were captured. The cause of termination was not investigated."
+    },
+    "unresolved": "The lower-level cause of filesystem latency variation was not established."
+  },
+  "protectedFiles": {
+    "checked": 38,
+    "changed": 0
+  },
+  "productionChanges": false
+}

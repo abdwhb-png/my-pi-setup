@@ -80,6 +80,7 @@ agent/tool-result-archive/
 
 # Disposable fixtures left behind only when a real-Pi smoke is interrupted
 /.smoke/
+/agent/extensions/sandbox/.sandbox-real-index-*/
 
 # Runtime cache (models.dev catalog)
 /agent/cache/models-dev-catalog-v1.json
@@ -98,3 +99,12 @@ agent/tool-result-archive/
 
 # Extension-owned runtime data, including migration journals and backups
 /agent/artifacts/
+
+# Generated analysis caches and root-level runtime output
+.fallow/
+/artifacts/
+/*.log
+
+# Python interpreter caches
+__pycache__/
+*.py[cod]

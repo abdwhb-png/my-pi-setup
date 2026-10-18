@@ -1,0 +1,103 @@
+Installing git:github.com/abdwhb-png/pi-lens@v4.4.3+fork.1...
+Cloning into '/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens'...
+Note: switching to 'v4.4.3+fork.1'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+HEAD is now at 401c9791c fix: preserve npm for Git package builds
+bun install v1.4.3 (c6da4a4d3)
+[8.67ms] migrated lockfile from package-lock.json
+Saved lockfile
+
+$ npm --loglevel=notice run build:dist && node scripts/download-grammars.js --core --dest grammars && node scripts/setup-git-hooks.mjs && node scripts/stamp-package-lock.mjs && node scripts/warm-loader-cache.mjs
+npm notice run pi-lens@4.4.3 build:dist
+npm notice run node -e "require('fs').rmSync('dist',{recursive:true,force:true})" && node scripts/build-dist-tsc.mjs tsconfig.dist.json && npm run bundle:dist
+npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line
+npm notice run npx
+npm notice run 'tsc' --project tsconfig.dist.json --noCheck
+npm notice run pi-lens@4.4.3 bundle:dist
+npm notice run node scripts/bundle-dist.mjs
+npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line
+npm notice run npx
+npm notice run 'esbuild' mcp/cli=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/mcp/cli.js mcp/server=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/mcp/server.js mcp/analyze-cli=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/mcp/analyze-cli.js mcp/worker=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/mcp/worker.js workers/project-snapshot-persist-worker=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/clients/project-snapshot-persist-worker.js workers/review-graph-persist-worker=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/clients/review-graph/persist-worker.js probes/installer=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/clients/installer/index.js --bundle --platform=node --format=esm --splitting --chunk-names=chunk-[hash] --external:typebox --external:@earendil-works/pi-tui --external:@earendil-works/pi-coding-agent --external:@ast-grep/napi --external:web-tree-sitter --banner:js=import { createRequire as __pilensCreateRequire } from "node:module"; const require = __pilensCreateRequire(import.meta.url); --outdir=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/.bundle-split
+
+  dist/.bundle-split/mcp/server.js      881.4kb
+  dist/.bundle-split/chunk-KGAY2UCC.js  827.0kb
+  dist/.bundle-split/chunk-DQQ3CNDG.js  423.4kb
+  dist/.bundle-split/chunk-QHJ6DQ2R.js  217.4kb
+  dist/.bundle-split/chunk-GJ3Q7SBX.js  180.7kb
+  dist/.bundle-split/chunk-C34ZXZ7O.js  179.9kb
+  dist/.bundle-split/chunk-MP2YCWYL.js  162.9kb
+  dist/.bundle-split/chunk-3JNJXR54.js  137.0kb
+  dist/.bundle-split/chunk-QOZXJ4NA.js  123.9kb
+  dist/.bundle-split/chunk-VCO24T4L.js   88.4kb
+  dist/.bundle-split/chunk-5GERPBWM.js   86.4kb
+  dist/.bundle-split/chunk-2BBLFX75.js   79.6kb
+  dist/.bundle-split/chunk-N2H3ZPZY.js   75.5kb
+  dist/.bundle-split/chunk-SAEFPSB6.js   64.8kb
+  dist/.bundle-split/chunk-RPLINGVB.js   59.2kb
+  dist/.bundle-split/chunk-ZXYDQ3TZ.js   53.4kb
+  dist/.bundle-split/chunk-AOHZU2BM.js   39.5kb
+  dist/.bundle-split/chunk-73PVMEAA.js   34.9kb
+  dist/.bundle-split/chunk-JAU72XNY.js   31.2kb
+  dist/.bundle-split/chunk-CKBQZ66U.js   27.2kb
+  ...and 110 more output files...
+
+⚡ Done in 537ms
+[bundle] wrote 7 split entries and their shared chunks
+npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line
+npm notice run npx
+npm notice run 'esbuild' /tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/index.js --bundle --platform=node --format=esm --external:typebox --external:@earendil-works/pi-tui --external:@earendil-works/pi-coding-agent --external:@ast-grep/napi --external:web-tree-sitter --outfile=/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/dist/index.bundled.mjs
+
+  dist/index.bundled.mjs  5.2mb ⚠️
+
+⚡ Done in 394ms
+[bundle] wrote self-contained dist/index.js
+npm notice
+npm notice New minor version of npm available! 12.0.1 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+Downloading core tree-sitter grammars (12) → /tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens/grammars
+  ok    tree-sitter-html.wasm
+  ok    tree-sitter-json.wasm
+  ok    tree-sitter-go.wasm
+  ok    tree-sitter-yaml.wasm
+  ok    tree-sitter-java.wasm
+  ok    tree-sitter-css.wasm
+  ok    tree-sitter-typescript.wasm
+  ok    tree-sitter-bash.wasm
+  ok    tree-sitter-python.wasm
+  ok    tree-sitter-javascript.wasm
+  ok    tree-sitter-rust.wasm
+  ok    tree-sitter-tsx.wasm
+All grammars downloaded successfully.
+[setup-git-hooks] skipped (husky not installed (production install)).
+[warm-loader-cache] warmed dist/index.js in 20604ms (cache: /tmp/jiti/dist-index.205b1fa6.mjs)
+
++ @ast-grep/cli@0.45.3
++ @ast-grep/napi@0.45.3
++ js-yaml@5.4.2
++ minimatch@10.2.6
++ pidusage@4.0.1
++ vscode-jsonrpc@9.0.3
++ jiti@2.7.0
++ web-tree-sitter@0.25.10
+
+16 packages installed [39.16s]
+
+Blocked 1 postinstall. Run `bun pm untrusted` for details.
+Installed git:github.com/abdwhb-png/pi-lens@v4.4.3+fork.1

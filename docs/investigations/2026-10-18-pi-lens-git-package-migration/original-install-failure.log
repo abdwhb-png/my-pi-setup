@@ -1,0 +1,30 @@
+Installing git:github.com/abdwhb-png/pi-lens@v4.4.3+fork.1...
+Cloning into '/tmp/pi-lens-git-migration-w6txtqoz/agent/git/github.com/abdwhb-png/pi-lens'...
+Note: switching to 'v4.4.3+fork.1'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+HEAD is now at bbb0ce798 feat: integrate pi-lens 4.4.3 with harness tsconfig resolution
+bun install v1.4.3 (c6da4a4d3)
+[17.21ms] migrated lockfile from package-lock.json
+Saved lockfile
+
+$ bun run build:dist && node scripts/download-grammars.js --core --dest grammars && node scripts/setup-git-hooks.mjs && node scripts/stamp-package-lock.mjs && node scripts/warm-loader-cache.mjs
+$ node -e "require('fs').rmSync('dist',{recursive:true,force:true})" && node scripts/build-dist-tsc.mjs tsconfig.dist.json && bun run bundle:dist
+[build-dist-tsc] npm_execpath is not npm (~/.bun/bin/bun) — this step uses npm's `exec --package` syntax. Run `npm run build:dist` with npm.
+error: script "build:dist" exited with code 1
+error: prepare script from "pi-lens" exited with 1
+Error: sfw -- bun install --omit=dev --omit=peer failed with code 1
