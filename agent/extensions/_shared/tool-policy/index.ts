@@ -8,7 +8,9 @@ import type {
 
 export interface PolicyView {
     readonly role: RoleToolPolicyPayload | undefined;
-    readonly registered: ReadonlyArray<Pick<ToolInfo, "name" | "exposure">>;
+    readonly registered: ReadonlyArray<
+        Pick<ToolInfo, "name" | "exposure" | "namespace">
+    >;
 }
 
 /** Grants are explicit entry actions; defaults never widen an explicit role. */
@@ -19,7 +21,7 @@ export interface ToolPolicyContribution {
 }
 export type PolicyContributor = (view: PolicyView) => ToolPolicyContribution;
 export interface PolicyHost {
-    registered(): Array<Pick<ToolInfo, "name" | "exposure">>;
+    registered(): Array<Pick<ToolInfo, "name" | "exposure" | "namespace">>;
     active(): string[];
     apply(names: string[]): void;
 }
@@ -178,11 +180,13 @@ export function createToolPolicyCoordinator() {
                 throw new Error("Tool-policy invalidation did not converge");
             dirty = false;
             const registered = Object.freeze(
-                host
-                    .registered()
-                    .map(({ name, exposure }) =>
-                        Object.freeze({ name, exposure }),
-                    ),
+                host.registered().map(({ name, exposure, namespace }) =>
+                    Object.freeze({
+                        name,
+                        exposure,
+                        namespace: namespace && Object.freeze({ ...namespace }),
+                    }),
+                ),
             );
             const roleView = role && structuredClone(role);
             if (roleView) {

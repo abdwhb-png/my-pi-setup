@@ -4,6 +4,7 @@
     "defaultThinkingLevel": "medium",
     "hideThinkingBlock": false,
     "theme": "dark",
+    "skills": ["!agent-browser"],
     "steeringMode": "all",
     "followUpMode": "all",
     "npmCommand": ["bun"],

@@ -9,6 +9,7 @@ export interface ConfigOwner {
 
 /** Old locations are retained solely to detect and migrate unmoved user state. */
 export const CONFIG_OWNERS = {
+    browserTools: { file: 'browser-tools.json' },
     aiProviders: { file: 'ai-providers.json', legacyFile: 'ai-providers.json' },
     auditMode: { file: 'audit-mode.json', settingsKey: 'auditMode' },
     translate: {

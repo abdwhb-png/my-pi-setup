@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   TestHooks,
@@ -11,6 +11,30 @@ import {
   BROWSER_TOOLS_WIDGET_LABEL,
   renderBrowserToolsWidget,
 } from "./widget.ts";
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+
+let fixtureRoot: string;
+let previousAgentDir: string | undefined;
+beforeEach(() => {
+  previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  fixtureRoot = mkdtempSync(join(tmpdir(), "browser-tools-"));
+  process.env.PI_CODING_AGENT_DIR = join(fixtureRoot, "agent");
+});
+afterEach(() => {
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
+const BROWSER_NAMES = ["agent_browser", "agent_browser_web_search", "agent_browser_code", "agent_browser_tools", "agent_browser_qa", "agent_browser_future"];
+function configure(scope: "global" | "project", value: unknown): void {
+  const base = scope === "global" ? join(fixtureRoot, "agent") : join(fixtureRoot, ".pi");
+  mkdirSync(join(base, "config"), { recursive: true });
+  writeFileSync(join(base, "config", "browser-tools.json"), JSON.stringify(value));
+}
 
 type CapturedWidget = {
   id: string;
@@ -64,7 +88,7 @@ function registerRuntime(options: {
   childAllowed?: string[];
   nativeOrder?: "absent" | "after" | "before";
 } = {}) {
-  const tools = new Map<string, { name: string }>();
+  const tools = new Map<string, { name: string; namespace?: { name: string } }>();
   const commands = new Map<string, { handler: Function }>();
   const hooks = new TestHooks();
   const eventHandlers = new Map<string, Set<(payload: unknown) => void>>();
@@ -72,7 +96,7 @@ function registerRuntime(options: {
   const entries: Array<{ type: string; customType?: string; data?: unknown }> =
     [];
   const pi = {
-    registerTool(definition: { name: string }) {
+    registerTool(definition: { name: string; namespace?: { name: string } }) {
       tools.set(definition.name, definition);
       if (!activeTools.includes(definition.name)) activeTools.push(definition.name);
     },
@@ -83,7 +107,7 @@ function registerRuntime(options: {
       entries.push({ type: "custom", customType, data });
     },
     on(event: string, handler: (...args: any[]) => unknown) {
-      hooks.set(event, handler);
+      hooks.set(event, (value, context) => handler(value, { cwd: fixtureRoot, isProjectTrusted: () => false, ...context }));
     },
     events: {
       on(event: string, handler: (payload: unknown) => void) {
@@ -104,16 +128,16 @@ function registerRuntime(options: {
   };
   const sessionManager = {
     getEntries: () => [...entries],
+    getBranch: () => [...entries],
     getSessionId: () => "test-session",
   };
   const registerNativeTools = () => {
-    pi.registerTool({ name: "agent_browser" });
-    pi.registerTool({ name: "agent_browser_web_search" });
+    for (const name of BROWSER_NAMES) pi.registerTool({ name, namespace: { name: "browser" } });
   };
   const nativeOrder = options.nativeOrder ?? "before";
   if (nativeOrder === "before") registerNativeTools();
   const host = {
-    registered: () => ["read", ...tools.keys()].map(name => ({ name, exposure: "direct" as const })),
+    registered: () => [{ name: "read", exposure: "direct" as const }, ...[...tools.values()].map(tool => ({ ...tool, exposure: "direct" as const }))],
     active: pi.getActiveTools,
     apply: pi.setActiveTools,
   };
@@ -155,25 +179,27 @@ describe("browser-tools", () => {
             notices.push([message, level]);
           },
         },
-        sessionManager: runtime.sessionManager,
+        cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager,
       };
 
       runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
       expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 
       await runtime.commands.get("browser-tools")!.handler("on", ctx);
-      expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
+      expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
       expect(notices.at(-1)).toEqual(["Browser tools: manual", "info"]);
     },
   );
 
   test("revokes access and blocks stale calls without stopping upstream ownership", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
-    expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
+    expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
     expect(
       runtime.hooks.get("tool_call")!({ toolName: "agent_browser" }, ctx),
     ).toBeUndefined();
@@ -188,22 +214,15 @@ describe("browser-tools", () => {
     });
   });
 
-  test("always hides and blocks the optional web-search tool", async () => {
+  test("grants every registered browser tool and blocks stale calls after deactivation", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { cwd: fixtureRoot, ui: { notify() {} }, sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
-
-    expect(runtime.pi.getActiveTools()).not.toContain("agent_browser_web_search");
-    expect(
-      runtime.hooks.get("tool_call")!(
-        { toolName: "agent_browser_web_search" },
-        ctx,
-      ),
-    ).toEqual({
-      block: true,
-      reason: "Agent Browser Web Search is not enabled by browser-tools.",
-    });
+    expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+    for (const toolName of BROWSER_NAMES) expect(runtime.hooks.get("tool_call")!({ toolName }, ctx)).toBeUndefined();
+    await runtime.commands.get("browser-tools")!.handler("off", ctx);
+    for (const toolName of BROWSER_NAMES) expect(runtime.hooks.get("tool_call")!({ toolName }, ctx)).toMatchObject({ block: true });
   });
 
 	test("reports hidden, restricted, unavailable, and invalid command states", async () => {
@@ -215,6 +234,7 @@ describe("browser-tools", () => {
           notices.push([message, level]);
         },
       },
+      cwd: fixtureRoot,
       sessionManager: restricted.sessionManager,
     };
 
@@ -241,6 +261,7 @@ describe("browser-tools", () => {
           notices.push([message, level]);
         },
       },
+      cwd: fixtureRoot,
       sessionManager: unavailable.sessionManager,
     };
     unavailable.hooks.get("session_start")!({ reason: "startup" }, unavailableCtx);
@@ -260,7 +281,8 @@ describe("browser-tools", () => {
 					notices.push([message, level]);
 				},
 			},
-			sessionManager: runtime.sessionManager,
+			cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager,
 		};
 		runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
@@ -274,23 +296,25 @@ describe("browser-tools", () => {
 
   test("does not activate from a role policy without a manual grant", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
     runtime.pi.events.emit("pi-roles:tool-policy", {
       version: 1,
       roleName: "browser-specialist",
       mode: "set",
-      toolNames: ["read", "agent_browser"],
+      toolNames: ["read", ...BROWSER_NAMES],
     });
 
     expect(runtime.pi.getActiveTools()).toEqual(["read"]);
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
-    expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
+    expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
   });
 
   test("keeps the grant across reload and resume, and clears it on shutdown", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
@@ -315,7 +339,8 @@ describe("browser-tools", () => {
 
   test("records the grant in the session transcript", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
@@ -337,7 +362,8 @@ describe("browser-tools", () => {
 
   test("starts hidden in a new or forked session even with a recorded grant", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
 
@@ -355,7 +381,8 @@ describe("browser-tools", () => {
 
   test("takes the last recorded grant and ignores foreign or malformed entries", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
     runtime.entries.push(
       { type: "custom", customType: "other:grant", data: { granted: true } },
@@ -379,7 +406,8 @@ describe("browser-tools", () => {
 
   test("records a revocation when a restored grant outlives the native tool", async () => {
     const runtime = registerRuntime({ nativeOrder: "absent" });
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.entries.push({
       type: "custom",
       customType: "browser-tools:grant",
@@ -397,7 +425,8 @@ describe("browser-tools", () => {
 
   test("re-derives the grant on the first input when session start saw no entries", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "resume" }, ctx);
     expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 
@@ -414,7 +443,8 @@ describe("browser-tools", () => {
 
   test("keeps an explicit command authoritative before the first input", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "resume" }, ctx);
 
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
@@ -430,7 +460,8 @@ describe("browser-tools", () => {
 
   test("reconciles the policy before input and agent start", async () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await runtime.commands.get("browser-tools")!.handler("on", ctx);
 
@@ -438,12 +469,13 @@ describe("browser-tools", () => {
       action: "continue",
     });
     expect(runtime.hooks.get("before_agent_start")!({}, ctx)).toBeUndefined();
-    expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
+    expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
   });
 
   test("contributes a row-2 footer widget without a footer icon field", () => {
     const runtime = registerRuntime();
-    const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
     expect(widgetState.def?.id).toBe(BROWSER_TOOLS_WIDGET_ID);
@@ -464,6 +496,7 @@ describe("browser-tools", () => {
     const themed = {
       hasUI: true,
       ui: { notify() {}, theme: fakeTheme() },
+      cwd: fixtureRoot,
       sessionManager: runtime.sessionManager,
     };
     runtime.hooks.get("session_start")!({ reason: "startup" }, themed);
@@ -483,7 +516,8 @@ describe("browser-tools", () => {
     );
 
     // A ctx without a theme still receives plain fallback text.
-    const plain = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
+    const plain = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: runtime.sessionManager };
     await runtime.commands.get("browser-tools")!.handler("on", plain);
     expect(widgetState.updates.at(-1)).toBe(
       renderBrowserToolsWidget(undefined, "manual"),
@@ -492,7 +526,8 @@ describe("browser-tools", () => {
 
   test("renders the restricted and unavailable states and removes the widget on shutdown", async () => {
     const restricted = registerRuntime({ requested: ["read"] });
-    const ctx = { ui: { notify() {} }, sessionManager: restricted.sessionManager };
+    const ctx = { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: restricted.sessionManager };
     restricted.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await restricted.commands.get("browser-tools")!.handler("on", ctx);
     expect(renderWidget()).toBe(
@@ -506,10 +541,93 @@ describe("browser-tools", () => {
     const unavailable = registerRuntime({ nativeOrder: "absent" });
     unavailable.hooks.get("session_start")!(
       { reason: "startup" },
-      { ui: { notify() {} }, sessionManager: unavailable.sessionManager },
+      { ui: { notify() {} }, cwd: fixtureRoot,
+      sessionManager: unavailable.sessionManager },
     );
     expect(renderWidget()).toBe(
       renderBrowserToolsWidget(fakeTheme(), "unavailable"),
     );
   });
+});
+
+
+test("trusted project configuration enables the family by default, with an explicit session override", async () => {
+  configure("project", { enabledByDefault: true });
+  new ProjectTrustStore(join(fixtureRoot, "agent")).set(fixtureRoot, true);
+  const runtime = registerRuntime();
+  const notices: string[] = [];
+  const ctx = { cwd: fixtureRoot, ui: { notify(message: string) { notices.push(message); } }, sessionManager: runtime.sessionManager, isProjectTrusted: () => true };
+  runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+  await runtime.commands.get("browser-tools")!.handler("status", ctx);
+  expect(notices.at(-1)).toBe("Browser tools: configured");
+  await runtime.commands.get("browser-tools")!.handler("off", ctx);
+  runtime.hooks.get("session_start")!({ reason: "reload" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+  runtime.hooks.get("session_start")!({ reason: "fork" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+  runtime.hooks.get("session_start")!({ reason: "reload" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+});
+
+test("an untrusted project cannot enable browser tools", () => {
+  configure("project", { enabledByDefault: true });
+  const runtime = registerRuntime();
+  runtime.hooks.get("session_start")!({ reason: "startup" }, { cwd: fixtureRoot, ui: { notify() {} }, sessionManager: runtime.sessionManager, isProjectTrusted: () => true });
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+});
+
+test("invalid default configuration reports an error and keeps tools hidden", () => {
+  configure("global", { enabledByDefault: "yes" });
+  const runtime = registerRuntime();
+  const notices: string[] = [];
+  runtime.hooks.get("session_start")!({ reason: "startup" }, { cwd: fixtureRoot, ui: { notify(message: string) { notices.push(message); } }, sessionManager: runtime.sessionManager });
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+  expect(notices.join(" ")).toMatch(/configuration.*enabledByDefault/i);
+});
+
+test("global defaults inherit through an empty project layer and respect a project disable", () => {
+  configure("global", { enabledByDefault: true });
+  configure("project", {});
+  new ProjectTrustStore(join(fixtureRoot, "agent")).set(fixtureRoot, true);
+  const runtime = registerRuntime();
+  const ctx = { cwd: fixtureRoot, isProjectTrusted: () => true, ui: { notify() {} }, sessionManager: runtime.sessionManager };
+  runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+  configure("project", { enabledByDefault: false });
+  runtime.hooks.get("session_start")!({ reason: "reload" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+});
+
+test("a configured default does not widen an explicit role or a CLI ceiling", () => {
+  configure("global", { enabledByDefault: true });
+  const runtime = registerRuntime({ requested: ["read"] });
+  const ctx = { cwd: fixtureRoot, ui: { notify() {} }, sessionManager: runtime.sessionManager };
+  runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+  expect(runtime.hooks.get("tool_call")!({ toolName: "agent_browser_qa" }, ctx)).toMatchObject({ block: true, reason: expect.stringContaining("restricted") });
+  runtime.pi.events.emit("pi-roles:tool-policy", { version: 1, roleName: "empty", mode: "set", toolNames: [] });
+  expect(runtime.pi.getActiveTools()).toEqual([]);
+});
+
+test("an explicit on is recorded even when it matches the configured default", async () => {
+  configure("global", { enabledByDefault: true });
+  const runtime = registerRuntime();
+  const ctx = { cwd: fixtureRoot, ui: { notify() {} }, sessionManager: runtime.sessionManager };
+  runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+  await runtime.commands.get("browser-tools")!.handler("on", ctx);
+  expect(runtime.entries.at(-1)?.data).toEqual({ granted: true });
+  configure("global", { enabledByDefault: false });
+  runtime.hooks.get("session_start")!({ reason: "reload" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read", ...BROWSER_NAMES]);
+});
+
+test.each(["new", "fork"])("%s sessions do not recover an inherited manual grant after reload", async reason => {
+  const runtime = registerRuntime();
+  const ctx = { cwd: fixtureRoot, ui: { notify() {} }, sessionManager: runtime.sessionManager };
+  runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+  await runtime.commands.get("browser-tools")!.handler("on", ctx);
+  runtime.hooks.get("session_start")!({ reason }, ctx);
+  runtime.hooks.get("session_start")!({ reason: "reload" }, ctx);
+  expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 });

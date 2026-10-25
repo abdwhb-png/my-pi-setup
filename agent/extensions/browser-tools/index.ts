@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { createWidget } from "../_shared/fancy-footer.ts";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
+import { loadBrowserToolsConfig } from "./config.ts";
 import {
     BROWSER_TOOLS_WIDGET_ID,
     BROWSER_TOOLS_WIDGET_LABEL,
@@ -12,20 +13,18 @@ import {
 } from "./widget.ts";
 
 const PRIMARY_TOOL = "agent_browser";
-const OPTIONAL_SEARCH_TOOL = "agent_browser_web_search";
-const MANAGED_TOOLS = [PRIMARY_TOOL, OPTIONAL_SEARCH_TOOL] as const;
-const MANAGED_TOOL_SET = new Set<string>(MANAGED_TOOLS);
+const BROWSER_NAMESPACE = "browser";
 
 /** Session entry recording the user's Browser Tools grant for this session. */
 const GRANT_ENTRY = "browser-tools:grant";
 
 interface GrantEntryData {
-    granted: boolean;
+    granted: boolean | null;
 }
 
 /**
  * Session-start reasons that re-apply a grant recorded in this session's
- * entries. `new` and `fork` deliberately start hidden.
+ * entries. `new` and `fork` resolve the configured default instead.
  */
 const GRANT_RESTORING_REASONS: ReadonlySet<string> = new Set([
     "startup",
@@ -34,14 +33,18 @@ const GRANT_RESTORING_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /** Read `{ granted }` from an untrusted session entry payload. */
-function readGranted(data: unknown): boolean | undefined {
+function readGranted(data: unknown): boolean | null | undefined {
     if (typeof data !== "object" || data === null) return undefined;
     const granted = (data as { granted?: unknown }).granted;
-    return typeof granted === "boolean" ? granted : undefined;
+    return typeof granted === "boolean" || granted === null
+        ? granted
+        : undefined;
 }
 
 export default function browserToolsExtension(pi: ExtensionAPI): void {
-    let manualGrant = false;
+    let sessionOverride: boolean | null = null;
+    let configured = false;
+    const enabled = () => sessionOverride ?? configured;
     /**
      * Whether the in-memory grant is authoritative. Stays false until the
      * session's entries yield a grant, so a later input can re-derive it.
@@ -54,9 +57,13 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
             const available = registered.some(
                 (tool) => tool.name === PRIMARY_TOOL,
             );
-            return manualGrant && available
-                ? { grants: [PRIMARY_TOOL], deny: [OPTIONAL_SEARCH_TOOL] }
-                : { deny: MANAGED_TOOLS };
+            const names = registered
+                .filter((tool) => tool.namespace?.name === BROWSER_NAMESPACE)
+                .map((tool) => tool.name);
+            if (!enabled() || !available) return { deny: names };
+            return sessionOverride === true
+                ? { grants: names }
+                : { defaults: names };
         },
     );
 
@@ -65,9 +72,9 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
     }
 
     /** Last grant recorded in this session's transcript, when one exists. */
-    function recordedGrant(ctx: ExtensionContext): boolean | undefined {
-        let recorded: boolean | undefined;
-        for (const entry of ctx.sessionManager.getEntries()) {
+    function recordedGrant(ctx: ExtensionContext): boolean | null | undefined {
+        let recorded: boolean | null | undefined;
+        for (const entry of ctx.sessionManager.getBranch()) {
             if (entry.type !== "custom" || entry.customType !== GRANT_ENTRY) {
                 continue;
             }
@@ -84,16 +91,16 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
      */
     function restoreGrant(ctx: ExtensionContext): void {
         const recorded = recordedGrant(ctx);
-        manualGrant = recorded ?? false;
+        sessionOverride = recorded ?? null;
         grantResolved = recorded !== undefined;
     }
 
-    /** Record and apply a grant change. Only transitions are persisted. */
+    /** Persist explicit choices separately from the configured default. */
     function setGrant(granted: boolean): void {
-        if (manualGrant !== granted) {
+        if (sessionOverride !== granted) {
             pi.appendEntry<GrantEntryData>(GRANT_ENTRY, { granted });
         }
-        manualGrant = granted;
+        sessionOverride = granted;
         grantResolved = true;
         syncVisibility();
     }
@@ -104,10 +111,18 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
 
     function visibilityStatus(): BrowserToolsStatus {
         if (!primaryAvailable()) return "unavailable";
-        if (!manualGrant) return "hidden";
-        return pi.getActiveTools().includes(PRIMARY_TOOL)
-            ? "manual"
-            : "manual (restricted)";
+        if (!enabled()) return "hidden";
+        const source = sessionOverride === true ? "manual" : "configured";
+        const active = new Set(pi.getActiveTools());
+        return pi
+            .getAllTools()
+            .some(
+                (tool) =>
+                    tool.namespace?.name === BROWSER_NAMESPACE &&
+                    active.has(tool.name),
+            )
+            ? source
+            : `${source} (restricted)`;
     }
 
     const widget = createWidget(pi, {
@@ -173,10 +188,23 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
     }
 
     pi.on("session_start", (event, ctx) => {
-        manualGrant = false;
+        configured = false;
+        try {
+            configured = loadBrowserToolsConfig(
+                ctx.cwd,
+                ctx.isProjectTrusted(),
+            ).enabledByDefault;
+        } catch (error) {
+            ctx.ui.notify(
+                `Browser tools configuration: ${error instanceof Error ? error.message : String(error)}`,
+                "error",
+            );
+        }
+        sessionOverride = null;
         if (GRANT_RESTORING_REASONS.has(event.reason)) {
             restoreGrant(ctx);
         } else {
+            pi.appendEntry<GrantEntryData>(GRANT_ENTRY, { granted: null });
             grantResolved = true;
         }
         syncVisibility();
@@ -188,27 +216,43 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
         return { action: "continue" as const };
     });
 
+    // Later session_start handlers may register optional native browser tools.
+    pi.on("resources_discover", (_event, ctx) => {
+        syncVisibility();
+        pushWidget(ctx);
+    });
+
     pi.on("before_agent_start", (_event, ctx) => {
         refreshForTurn(ctx);
     });
 
     pi.on("tool_call", (event) => {
-        if (!MANAGED_TOOL_SET.has(event.toolName)) return undefined;
-        if (event.toolName === OPTIONAL_SEARCH_TOOL) {
+        if (
+            !pi
+                .getAllTools()
+                .some(
+                    (tool) =>
+                        tool.name === event.toolName &&
+                        tool.namespace?.name === BROWSER_NAMESPACE,
+                )
+        )
+            return undefined;
+        if (!enabled())
             return {
                 block: true as const,
-                reason: "Agent Browser Web Search is not enabled by browser-tools.",
+                reason: "Agent Browser is hidden. Ask the user to run /browser-tools on.",
             };
-        }
-        if (manualGrant) return undefined;
-        return {
-            block: true as const,
-            reason: "Agent Browser is hidden. Ask the user to run /browser-tools on.",
-        };
+        if (!pi.getActiveTools().includes(event.toolName))
+            return {
+                block: true as const,
+                reason: "Agent Browser is restricted by the current tool policy.",
+            };
+        return undefined;
     });
 
     pi.on("session_shutdown", (_event, ctx) => {
-        manualGrant = false;
+        sessionOverride = null;
+        configured = false;
         grantResolved = false;
         widget.remove(ctx);
         visibility.dispose();

@@ -17,6 +17,8 @@ export type BrowserToolsStatus =
     | "hidden"
     | "manual"
     | "manual (restricted)"
+    | "configured"
+    | "configured (restricted)"
     | "unavailable";
 
 /**
@@ -51,8 +53,12 @@ export function renderBrowserToolsWidget(
     const label = colors.subtle(
         `${BROWSER_TOOLS_EMOJI} ${BROWSER_TOOLS_LABEL}:`,
     );
-    if (status === "manual") return `${label} ${colors.success(status)}`;
-    if (status === "manual (restricted)") {
+    if (status === "manual" || status === "configured")
+        return `${label} ${colors.success(status)}`;
+    if (
+        status === "manual (restricted)" ||
+        status === "configured (restricted)"
+    ) {
         return `${label} ${colors.warning(status)}`;
     }
     if (status === "unavailable") return `${label} ${colors.danger(status)}`;

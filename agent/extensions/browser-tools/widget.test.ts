@@ -19,6 +19,8 @@ describe("renderBrowserToolsWidget", () => {
         for (const [status, color] of [
             ["hidden", "dim"],
             ["manual", "success"],
+            ["configured", "success"],
+            ["configured (restricted)", "warning"],
             ["manual (restricted)", "warning"],
             ["unavailable", "error"],
         ] as const) {
