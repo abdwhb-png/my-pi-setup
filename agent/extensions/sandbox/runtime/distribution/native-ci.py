@@ -95,17 +95,17 @@ def main():
                     for path in sorted((engine_root / "scripts").glob("upstream-*.patch"))],
     }
     (root / "engine-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    if not Path("/etc/ssl/certs/ca-certificates.crt").is_file():
+        raise RuntimeError("Native runner requires a CA certificate bundle for snapshot downloads")
     run("docker", "pull", lock["image"])
     container = f"pi-native-runtime-{uuid.uuid4().hex}"
     run("docker", "create", "--name", container,
         "-v", f"{root}:/inputs", "-v", f"{agent}:/agent:ro",
         "-v", f"{root / 'build-inputs'}:/packages:ro",
+        "-v", "/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro",
         "-v", f"{tools}:/build:ro", lock["image"], "sleep", "infinity")
     try:
         run("docker", "start", container)
-        run("docker", "exec", container, "apt-get", "update")
-        run("docker", "exec", "-e", "DEBIAN_FRONTEND=noninteractive", container,
-            "apt-get", "--no-install-recommends", "--yes", "install", "ca-certificates")
         run("docker", "exec", container, "apt-get", "--snapshot", snapshot, "update")
         run("docker", "exec", "-w", "/inputs/build-inputs", container,
             *package_download)

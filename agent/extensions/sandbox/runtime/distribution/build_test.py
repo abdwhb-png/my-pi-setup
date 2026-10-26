@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("runtime_build", Path(__file__).with_name("build.py"))
 builder = importlib.util.module_from_spec(spec)
@@ -18,6 +19,54 @@ native_spec.loader.exec_module(native_ci)
 
 
 class RuntimeRelocationTests(unittest.TestCase):
+    def test_native_builder_uses_transport_certificates_without_upgrading_the_pinned_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            (tools / "inputs").mkdir(parents=True)
+            (tools / "input-lock.json").write_text(json.dumps({
+                "snapshot": "20260912T120000Z", "image": "ubuntu@sha256:fixture",
+            }))
+            for name in ["packages", "assets"]:
+                (tools / f"inputs/{name}.json").write_text("[]")
+            engine = root / "engine-source"
+            binary = engine / "target/x86_64-unknown-linux-gnu/release/zerobox"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"engine")
+            (engine / "UPSTREAM_VERSION").write_text("fixture")
+            inputs = root / "inputs"
+            commands = []
+
+            def run(*args, **kwargs):
+                commands.append(args)
+                if "assemble" in args:
+                    target = inputs / "candidate/bin/zerobox"
+                    target.parent.mkdir(parents=True)
+                    target.write_bytes(b"engine")
+
+            def output(*args, **kwargs):
+                if args[:3] == ("git", "status", "--porcelain"):
+                    return ""
+                return "fixture"
+
+            with (
+                patch.object(native_ci, "__file__", str(tools / "native-ci.py")),
+                patch.object(native_ci, "require_native_linux"),
+                patch.object(native_ci, "run", side_effect=run),
+                patch.object(native_ci, "output", side_effect=output),
+                patch("sys.argv", [
+                    "native-ci.py", "--engine-root", str(engine),
+                    "--agent-root", str(root / "agent"),
+                    "--input-root", str(inputs), "--version", "fixture",
+                ]),
+                patch.dict("os.environ", {"GITHUB_ENV": str(root / "env")}),
+            ):
+                native_ci.main()
+            create = next(command for command in commands if command[:2] == ("docker", "create"))
+            self.assertIn("/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro", create)
+            self.assertFalse(any("ca-certificates" in command for command in commands))
+            self.assertTrue(any("--snapshot" in command and "update" in command for command in commands))
+
     def test_native_package_download_uses_the_locked_archive_snapshot(self):
         command = native_ci.package_download_command(
             {"snapshot": "20260912T120000Z"},
