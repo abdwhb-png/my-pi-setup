@@ -37,7 +37,7 @@ test.skipIf(process.platform !== "linux" || !hasCandidateRuntime())("real isolat
         await service.startBashSession(cwd);
         const operations = createSandboxedBashOps(service, supervisor);
         expect((await operations.exec("/usr/bin/curl --version >/dev/null", cwd, { timeout: 5, onData() {} })).exitCode).toBe(0);
-        for (const command of [`/usr/bin/curl --fail --silent --max-time 2 http://127.0.0.1:${address.port}`, "printf overwritten > sandbox.json"]) {
+        for (const command of [`/usr/bin/curl --fail --silent --max-time 2 http://127.0.0.1:${address.port}`, "printf overwritten > config/sandbox.json"]) {
             const result = await operations.exec(command, cwd, { timeout: 5, onData() {} });
             expect(result.exitCode).not.toBe(0);
         }

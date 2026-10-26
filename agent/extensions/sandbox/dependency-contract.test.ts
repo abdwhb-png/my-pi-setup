@@ -34,7 +34,7 @@ async function readProvenance(): Promise<ZeroboxManifest> {
     return Bun.file(new URL("./runtime/zerobox-provenance.json", import.meta.url)).json();
 }
 
-async function readCandidateProvenance(): Promise<{ binarySha256: string }> {
+async function readCandidateProvenance(): Promise<{ binarySha256: string; sourceCommit: string; patches: ZeroboxManifest["patches"] }> {
     if (!candidateBundle) throw new Error("Explicit candidate bundle required");
     return Bun.file(join(candidateBundle, "provenance.json")).json();
 }
@@ -167,9 +167,12 @@ describe("sandbox dependency contract", () => {
     it.skipIf(!candidateSource)("verifies the explicit source worktree digest and ordered patch bytes", async () => {
         if (!candidateSource) throw new Error("Explicit candidate source root required");
         const provenance = await readProvenance();
+        const candidate = await readCandidateProvenance();
         const source = resolve(candidateSource);
         const gitOptions = { cwd: source, maxBuffer: 64 * 1024 * 1024 };
-        expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(provenance.forkCommit);
+        expect(candidate.sourceCommit).toMatch(/^[a-f0-9]{40}$/);
+        expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(candidate.sourceCommit);
+        expect([...candidate.patches].sort((a, b) => a.path.localeCompare(b.path))).toEqual([...provenance.patches].sort((a, b) => a.path.localeCompare(b.path)));
         expect(execFileSync("git", ["status", "--porcelain"], { ...gitOptions, encoding: "utf8" })).toBe("");
         const syncScript = await readFile(join(source, "scripts/sync.sh"), "utf8");
         const referencedPatches = [...new Set([...syncScript.matchAll(/\bupstream-[a-z0-9-]+\.patch\b/g)].map(match => `scripts/${match[0]}`))];

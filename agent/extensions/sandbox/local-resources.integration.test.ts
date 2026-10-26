@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
@@ -109,6 +110,7 @@ async function fixture() {
     const pending = new Set<Promise<BashResult>>();
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await mkdir(agentDir, { mode: 0o700 });
+    new ProjectTrustStore(agentDir).set(cwd, true);
     const projectConfig = join(cwd, ".pi/config/sandbox.json");
     return {
         root, cwd, projectConfig,

@@ -180,12 +180,12 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
                 expect(result.exitCode).not.toBe(0);
                 expect(bodies.length).toBe(before);
             }
-            // Docker sends detach only when starting an already-created exec.
+            // Supported clients can declare detach at creation or start. Neither may execute it.
             const startsBefore = requests.filter(request => request === `POST /exec/${execId}/start`).length;
-            const createsBefore = bodies.length;
-            const detached = await operations.exec("docker exec -d fixture-api true", root, { onData() {}, timeout: 15 });
+            let detachedOutput = "";
+            const detached = await operations.exec("docker exec -d fixture-api true", root, { onData: chunk => { detachedOutput += chunk.toString(); }, timeout: 15 });
             expect(detached.exitCode).not.toBe(0);
-            expect(bodies.length).toBe(createsBefore + 1);
+            expect(detachedOutput).toContain("detached execution is not allowed");
             expect(requests.filter(request => request === `POST /exec/${execId}/start`)).toHaveLength(startsBefore);
         } finally { trustedSupervisor.shutdown(); await trustedService.shutdown(); }
 

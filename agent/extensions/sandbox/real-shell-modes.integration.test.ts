@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
@@ -44,6 +45,7 @@ test.skipIf(
         try {
             await mkdir(join(cwd, ".pi"), { recursive: true });
             await mkdir(agentDir, { mode: 0o700 });
+            new ProjectTrustStore(agentDir).set(cwd, true);
             const marker = join(root, "host-marker");
             await writeFile(marker, "fixture-host\n");
             await writeFile(join(cwd, "private.txt"), "project-private\n");

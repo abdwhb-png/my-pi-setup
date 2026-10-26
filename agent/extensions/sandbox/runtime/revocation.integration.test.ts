@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -105,6 +106,7 @@ test.skipIf(
             );
             const authority = join(agentDir, "config", "sandbox.json");
             const project = join(cwd, ".pi", "config", "sandbox.json");
+            new ProjectTrustStore(agentDir).set(cwd, true);
             await writeFile(
                 authority,
                 JSON.stringify({

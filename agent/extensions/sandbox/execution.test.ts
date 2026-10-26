@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 /// <reference types="bun" />
 
@@ -123,6 +124,7 @@ describe("sandbox runtime publication", () => {
         const cwd = await mkdtemp(join(fixtureRoot, "malformed-"));
         await mkdir(join(cwd, ".pi"));
         await writeFile(join(cwd, ".pi", "config", "sandbox.json"), "{ invalid");
+        new ProjectTrustStore(agentDir).set(cwd, true);
         const malformedContext = { ...context, cwd } as ExtensionContext;
 
         const registered = registerSandbox({ noSandbox: false });
@@ -161,6 +163,7 @@ describe("sandbox runtime publication", () => {
                 network: { allowedDomains: [], deniedDomains: [] },
             }),
         );
+        new ProjectTrustStore(agentDir).set(cwd, true);
         const realContext = { ...context, cwd } as ExtensionContext;
         const registered = registerSandbox({ noSandbox: false });
         const chunks: string[] = [];

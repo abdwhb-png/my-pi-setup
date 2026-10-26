@@ -80,7 +80,7 @@ describe("Pi Permission System policy contract", () => {
             "sandbox.json",
             "agent/sandbox.json",
             ".pi/agent/sandbox.json",
-            resolve(AGENT_ROOT, "config", "sandbox.json"),
+            resolve(root, "agent", "config", "sandbox.json"),
         ];
         const actions = deniedPaths.flatMap((path) => [
             calls("write", { path, content: "blocked" }),
@@ -582,7 +582,7 @@ describe.skipIf(process.platform !== "linux" ||
         await mkdir(isolatedAgentDir);
         const authorityPath = resolve(
             isolatedAgentDir,
-            "sandbox.json",
+            "config", "sandbox.json",
         );
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
         process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
@@ -599,7 +599,7 @@ describe.skipIf(process.platform !== "linux" ||
                 when("Try to overwrite Docker authority", [
                     calls("safe_bash", {
                         command:
-                            "printf compromised >agent/sandbox.json",
+                            "printf compromised >agent/config/sandbox.json",
                     }),
                     says("Write result observed."),
                 ]),

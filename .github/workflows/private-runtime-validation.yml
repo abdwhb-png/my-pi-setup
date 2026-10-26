@@ -41,6 +41,9 @@ jobs:
         with:
           toolchain: "1.96.0"
           components: rustfmt, clippy
+      - name: Restore the pinned engine sources before resolving the Rust cache
+        working-directory: projects/zerobox
+        run: ./scripts/sync.sh
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: projects/zerobox
@@ -117,10 +120,9 @@ jobs:
         run: |
           env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
             bun test --isolate extensions/_shared/package-install/finalizer.test.ts extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
-      - name: Replay patches and build the static engine
+      - name: Build the static engine
         working-directory: projects/zerobox
         run: |
-          ./scripts/sync.sh
           sfw cargo fetch --locked
           cargo rustc --offline --locked --release -p zerobox --bin zerobox --target x86_64-unknown-linux-gnu -- -C target-feature=+crt-static
       - name: Assemble with the pinned Ubuntu builder and verify all inputs
