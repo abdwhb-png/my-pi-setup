@@ -14,6 +14,19 @@ function line(value: unknown): string {
 const started = { version: 1, event: "child_started", pid: 42, pid_scope: "supervisor" };
 const exited = { version: 1, event: "child_exit", code: 0 };
 
+it("delivers verified write denials from the terminal status event", async () => {
+    const stream = new PassThrough();
+    const observed: unknown[] = [];
+    const status = superviseZeroboxStatusStream(stream, {version:2,onAdmitted:async()=>{},onWriteDenied:denials=>observed.push(...denials)});
+    stream.end([
+        {version:2,event:"sandbox_admitted",report_sha256:"a".repeat(64)},
+        {...started,version:2},
+        {version:2,event:"child_exit",code:1,write_denials:[{path:"/project/node_modules/package/index.js",pattern:"/project/node_modules/*"}]},
+    ].map(line).join(""));
+    await status.settled;
+    expect(observed).toEqual([{path:"/project/node_modules/package/index.js",pattern:"/project/node_modules/*"}]);
+});
+
 describe("Zerobox status protocol v1", () => {
     it("accepts fragmented JSONL and waits for terminal EOF", async () => {
         const stream = new PassThrough();

@@ -491,6 +491,7 @@ export function renderSandboxStatusDetails(
         `  Deny Read: ${config.filesystem?.denyRead?.join(", ") || "(none)"}`,
         `  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
         `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
+        `  Write denial exceptions: ${JSON.stringify(config.filesystem.denyWriteExceptions ?? [])}`,
         "",
         "Use /sandbox mode sandbox|host. Host mode requires an explicit current-session selection within the global ceiling.",
         "Shell: ! <command> selected profile; !! <command> selected profile outside model context; !s <command> Sandbox; !!s <command> Sandbox outside model context.",

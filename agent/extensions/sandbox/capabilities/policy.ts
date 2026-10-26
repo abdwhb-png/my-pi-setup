@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { extensionConfigPath } from "../../_shared/config-loader.ts";
+import { parseWriteExceptions } from "../../_shared/sandbox-runtime/write-exceptions.ts";
 import type { ShellCapabilityResolution } from "../../_shared/shell-runtime/contracts.ts";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
@@ -43,6 +44,13 @@ export interface ShellPolicyInput {
     writePathsRequested?: boolean;
 }
 
+function canonicalDenyPath(value: string, root: string): string {
+    return canonicalProjectPath(
+        !value.includes("/") && /[*?[\]{}]/.test(value) ? `**/${value}` : value,
+        root,
+    );
+}
+
 function canonicalLayer(
     layer: SandboxConfigLayer | undefined,
     root: string,
@@ -62,7 +70,11 @@ function canonicalLayer(
         if (raw === undefined) return undefined;
         if (!Array.isArray(raw) || raw.some((p) => typeof p !== "string"))
             throw new Error(`${section}.${field} must be a string array`);
-        return raw.map((p) => canonicalProjectPath(p, root));
+        return raw.map((p) =>
+            field === "denyRead" || field === "denyWrite"
+                ? canonicalDenyPath(p, root)
+                : canonicalProjectPath(p, root),
+        );
     };
     const filesystem =
         layer.filesystem === undefined
@@ -86,6 +98,22 @@ function canonicalLayer(
                       }),
                   ),
               };
+    if (filesystem && layer.filesystem?.denyWriteExceptions !== undefined) {
+        filesystem.denyWriteExceptions = parseWriteExceptions(
+            layer.filesystem.denyWriteExceptions,
+        ).map((rule) => ({
+            pattern: canonicalDenyPath(rule.pattern, root),
+            paths: rule.paths.map((path) => {
+                const logical = resolve(root, expandShellPathEntry(path));
+                const canonical = canonicalPotentialPath(logical);
+                if (logical !== canonical)
+                    throw new Error(
+                        "filesystem.denyWriteExceptions cannot use redirected paths",
+                    );
+                return canonical;
+            }),
+        }));
+    }
     const resources =
         layer.resources === undefined
             ? undefined
@@ -760,6 +788,40 @@ function mergeLayers(input: ShellPolicyInput): {
         (list(globalFs[field], `global filesystem.${field}`) ?? []).filter(
             (protectedRoot) => !permittedPath(projectRoot, [protectedRoot]),
         );
+    let writeExceptions = parseWriteExceptions(globalFs.denyWriteExceptions);
+    for (const layer of [projectFs, sessionFs]) {
+        if (layer.denyWriteExceptions === undefined) continue;
+        const selected = parseWriteExceptions(layer.denyWriteExceptions);
+        for (const rule of selected) {
+            const ceiling = writeExceptions.find(
+                (allowed) => allowed.pattern === rule.pattern,
+            );
+            if (
+                !ceiling ||
+                rule.paths.some(
+                    (selectedPath) => !ceiling.paths.includes(selectedPath),
+                )
+            )
+                throw new Error(
+                    "filesystem.denyWriteExceptions is outside the global ceiling",
+                );
+        }
+        writeExceptions = selected;
+    }
+    for (const rule of writeExceptions) {
+        if (!deny("denyWrite").includes(rule.pattern))
+            throw new Error(
+                "filesystem.denyWriteExceptions must reference an existing denial glob",
+            );
+        if (
+            rule.paths.some(
+                (selectedPath) => !permittedPath(selectedPath, write),
+            )
+        )
+            throw new Error(
+                "filesystem.denyWriteExceptions requires an existing write grant",
+            );
+    }
     const deniedDomains = [
         ...new Set([
             ...baseline.network.deniedDomains,
@@ -802,6 +864,9 @@ function mergeLayers(input: ShellPolicyInput): {
                 projectRoot,
             ),
             allowWrite: write,
+            ...(writeExceptions.length
+                ? { denyWriteExceptions: writeExceptions }
+                : {}),
             denyRead: [
                 ...new Set([
                     ...deny("denyRead"),

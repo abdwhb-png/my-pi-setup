@@ -6,6 +6,7 @@ import type {
     SandboxAdmission,
     SandboxAdmissionReport,
 } from "../../_shared/sandbox-runtime/admission-protocol.ts";
+import { parseWriteExceptions } from "../../_shared/sandbox-runtime/write-exceptions.ts";
 import { SandboxExecutionError, type SandboxPolicy } from "./contracts.ts";
 
 export type {
@@ -95,7 +96,10 @@ function kernelMount(
 export function parseSandboxAdmissionReport(
     value: unknown,
 ): SandboxAdmissionReport {
-    if (!record(value) || (value.schema !== 1 && value.schema !== 2))
+    if (
+        !record(value) ||
+        (value.schema !== 1 && value.schema !== 2 && value.schema !== 3)
+    )
         throw failure("unsupported schema");
     const {
         runtime,
@@ -129,6 +133,14 @@ export function parseSandboxAdmissionReport(
         ].every((key) => strings(filesystem[key]))
     )
         throw failure("invalid filesystem rules");
+    let exceptions;
+    try {
+        exceptions = parseWriteExceptions(filesystem.denyWriteExceptions);
+    } catch (error) {
+        throw failure("invalid scoped write exceptions", error);
+    }
+    if ((value.schema === 3) !== exceptions.length > 0)
+        throw failure("write exceptions require schema 3");
     if (
         !record(network) ||
         !["deny-all", "domain-allowlist"].includes(String(network.mode)) ||
@@ -152,7 +164,10 @@ export function parseSandboxAdmissionReport(
         );
     if (
         (value.schema === 1 && mediatedDirectTcp !== undefined) ||
-        (value.schema === 2 && !validDirectPorts)
+        (value.schema === 2 && !validDirectPorts) ||
+        (value.schema === 3 &&
+            mediatedDirectTcp !== undefined &&
+            !validDirectPorts)
     )
         throw failure("invalid mediated direct TCP grant");
     if (
@@ -332,6 +347,20 @@ export function assertAdmissionMatchesPolicy(
             throw failure(
                 `filesystem.${key} differs from the submitted policy`,
             );
+    const expectedExceptions = policy.filesystem.denyWriteExceptions ?? [];
+    const reportedExceptions = report.filesystem.denyWriteExceptions ?? [];
+    const exceptionKey = (rule: { pattern: string; paths: string[] }) =>
+        JSON.stringify([rule.pattern, [...rule.paths].sort()]);
+    if (
+        !equal(
+            expectedExceptions.map(exceptionKey),
+            reportedExceptions.map(exceptionKey),
+        ) ||
+        (report.schema === 3) !== expectedExceptions.length > 0
+    )
+        throw failure(
+            "scoped write exceptions differ from the submitted policy",
+        );
     for (const key of [
         "denyRead",
         "denyReadGlobs",
@@ -474,8 +503,9 @@ export function assertAdmissionMatchesPolicy(
     const reportedDirect = report.network.mediatedDirectTcp;
     if (
         submittedDirect === undefined
-            ? report.schema !== 1 || reportedDirect !== undefined
-            : report.schema !== 2 ||
+            ? report.schema !== (expectedExceptions.length ? 3 : 1) ||
+              reportedDirect !== undefined
+            : report.schema !== (expectedExceptions.length ? 3 : 2) ||
               reportedDirect === undefined ||
               !equalPorts(reportedDirect.ports, submittedDirect.ports)
     )

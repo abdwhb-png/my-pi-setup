@@ -378,6 +378,13 @@ class SandboxDashboard implements Component {
                                 "Write restrictions",
                                 config.filesystem.denyWrite,
                             ),
+                            "",
+                            ...list(
+                                "Write denial exceptions",
+                                (
+                                    config.filesystem.denyWriteExceptions ?? []
+                                ).map((rule) => JSON.stringify(rule)),
+                            ),
                         ],
                     },
                     {

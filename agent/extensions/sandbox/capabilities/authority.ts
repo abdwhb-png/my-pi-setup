@@ -264,6 +264,7 @@ function validateLayer(
                 "denyRead",
                 "allowWrite",
                 "denyWrite",
+                "denyWriteExceptions",
                 ...(scope === "global"
                     ? ["denyReadWhenExternal", "denyWriteWhenExternal"]
                     : []),

@@ -45,6 +45,14 @@ Read and write allowlists use paths, not glob patterns. Use `~/projects`, withou
 
 Resolve relative paths from the canonical project root, including `.`. Use `~/…` for paths relative to the user's HOME. Filesystem allowlists take literal paths. Deny lists also accept globs: a pattern without a slash matches at any project depth, while a pattern containing a slash is project-relative.
 
+### Write-denial exceptions
+
+An optional `filesystem.denyWriteExceptions` array exempts literal directories from one existing write-denial glob. Each entry contains `pattern`, exactly identifying the denial, and a non-empty `paths` array. An exception does not grant read or write access, override another denial, or authorize writes through redirected paths. The engine checks both requested and resolved destinations.
+
+For development caches, authorize `node_modules/.vite-temp`, `node_modules/.vite`, `node_modules/.cache`, `node_modules/.vue-global-types` and `node_modules/.tmp` under the `node_modules/*` denial. These locations hold Vite/Vitest configuration and cache data, Nuxt/Jiti/Laravel Vite caches, generated Vue types and TypeScript build metadata. Installed packages, `.pnpm` and `.bin` remain protected. Other matching denials, such as `*.key` and `.env.*`, continue to apply inside these caches.
+
+Global entries are inherited by default. A project or session may select a subset of the globally authorized pattern/path pairs; `[]` disables the inherited exceptions. Paths cannot contain globs or parent traversal. Removing an exception revokes affected active executions. Configurations without this field retain their original restrictions. Executions with exceptions require admission schema 3 and a matching engine receipt; older engines cannot silently admit the new permissions.
+
 Global `denyReadWhenExternal` and `denyWriteWhenExternal` protect literal absolute or `~/…` roots only while the current project is outside the protected root. A project opened at that root or within one of its descendants keeps its ordinary current-project access. Opening Pi from a parent directory does not remove the protection. These fields are reserved to the global authority; project configuration cannot remove or define them. The resolved policy converts applicable entries into ordinary effective denials, so admission reports, diagnostics and the widget describe the restrictions actually applied.
 
 For example, expose a shared projects directory while keeping one project private from every other project:

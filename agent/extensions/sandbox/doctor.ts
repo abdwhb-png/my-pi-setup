@@ -180,7 +180,16 @@ export function sandboxDoctorLines(
             "Admitted runtime filesystem (private lease paths are aliases):",
         );
         for (const [name, values] of Object.entries(admitted.filesystem))
-            lines.push({ label: `  ${name}`, value: list(values) });
+            lines.push({
+                label: `  ${name}`,
+                value: list(
+                    values.map((value) =>
+                        typeof value === "string"
+                            ? value
+                            : `${value.pattern}: ${value.paths.join(", ")}`,
+                    ),
+                ),
+            });
     } else
         lines.push(
             "Admitted runtime policy: unavailable or differs from current configuration.",

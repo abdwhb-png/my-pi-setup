@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { JsonValue } from '@earendil-works/pi-ai';
 import { addExecutionContext, hostExecution, unknownExecution, parseExecutionProvenance, recordExecution } from './index.ts';
+
 import {
     mergeSandboxContextForFailure,
     recordSandboxExecutionContext,
@@ -36,6 +37,13 @@ function wireDetails(value: unknown): JsonValue {
     return JSON.parse(JSON.stringify(value));
 }
 
+test.each(['bash','safe_bash'])('failed %s results expose the observed mode without changing raw output', toolName => {
+    const message: AgentMessage = {role:'toolResult',toolCallId:`mode-${toolName}`,toolName,content:[{type:'text',text:'raw failure'}],isError:true,timestamp:1,details:wireDetails({execution:hostExecution('process')})};
+    const result = addExecutionContext([message]);
+    expect(JSON.stringify(result)).toContain('Shell execution mode: host');
+    expect(result[0]?.role === 'toolResult' && result[0].content[0]).toEqual({type:'text',text:'raw failure'});
+    expect(addExecutionContext(result)).toEqual(result);
+});
 test('context copies preserve raw text, images, historical facts and unknown history', () => {
     const messages: AgentMessage[] = [{ role: 'toolResult', toolCallId: 'past', toolName: 'read', content: [{ type: 'text', text: 'raw' }, { type: 'image', data: 'AA==', mimeType: 'image/png' }], isError: false, timestamp: 1, details: wireDetails({ execution: hostExecution(), executionReceiptVisible: false }) }, { role: 'toolResult', toolCallId: 'old', toolName: 'bash', content: [{ type: 'text', text: 'old' }], isError: false, timestamp: 2 }];
     const original = JSON.stringify(messages);

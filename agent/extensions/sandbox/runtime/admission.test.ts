@@ -68,6 +68,20 @@ function policyFor(report: SandboxAdmissionReport): SandboxPolicy {
 }
 const pinned = {manifestSha256:digest, helperSha256:digest, version:"test",target:"x86_64-unknown-linux-gnu" as const,component:"shell" as const,shellRoot:"/bundle/components/shell",analysisRoot:"/bundle/components/analysis"};
 
+test("admission requires schema 3 and exactly the submitted scoped write exceptions", () => {
+    const original = receipt();
+    const exceptions = [{pattern:"/project/node_modules/*",paths:["/project/node_modules/.vite"]}];
+    const policy = policyFor(original);
+    policy.filesystem = {...original.filesystem,denyWriteGlobs:["/project/node_modules/*"],denyWriteExceptions:exceptions};
+    const report = {...original,schema:3 as const,filesystem:{...policy.filesystem}};
+    expect(() => assertAdmissionMatchesPolicy({report,sha256:digest},policy,pinned)).not.toThrow();
+    for (const invalid of [
+        {...report,schema:1 as const},
+        {...report,filesystem:{...report.filesystem,denyWriteExceptions:[]}},
+        {...report,filesystem:{...report.filesystem,denyWriteExceptions:[{pattern:exceptions[0]!.pattern,paths:["/project/node_modules"]}]}},
+    ]) expect(() => assertAdmissionMatchesPolicy({report:invalid,sha256:digest},policy,pinned)).toThrow();
+});
+
 test("admission rejects mismatched helper identity, redirected runtime and undeclared environment",()=>{
     const original=receipt();
     const policy=policyFor(original);

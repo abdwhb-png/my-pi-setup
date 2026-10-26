@@ -2,6 +2,14 @@ import { expect, test } from "bun:test";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 import { sandboxAccessRemoved } from "./revocation.ts";
 import { resolveShellPolicy } from "./policy.ts";
+test("removing a cache exception revokes its admitted rights while additions preserve them", () => {
+ const base = validatePiSandboxConfig({filesystem:{denyWrite:["node_modules/*"]}});
+ const expanded = {...base,filesystem:{...base.filesystem,denyWriteExceptions:[{pattern:"node_modules/*",paths:["node_modules/.vite","node_modules/.vite-temp"]}]}};
+ const narrowed = {...expanded,filesystem:{...expanded.filesystem,denyWriteExceptions:[{pattern:"node_modules/*",paths:["node_modules/.vite"]}]}};
+ expect(sandboxAccessRemoved(expanded,narrowed)).toBe(true);
+ expect(sandboxAccessRemoved(narrowed,expanded)).toBe(false);
+ expect(sandboxAccessRemoved(expanded,base)).toBe(true);
+});
 test("removing permanent exec trust revokes admission while bounded exec remains requested", () => {
  const base = validatePiSandboxConfig({});
  const target = { selector: { type: "container-name" as const, name: "api" }, operations: ["exec" as const], allowUnsafeTarget: true };

@@ -17,6 +17,7 @@ import {
     type ExecutionProvenance,
 } from "../execution-provenance/types.ts";
 import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
+import type { SandboxWriteDenial } from "../sandbox-runtime/policy-contracts.ts";
 import { ExecutionDeadline } from "./deadline.ts";
 import { sandboxShellDiagnostic } from "./diagnostics.ts";
 
@@ -56,6 +57,7 @@ export interface PreparedBashSpawn {
     execution?: ExecutionProvenance;
     sandboxContext?: SandboxExecutionContext;
     getSandboxContext?: () => SandboxExecutionContext | undefined;
+    getWriteDenials?: () => readonly SandboxWriteDenial[];
     file: string;
     args: string[];
     cwd: string;
@@ -567,6 +569,7 @@ function createTrackedBashOperations(
                                 ).toString("utf8"),
                                 spawnSpec.getSandboxContext?.() ??
                                     spawnSpec.sandboxContext,
+                                spawnSpec.getWriteDenials?.(),
                             );
                             if (diagnostic)
                                 onData(Buffer.from(`\n${diagnostic}\n`));

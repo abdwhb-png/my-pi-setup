@@ -7,7 +7,7 @@ import type {
 } from "./policy-contracts.ts";
 
 export interface SandboxAdmissionReport {
-    schema: 1 | 2;
+    schema: 1 | 2 | 3;
     runtime: {
         target: "x86_64-unknown-linux-gnu";
         version: string;

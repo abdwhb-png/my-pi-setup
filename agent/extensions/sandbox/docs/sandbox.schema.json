@@ -113,6 +113,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "denyWriteExceptions": {
+              "$ref": "#/$defs/writeExceptions",
+              "description": "Literal directories exempted from one existing write-denial glob. Global entries authorize and default-enable exceptions; project entries select only global paths and [] disables them."
             }
           }
         },
@@ -307,6 +311,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "denyWriteExceptions": {
+              "$ref": "#/$defs/writeExceptions",
+              "description": "Literal directories exempted from one existing write-denial glob. Global entries authorize and default-enable exceptions; project entries select only global paths and [] disables them."
             }
           }
         },
@@ -634,6 +642,32 @@
           "stop",
           "restart"
         ]
+      }
+    },
+    "writeExceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pattern",
+          "paths"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
       }
     }
   }

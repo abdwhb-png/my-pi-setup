@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { extensionConfigPath } from "../../_shared/config-loader.ts";
 
+import type { SandboxWriteException } from "../../_shared/sandbox-runtime/policy-contracts.ts";
+import { parseWriteExceptions } from "../../_shared/sandbox-runtime/write-exceptions.ts";
 import type { SelectedInstallation } from "../capabilities/installations.ts";
 
 import {
@@ -57,6 +59,7 @@ interface PiFilesystemConfig {
     denyRead: string[];
     allowWrite: string[];
     denyWrite: string[];
+    denyWriteExceptions?: SandboxWriteException[];
 }
 
 interface PiNetworkConfig {
@@ -482,6 +485,7 @@ export function validatePiSandboxConfig(
         "denyRead",
         "allowWrite",
         "denyWrite",
+        "denyWriteExceptions",
     ]);
     const normalizedFilesystem: PiFilesystemConfig = {
         allowRead:
@@ -494,6 +498,13 @@ export function validatePiSandboxConfig(
                 ? ["."]
                 : stringArray(filesystem.allowWrite, "filesystem.allowWrite"),
         denyWrite: stringArray(filesystem.denyWrite, "filesystem.denyWrite"),
+        ...(filesystem.denyWriteExceptions === undefined
+            ? {}
+            : {
+                  denyWriteExceptions: parseWriteExceptions(
+                      filesystem.denyWriteExceptions,
+                  ),
+              }),
     };
     validateExactPaths([
         ...normalizedFilesystem.allowRead,
@@ -837,6 +848,19 @@ function createShellPolicy(
                 ...fixedDeniedWriteRoots,
             ]),
             denyWriteGlobs: configuredDenyWrite.globs,
+            ...(input.config.filesystem.denyWriteExceptions?.length
+                ? {
+                      denyWriteExceptions:
+                          input.config.filesystem.denyWriteExceptions.map(
+                              (rule) => ({
+                                  pattern: expandHome(rule.pattern),
+                                  paths: rule.paths.map((path) =>
+                                      normalizePath(path, input.cwd),
+                                  ),
+                              }),
+                          ),
+                  }
+                : {}),
         },
         network: {
             mode:

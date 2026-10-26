@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { parseWriteExceptions } from "./write-exceptions.ts";
 
 import type { ExecutionProvenance } from "../execution-provenance/types.ts";
 import type {
@@ -14,6 +15,7 @@ import type {
     SandboxPolicy,
     SandboxProfileName,
     SandboxTcpPublication,
+    SandboxWriteException,
 } from "./policy-contracts.ts";
 
 export interface SandboxExecutionContextV1 {
@@ -26,6 +28,7 @@ export interface SandboxExecutionContextV1 {
         allowWrite: string[];
         denyWrite: string[];
         denyWriteGlobs: string[];
+        denyWriteExceptions?: SandboxWriteException[];
     };
     network: {
         mode: "deny-all" | "domain-allowlist";
@@ -289,15 +292,26 @@ function parseLegacySandboxExecutionContext(
         !stringArray(environment.deny)
     )
         return;
+    let writeExceptions: SandboxWriteException[];
+    try {
+        writeExceptions = parseWriteExceptions(filesystem.denyWriteExceptions);
+    } catch {
+        return;
+    }
     return {
         version: 1,
         profile: context.profile as SandboxProfileName,
-        filesystem: Object.fromEntries(
-            filesystemKeys.map((key) => [
-                key,
-                [...(filesystem[key] as string[])],
-            ]),
-        ) as SandboxExecutionContextV1["filesystem"],
+        filesystem: {
+            ...Object.fromEntries(
+                filesystemKeys.map((key) => [
+                    key,
+                    [...(filesystem[key] as string[])],
+                ]),
+            ),
+            ...(writeExceptions.length
+                ? { denyWriteExceptions: writeExceptions }
+                : {}),
+        } as SandboxExecutionContextV1["filesystem"],
         network: {
             mode: network.mode as SandboxExecutionContextV1["network"]["mode"],
             allow: [...network.allow],
@@ -714,6 +728,23 @@ export function createSandboxExecutionContext(
                 lease,
                 options.homeDir,
             ),
+            ...(policy.filesystem.denyWriteExceptions?.length
+                ? {
+                      denyWriteExceptions:
+                          policy.filesystem.denyWriteExceptions.map((rule) => ({
+                              pattern: aliasPath(
+                                  rule.pattern,
+                                  lease,
+                                  options.homeDir,
+                              ),
+                              paths: aliasPaths(
+                                  rule.paths,
+                                  lease,
+                                  options.homeDir,
+                              ),
+                          })),
+                  }
+                : {}),
         },
         network: {
             mode: policy.network.mode,

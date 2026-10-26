@@ -2,6 +2,12 @@
 
 Run `/sandbox` and `/sandbox doctor` in the project to inspect the resolved policy and runtime state. Correct the reported file or field before retrying an operation.
 
+### Development caches and observed write denials
+
+Vite compiles configuration into `node_modules/.vite-temp`; changing `TMPDIR` does not relocate that file. A blanket `node_modules/*` write denial therefore blocks startup even when no dependency is being modified. Use globally authorized, rule-scoped write-denial exceptions for the required generated directories.
+
+`bash` and `safe_bash` both follow the selected execution mode. Switching tool names does not select host execution. Failed shell results expose the observed mode in the execution receipt. After an admitted command fails, the shell can append up to three native write-denial diagnostics containing the path and responsible glob. These come from the protected engine status channel, not from interpreting `EACCES` text. Original command output and exit status are preserved, and a recorded denial does not establish that every failure in the command had that cause.
+
 ### Unexposed paths in shell errors
 
 After an admitted shell process exits with a nonzero code, `bash`, `safe_bash`, and `!s` can append a `Sandbox: <path> is outside the admitted read scope.` diagnostic to an absolute-path Bash `cd` or Node `Cannot find module` error. The original output and exit code are preserved. This reports a permission boundary, not proof that the path exists on the host or that the sandbox caused every error in the command.

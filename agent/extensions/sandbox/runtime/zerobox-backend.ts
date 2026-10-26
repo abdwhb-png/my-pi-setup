@@ -29,6 +29,8 @@ import {
     type SandboxDockerPolicy,
     type SandboxPolicy,
     type SandboxSpawnSpec,
+    type SandboxWriteException,
+    type SandboxWriteDenial,
 } from "./contracts.ts";
 import { assertPrivateRootDirectory } from "./private-temp.ts";
 import {
@@ -83,6 +85,7 @@ interface ZeroboxProfile {
     allow_write: string[];
     deny_write?: string[];
     deny_write_globs?: string[];
+    deny_write_exceptions?: SandboxWriteException[];
     allow_net?: string[];
     allow_host_net?: string[];
     deny_net?: string[];
@@ -175,6 +178,8 @@ function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
     if (policy.filesystem.denyWriteGlobs.length > 0) {
         profile.deny_write_globs = policy.filesystem.denyWriteGlobs;
     }
+    if (policy.filesystem.denyWriteExceptions?.length)
+        profile.deny_write_exceptions = policy.filesystem.denyWriteExceptions;
     if (policy.network.mode === "domain-allowlist") {
         if (policy.network.allow.length > 0) {
             profile.allow_net = policy.network.allow;
@@ -701,9 +706,12 @@ class ZeroboxBackend implements SandboxBackend {
             }
             const preparedStatusChannel = statusChannel;
             let admittedContext: SandboxExecutionContext | undefined;
+            const writeDenials: SandboxWriteDenial[] = [];
+            let admittedWriteGlobs: readonly string[] = [];
             return {
                 file: this.#binaryPath,
                 getSandboxContext: () => admittedContext,
+                getWriteDenials: () => writeDenials,
                 execution: {
                     status: "unknown",
                     profile: policy.name,
@@ -761,6 +769,24 @@ class ZeroboxBackend implements SandboxBackend {
                     void admission.catch(() => undefined);
                     const status = preparedStatusChannel.supervise({
                         version: 2,
+                        onWriteDenied: (denials) => {
+                            if (
+                                denials.some(
+                                    (denial) =>
+                                        !admittedWriteGlobs.includes(
+                                            denial.pattern,
+                                        ),
+                                )
+                            )
+                                throw new SandboxExecutionError(
+                                    "protocol-error",
+                                    {
+                                        diagnostic:
+                                            "Write denial references an unadmitted rule",
+                                    },
+                                );
+                            writeDenials.push(...denials);
+                        },
                         onAdmitted: async (sha256) => {
                             const receipt = await admission;
                             if (receipt.sha256 !== sha256)
@@ -786,6 +812,8 @@ class ZeroboxBackend implements SandboxBackend {
                                 },
                             );
                             await admissionChannel.acknowledge(receipt.sha256);
+                            admittedWriteGlobs =
+                                receipt.report.filesystem.denyWriteGlobs;
                             admittedContext =
                                 createAdmittedSandboxExecutionContext(
                                     receipt,

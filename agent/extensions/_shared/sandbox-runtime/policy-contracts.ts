@@ -43,6 +43,16 @@ export type SandboxDockerPolicy =
       }
     | { mode: "full"; endpoint: string };
 
+export interface SandboxWriteException {
+    pattern: string;
+    paths: string[];
+}
+
+export interface SandboxWriteDenial {
+    path: string;
+    pattern: string;
+}
+
 export interface SandboxFilesystemPolicy {
     allowRead: string[];
     denyRead: string[];
@@ -50,6 +60,7 @@ export interface SandboxFilesystemPolicy {
     allowWrite: string[];
     denyWrite: string[];
     denyWriteGlobs: string[];
+    denyWriteExceptions?: SandboxWriteException[];
 }
 
 export interface SandboxNetworkPolicy {

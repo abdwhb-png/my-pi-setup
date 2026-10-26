@@ -6,6 +6,7 @@ import {
 export type ShellToolName = "bash" | "safe_bash";
 
 const COMMON_GUIDELINES = [
+    "Both bash and safe_bash follow the selected execution mode. Switching tool names does not switch between sandbox and host execution.",
     "When a command targets another execution environment, resolve its executable paths and variables in that environment.",
     "Preserve intentional caller-side values explicitly. Do not assume that HOME or PATH is shared between execution environments.",
     "Use the current shell execution context to distinguish sandbox restrictions, command permission checks, and command failures. Never infer a sandbox denial from a command failure alone.",

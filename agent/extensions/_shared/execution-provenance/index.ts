@@ -381,6 +381,11 @@ export function addExecutionContext(
             };
         }
         const execution = resolveExecution(message.toolCallId, details);
+        const shellMode =
+            message.isError &&
+            (message.toolName === "bash" || message.toolName === "safe_bash")
+                ? `\nShell execution mode: ${execution.mode ?? "unconfirmed"}`
+                : "";
         return {
             ...message,
             details: wireDetails({
@@ -391,7 +396,7 @@ export function addExecutionContext(
                 ...message.content,
                 {
                     type: "text" as const,
-                    text: `Tool result: ${message.isError ? "failed" : "succeeded"}\nExecution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
+                    text: `Tool result: ${message.isError ? "failed" : "succeeded"}${shellMode}\nExecution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
                 },
             ],
         };

@@ -2,12 +2,14 @@ import {
     parseSandboxExecutionContext,
     type SandboxExecutionContext,
 } from "../sandbox-runtime/execution-context.ts";
+import type { SandboxWriteDenial } from "../sandbox-runtime/policy-contracts.ts";
 import { sandboxPathDiagnostic } from "./path-diagnostic.ts";
 
 /** Explain recognized loader failures without resolving libraries on the host. */
 export function sandboxShellDiagnostic(
     output: string,
     value: SandboxExecutionContext | undefined,
+    writeDenials: readonly SandboxWriteDenial[] = [],
 ): string | undefined {
     const context = parseSandboxExecutionContext(value);
     if (context?.version !== 3 || context.profile !== "bash-general")
@@ -15,6 +17,10 @@ export function sandboxShellDiagnostic(
     const diagnostics = [sandboxPathDiagnostic(output, context)].filter(
         (diagnostic) => diagnostic !== undefined,
     );
+    for (const denial of writeDenials)
+        diagnostics.push(
+            `Sandbox (mode=sandbox): write denied for ${JSON.stringify(denial.path)} by ${JSON.stringify(denial.pattern)}.`,
+        );
     const libraries = new Set<string>();
     for (const line of output.split("\n")) {
         const library =

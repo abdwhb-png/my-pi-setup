@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
 
+import type { SandboxWriteDenial } from "../../_shared/sandbox-runtime/policy-contracts.ts";
 import { SandboxExecutionError } from "./contracts.ts";
 
 export const MAX_STATUS_LINE_BYTES = 16_384;
@@ -32,6 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export interface ZeroboxStatusOptions {
     version?: 1 | 2;
     onAdmitted?: (sha256: string) => void | Promise<void>;
+    onWriteDenied?: (denials: SandboxWriteDenial[]) => void;
 }
 
 export function superviseZeroboxStatusStream(
@@ -173,6 +175,38 @@ export function superviseZeroboxStatusStream(
             ) {
                 failProtocol(new Error("Invalid child_exit event"));
                 return;
+            }
+            if (value.write_denials !== undefined) {
+                if (
+                    options.version !== 2 ||
+                    !admitted ||
+                    !Array.isArray(value.write_denials) ||
+                    value.write_denials.length > 3
+                ) {
+                    failProtocol(new Error("Invalid write denial metadata"));
+                    return;
+                }
+                const denials: SandboxWriteDenial[] = [];
+                for (const entry of value.write_denials) {
+                    if (
+                        !isRecord(entry) ||
+                        typeof entry.path !== "string" ||
+                        !entry.path.startsWith("/") ||
+                        typeof entry.pattern !== "string" ||
+                        !entry.pattern ||
+                        /[\x00-\x1f\x7f]/.test(entry.path + entry.pattern)
+                    ) {
+                        failProtocol(
+                            new Error("Invalid write denial metadata"),
+                        );
+                        return;
+                    }
+                    denials.push({ path: entry.path, pattern: entry.pattern });
+                }
+                admissionValidation = admissionValidation.then(() =>
+                    options.onWriteDenied?.(denials),
+                );
+                void admissionValidation.catch(failProtocol);
             }
             terminal = true;
             return;

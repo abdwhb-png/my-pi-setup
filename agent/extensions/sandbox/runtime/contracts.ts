@@ -12,6 +12,7 @@ import type { SandboxExecutionContext } from "../../_shared/sandbox-runtime/exec
 import type {
     SandboxLeasePaths,
     SandboxPolicy,
+    SandboxWriteDenial,
 } from "../../_shared/sandbox-runtime/policy-contracts.ts";
 
 export * from "../../_shared/sandbox-runtime/policy-contracts.ts";
@@ -40,6 +41,7 @@ export interface SandboxSpawnSpec {
     execution?: ExecutionProvenance;
     sandboxContext?: SandboxExecutionContext;
     getSandboxContext?: () => SandboxExecutionContext | undefined;
+    getWriteDenials?: () => readonly SandboxWriteDenial[];
     file: string;
     args: string[];
     cwd: string;

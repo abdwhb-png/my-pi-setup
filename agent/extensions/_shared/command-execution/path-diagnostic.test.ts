@@ -112,6 +112,14 @@ function annotate(output: string, context?: SandboxExecutionContext) {
     return sandboxShellDiagnostic(output, context);
 }
 
+test("reports a native write denial without interpreting error text as permission evidence", () => {
+    const context = admitted();
+    const denied = {path:"/workspace/node_modules/pkg/index.js",pattern:"/workspace/node_modules/*"};
+    expect(sandboxShellDiagnostic("EACCES",context,[denied])).toContain('Sandbox (mode=sandbox): write denied for "/workspace/node_modules/pkg/index.js"');
+    expect(sandboxShellDiagnostic("EACCES",context)).toBeUndefined();
+    expect(sandboxShellDiagnostic("EACCES",undefined,[denied])).toBeUndefined();
+});
+
 async function execute(
     settings: {
         context?: SandboxExecutionContext | null;

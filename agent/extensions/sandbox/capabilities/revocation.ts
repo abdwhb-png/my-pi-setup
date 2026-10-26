@@ -61,6 +61,20 @@ export function sandboxAccessRemoved(
     const oldWrite = paths(previous.filesystem.allowWrite, cwd),
         newWrite = paths(next.filesystem.allowWrite, cwd);
     if (
+        previous.filesystem.denyWriteExceptions?.some((rule) => {
+            const nextPaths =
+                next.filesystem.denyWriteExceptions?.find(
+                    (current) => current.pattern === rule.pattern,
+                )?.paths ?? [];
+            return removed(
+                paths(rule.paths, cwd),
+                paths(nextPaths, cwd),
+                (old, current) => contains(current, old),
+            );
+        })
+    )
+        return true;
+    if (
         removed(oldRead, newRead, (old, current) => contains(current, old)) ||
         removed(oldWrite, newWrite, (old, current) => contains(current, old)) ||
         newRelevantDeny(
