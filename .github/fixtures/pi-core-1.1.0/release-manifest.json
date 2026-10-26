@@ -1,0 +1,88 @@
+{
+	"schemaVersion": 1,
+	"source": {
+		"repository": "/tmp/pi-core-v1.1.0-candidate",
+		"commit": "00c5e7e300baf77ea05c78fabac625b213e7a578",
+		"dirty": true
+	},
+	"packages": [
+		{
+			"name": "@earendil-works/chord",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-chord-1.1.0-82c1f329fc90.tgz",
+			"sha256": "517da429e6ac7c65febafb99a514ec8a70c2bbe94e412bd3a6f6a9c650a14712"
+		},
+		{
+			"name": "@earendil-works/pi-agent-core",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-agent-core-1.1.0-697d4a66898d.tgz",
+			"sha256": "09c9b2865ec592990ceb57bd0d117b1d67d04453530b80973d9d5518f2d18c16"
+		},
+		{
+			"name": "@earendil-works/pi-ai",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-ai-1.1.0-afce56ee28b0.tgz",
+			"sha256": "64bc2c72e470c74594f9030ef40bf0908f082369af68ba32c8e2035645d48407"
+		},
+		{
+			"name": "@earendil-works/pi-client",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-client-1.1.0-14046cbbb34f.tgz",
+			"sha256": "fc1a7f082c495285dc575169fe762eaff81e3bdf2802f5badadc4ca37f2d9f70"
+		},
+		{
+			"name": "@earendil-works/pi-codemode",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-codemode-1.1.0-f00b1cd80ce1.tgz",
+			"sha256": "0676eeaf714297c281c2fe88a6ffdf8c133f4620f6a5a44fc5a5cac3f5cffac0"
+		},
+		{
+			"name": "@earendil-works/pi-coding-agent",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-coding-agent-1.1.0-b11c77b5f479.tgz",
+			"sha256": "2588d19adb8959c143f770e3aee46f4979834b03ef6e46d72808546b77f794ae"
+		},
+		{
+			"name": "@earendil-works/pi-durable",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-durable-1.1.0-36db81dd1636.tgz",
+			"sha256": "a0f95b4a418e8bc219e9cbde06baedada940c62c47068829208e4fff278c07be"
+		},
+		{
+			"name": "@earendil-works/pi-env",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-env-1.1.0-e1dbe74069c2.tgz",
+			"sha256": "fac06658d2a3acc47e234f4a31f482bfdc8a8ef785a01bdb0a780d8fa77ab8aa"
+		},
+		{
+			"name": "@earendil-works/pi-mcp",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-mcp-1.1.0-c462b0beedd2.tgz",
+			"sha256": "b9d6cab56ace2f255ceac53f976bc1230ddba0d4eeebf051825d0cdb4969e6f1"
+		},
+		{
+			"name": "@earendil-works/pi-protocol",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-protocol-1.1.0-5cc6483897aa.tgz",
+			"sha256": "9768dc6c5e00f8bab9e533f5559f85a47f4ea9de43fc9290261a7a65a17ff570"
+		},
+		{
+			"name": "@earendil-works/pi-server",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-server-1.1.0-2fbc8c56d05e.tgz",
+			"sha256": "4a96abb00b7f8f2ceee1aba0b85a4b222a84c7748802b984e12554bad3dd5450"
+		},
+		{
+			"name": "@earendil-works/pi-telemetry",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-telemetry-1.1.0-f2000ad39ff6.tgz",
+			"sha256": "fe6b7c399a444757128aa9a330e8b0e9efd1266aa8b52022d4cf2cd5118a3af3"
+		},
+		{
+			"name": "@earendil-works/pi-tui",
+			"version": "1.1.0",
+			"tarball": "tarballs/earendil-works-pi-tui-1.1.0-ff89da4c9b05.tgz",
+			"sha256": "74295ae46f86e9928ab4ae9e37e0c76de0f57a3d9e9738c511aa874f28cdbc0e"
+		}
+	]
+}

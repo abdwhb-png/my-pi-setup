@@ -23,16 +23,6 @@ jobs:
           path: projects/zerobox
       - uses: actions/checkout@v4
         with:
-          repository: abdwhb-png/pi
-          ref: 00c5e7e300baf77ea05c78fabac625b213e7a578
-          path: engineering/pi-core
-      - uses: actions/checkout@v4
-        with:
-          repository: abdwhb-png/pi-test-harness
-          ref: e4bacb0cb344a9d24663242c38171599c5d18f3e
-          path: engineering/pi-integrations/pi-test-harness
-      - uses: actions/checkout@v4
-        with:
           repository: abdwhb-png/pi-fancy-footer
           ref: 53e304c7695b5b3e9e1d01ac456ed342432b9169
           path: engineering/pi-integrations/pi-fancy-footer
@@ -88,62 +78,14 @@ jobs:
           fi
           npm install --global --ignore-scripts --no-audit --no-fund sfw@2.0.6
           sfw --version
-      - name: Restore the exact Pi and test harness sources
+      - name: Restore the frozen daily Pi packages
         env:
           npm_config_ignore_scripts: "true"
           npm_config_allow_git: none
         run: |
           set -euo pipefail
-          cd engineering/pi-core
-          sfw npm ci
-          # This immutable generated data comes from the locally validated
-          # Pi-core 0.87.1 release. The fork does not track generated shards.
-          model_data=../../.pi/.github/fixtures/pi-ai-model-data-0.87.1.tar.gz
-          echo "218961ebfec6b64e7d764c4d7575316b1f10cd0cf9f564c1c26ed2f58e782dcf  $model_data" | sha256sum -c -
-          tar -xzf "$model_data" -C packages/ai/src/providers
-          npm run build:offline
-          pi_tarball_root=$(node -e 'const path = require("node:path"); const manifest = require("../../.pi/agent/package.json"); const spec = manifest.dependencies["@earendil-works/pi-coding-agent"]; process.stdout.write(path.dirname(path.resolve("../../.pi/agent", spec.slice("file:".length))))')
-          mkdir -p "$pi_tarball_root"
-          node -e 'const manifest = require("../../.pi/agent/package.json"); console.log(Object.keys(manifest.dependencies).filter((name) => name.startsWith("@earendil-works/")).sort().join("\n"))' > "$RUNNER_TEMP/pi-package-names"
-          while IFS= read -r pi_package; do
-            sfw npm pack --workspace "$pi_package" --pack-destination "$pi_tarball_root" --ignore-scripts
-          done < "$RUNNER_TEMP/pi-package-names"
-          python3 - <<'PY'
-          from base64 import b64encode
-          from hashlib import sha512
-          import json
-          from pathlib import Path
-          import re
-
-          agent_root = Path("../../.pi/agent").resolve()
-          manifest = json.loads((agent_root / "package.json").read_text())
-          lock_path = agent_root / "bun.lock"
-          lines = lock_path.read_text().splitlines()
-          for name, spec in manifest["dependencies"].items():
-              if not name.startswith("@earendil-works/") or not isinstance(spec, str) or not spec.startswith("file:"):
-                  continue
-              resolution = name + "@" + spec.removeprefix("file:")
-              prefix = f"    {json.dumps(name)}: [{json.dumps(resolution)},"
-              indexes = [index for index, line in enumerate(lines) if line.startswith(prefix)]
-              if len(indexes) != 1:
-                  raise RuntimeError(f"Expected one lock entry for {name}, found {len(indexes)}")
-              tarball = (agent_root / spec.removeprefix("file:")).resolve()
-              integrity = "sha512-" + b64encode(sha512(tarball.read_bytes()).digest()).decode()
-              index = indexes[0]
-              updated, count = re.subn(r'"sha512-[A-Za-z0-9+/=]+"\],$', json.dumps(integrity) + "],", lines[index])
-              if count != 1:
-                  raise RuntimeError(f"Lock entry has no terminal integrity for {name}")
-              lines[index] = updated
-          lock_path.write_text("\n".join(lines) + "\n")
-          PY
-          cd ../pi-integrations/pi-test-harness
-          sfw npm ci
-          npm run build
-          test_harness_tarball="$GITHUB_WORKSPACE/.pi/runtime/pi-test-harness/releases/0.8.1-fork.2-e4bacb0/pi-test-harness-0.8.1-fork.2.tgz"
-          mkdir -p "$(dirname "$test_harness_tarball")"
-          cp dist/package.tgz "$test_harness_tarball"
-          echo "804e893a5b1452a41585a877f2060ea7f0a7164566df865865c13ca26c911c2e27eee3ca8e3da3795613a4425d79a3098cacea28b26a1086359a67a857ef7f1f  $test_harness_tarball" | sha512sum -c -
-          cd ../pi-fancy-footer
+          python3 .pi/.github/scripts/restore-pi-runtime.py --agent-root .pi/agent --fixture-root .pi/.github/fixtures/pi-core-1.1.0
+          cd engineering/pi-integrations/pi-fancy-footer
           sfw npm ci --ignore-scripts --no-audit --no-fund
           cd ../pi-mcp-adapter
           sfw npm ci --ignore-scripts --no-audit --no-fund
