@@ -62,6 +62,14 @@ test("rejects a cache directory redirected into installed dependencies", () => {
     expect(f.load).toThrow("redirected");
 });
 
+test("projects can disable inherited exceptions before redirected cache paths are validated", () => {
+    const f = fixture();
+    mkdirSync(join(f.project, "node_modules/.pnpm"), { recursive: true });
+    symlinkSync(".pnpm", join(f.project, "node_modules/.vite"));
+    writeFileSync(f.projectPath, JSON.stringify({ filesystem: { denyWriteExceptions: [] } }));
+    expect(f.load().config.filesystem.denyWriteExceptions ?? []).toEqual([]);
+});
+
 test("exceptions require existing write authority and a referenced denial", () => {
     const f = fixture();
     const global = JSON.parse(readFileSync(f.globalPath, "utf8"));

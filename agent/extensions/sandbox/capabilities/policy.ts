@@ -103,15 +103,9 @@ function canonicalLayer(
             layer.filesystem.denyWriteExceptions,
         ).map((rule) => ({
             pattern: canonicalDenyPath(rule.pattern, root),
-            paths: rule.paths.map((path) => {
-                const logical = resolve(root, expandShellPathEntry(path));
-                const canonical = canonicalPotentialPath(logical);
-                if (logical !== canonical)
-                    throw new Error(
-                        "filesystem.denyWriteExceptions cannot use redirected paths",
-                    );
-                return canonical;
-            }),
+            paths: rule.paths.map((path) =>
+                resolve(root, expandShellPathEntry(path)),
+            ),
         }));
     }
     const resources =
@@ -809,6 +803,10 @@ function mergeLayers(input: ShellPolicyInput): {
         writeExceptions = selected;
     }
     for (const rule of writeExceptions) {
+        if (rule.paths.some((path) => canonicalPotentialPath(path) !== path))
+            throw new Error(
+                "filesystem.denyWriteExceptions cannot use redirected paths",
+            );
         if (!deny("denyWrite").includes(rule.pattern))
             throw new Error(
                 "filesystem.denyWriteExceptions must reference an existing denial glob",
