@@ -37,6 +37,15 @@ const sandboxContext: SandboxExecutionContextV1 = {
 };
 
 describe("analysis protocol", () => {
+    it("preserves only closed error classes in failed host responses", () => {
+        const base = { ok: false as const, error: "technical diagnostic" };
+        expect(parseAnalysisHostResponse({ ...base, errorClass: "SyntaxError" }))
+            .toEqual({ ...base, errorClass: "SyntaxError" });
+        for (const errorClass of [undefined, "SECRET_SOURCE", "constructor", { name: "SyntaxError" }]) {
+            expect(parseAnalysisHostResponse({ ...base, errorClass })).toEqual(base);
+        }
+    });
+
     it("maps languages to fixed workers and downward-clamps limits", () => {
         const javascript = normalizeAnalysisRequest({
             id: "call-1",

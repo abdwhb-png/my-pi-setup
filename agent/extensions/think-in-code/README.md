@@ -146,13 +146,9 @@ with code 1"`, etc.).
   extension caches. Their public message reaches the terminal JSON payload;
   their bounded technical cause remains local telemetry only.
 
-Analyzer failures (QuickJS / Python worker errors) are routed through
-a dedicated `analyzerFailureReason(error, language)` helper that
-returns a bounded reason. The production path always observes
-`error.name === "Error"` because `client.ts` wraps every host
-failure as `new Error(...)`, so the model sees e.g.
-`"Analysis failed (python)"` or `"Analysis failed (javascript)"`.
-The helper never copies `error.message` verbatim, so a
+Analyzer failures return a bounded, static English reason. QuickJS worker and host failure responses optionally carry `errorClass`, restricted to `SyntaxError`, `ReferenceError`, `TypeError`, `RangeError`, `EvalError`, `URIError`, `InternalError`, or `Error`. The host and client validate this metadata and carry it through the branded shared `AnalysisExecutionError` contract. Think includes the class in its public error payload and reason, for example `"Analysis failed (javascript: SyntaxError)"`. Unknown classes, arbitrary error names, and unbranded properties are ignored. Older runtime responses and Python errors retain generic reasons such as `"Analysis failed (python)"`; Python's installed engine does not expose a structured exception class.
+
+The renderer shows the safe reason and recovery in the collapsed view. Fixed interface text is English; user source text and derivations retain their original language. The helper never copies `error.message` verbatim, so a
 `throw new Error(FILE_CONTENT)` program or a `throw new Error(INPUT)`
 program cannot exfiltrate raw binding values through content text,
 `details.items[].error`, the analyzer `INPUTS` binding, or any indexed search
@@ -225,6 +221,21 @@ Bindings are action-specific and frozen:
 - `ARCHIVE_IDS` and caller-supplied string bindings remain available.
 
 The analyzers expose no `fetch`, `process`, or filesystem globals.
+
+For a standalone calculation, supply empty source content instead of a task label:
+
+```json
+{
+  "action": "content",
+  "content": "",
+  "language": "javascript",
+  "program": "export default 1 + 2;"
+}
+```
+
+`content` is the source string exposed through `INPUT`, not a description of the task. Empty content requires no new action and does not bypass source-echo protection. A successful calculation proves the submitted computation ran; it does not establish that hardcoded values match current project files or rendered browser state.
+
+QuickJS workers ship inside the sealed Sandbox runtime. Source edits require rebuilding and qualifying that runtime before the daily installation receives structured diagnostics. New host and Think code accepts older responses without `errorClass`; do not modify a promoted release in place.
 
 The `description` field on each schema is the source of truth; LLM
 tool planners see it directly.

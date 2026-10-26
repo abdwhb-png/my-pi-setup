@@ -41,6 +41,7 @@ created by `think_execute` and cannot persist model-authored text.
 Every normal `think_execute` result exposes status, byte counts, archive IDs,
 and `indexStatus` in its first `content` block. Terminal execution and artifact
 search failures throw safe structured errors so Pi reports `isError:true`.
+Analysis failures optionally expose a validated, closed `errorClass` from the QuickJS worker through the shared runtime protocol. The model receives a static reason, never raw guest error text, stack traces, or source excerpts. Older worker responses and the current Python engine retain generic diagnostics. Worker changes are delivered through a rebuilt and qualified sealed Sandbox runtime.
 Direct source echoes are rejected before analysis output can be archived,
 indexed, or returned. Archives, indexed documents, session receipts, and
 snapshots share the same 24-hour retention boundary. Post-compaction restore is

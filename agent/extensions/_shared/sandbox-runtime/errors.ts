@@ -39,6 +39,51 @@ const VALID_SANDBOX_ERROR_CODES: ReadonlySet<string> = new Set(
 );
 type OpaqueFailure = ErrorOptions["cause"];
 
+const ANALYSIS_ERROR_CLASSES = [
+    "SyntaxError",
+    "ReferenceError",
+    "TypeError",
+    "RangeError",
+    "EvalError",
+    "URIError",
+    "InternalError",
+    "Error",
+] as const;
+export type AnalysisErrorClass = (typeof ANALYSIS_ERROR_CLASSES)[number];
+const ANALYSIS_ERROR_BRAND = Symbol.for(
+    "pi.sandbox-runtime.AnalysisExecutionError.v1",
+);
+
+export function parseAnalysisErrorClass(
+    value: OpaqueFailure,
+): AnalysisErrorClass | undefined {
+    return ANALYSIS_ERROR_CLASSES.find((name) => name === value);
+}
+
+/** Only the closed engine error class may cross the model-facing boundary. */
+export class AnalysisExecutionError extends Error {
+    readonly errorClass: AnalysisErrorClass;
+
+    constructor(errorClass: AnalysisErrorClass, diagnostic: string) {
+        super(diagnostic);
+        this.name = "AnalysisExecutionError";
+        this.errorClass = errorClass;
+        Object.defineProperty(this, ANALYSIS_ERROR_BRAND, { value: true });
+    }
+}
+
+export function analysisErrorClassFromError(
+    error: OpaqueFailure,
+): AnalysisErrorClass | undefined {
+    if (
+        typeof error !== "object" ||
+        error === null ||
+        Reflect.get(error, ANALYSIS_ERROR_BRAND) !== true
+    )
+        return undefined;
+    return parseAnalysisErrorClass(Reflect.get(error, "errorClass"));
+}
+
 export function sandboxErrorMessage(code: SandboxErrorCode): string {
     return PUBLIC_ERROR_MESSAGES[code];
 }

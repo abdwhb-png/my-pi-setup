@@ -17,6 +17,23 @@ function rendered(component: { render(width: number): string[] }): string {
 }
 
 describe("Think TUI rendering", () => {
+    it("keeps derived prose unchanged while rendering English interface text", () => {
+        const output = rendered(renderThinkArtifactSearchResult({
+            content: [{ type: "text", text: "Résultat conservé en français" }],
+        }, { expanded: true }, theme, {}, 24));
+        expect(output).toContain("artifact search");
+        expect(output).toContain("Résultat conservé en français");
+        expect(rendered(renderThinkExecuteResult({ content: [] }, { expanded: false }, theme, {}, 24)))
+            .toContain("Unreadable Think result");
+        expect(rendered(renderThinkArtifactSearchResult({ content: [] }, { expanded: true }, theme, {}, 24)))
+            .toContain("No readable result");
+    });
+
+    it("uses an English notice when the displayed program is bounded", () => {
+        expect(rendered(renderThinkExecuteCall({ action: "content", language: "javascript", program: "x".repeat(300) }, theme, {})))
+            .toContain("120 characters hidden");
+    });
+
     it("shows compact execution metadata from content without details", () => {
         const component = renderThinkExecuteResult(
             {
@@ -49,9 +66,9 @@ describe("Think TUI rendering", () => {
 
         const output = rendered(component);
         expect(output).toContain("partial · batch · batch 2/3");
-        expect(output).toContain("2.0 Kio → 512 o");
-        expect(output).toContain("2 archives · indexé · expiration ≤24h");
-        expect(output).toContain("tronqué");
+        expect(output).toContain("2.0 KiB → 512 B");
+        expect(output).toContain("2 archives · indexed · expiration ≤24h");
+        expect(output).toContain("truncated");
         expect(output).not.toContain("bounded derivation");
     });
 
@@ -115,7 +132,7 @@ describe("Think TUI rendering", () => {
             24,
         );
 
-        expect(rendered(component)).toContain("indexation échouée");
+        expect(rendered(component)).toContain("indexing failed");
     });
 
     it("does not claim indexing succeeded for a legacy header", () => {
@@ -144,8 +161,8 @@ describe("Think TUI rendering", () => {
         );
 
         const output = rendered(component);
-        expect(output).toContain("indexation inconnue");
-        expect(output).not.toContain("· indexé ·");
+        expect(output).toContain("indexing unknown");
+        expect(output).not.toContain("· indexed ·");
     });
 
     it("shows artifact-search failures as errors", () => {
@@ -173,13 +190,13 @@ describe("Think TUI rendering", () => {
 
         const output = rendered(component);
         expect(output).toContain(
-            "✗ recherche d’artefacts · artifact-search-failed",
+            "✗ artifact search · artifact-search-failed",
         );
-        expect(output).toContain("récupération: repair_store");
-        expect(output).not.toContain("✓ recherche");
+        expect(output).toContain("recovery: repair_store");
+        expect(output).not.toContain("✓ artifact search");
     });
 
-    it("shows safe error code and recovery without details", () => {
+    it("shows safe error reason and recovery in the collapsed view", () => {
         const component = renderThinkExecuteResult(
             {
                 content: [
@@ -197,7 +214,7 @@ describe("Think TUI rendering", () => {
                     },
                 ],
             },
-            { expanded: true },
+            { expanded: false },
             theme,
             {},
             24,
@@ -205,7 +222,7 @@ describe("Think TUI rendering", () => {
 
         const output = rendered(component);
         expect(output).toContain("error · command · source · setup-failed");
-        expect(output).toContain("récupération: restore_sandbox");
+        expect(output).toContain("recovery: restore_sandbox");
         expect(output).toContain("Sandbox unavailable");
     });
 
@@ -223,7 +240,7 @@ describe("Think TUI rendering", () => {
 
         const output = rendered(component);
         expect(output).toContain("Think Execute · content");
-        expect(output).toContain("analyseur: python");
+        expect(output).toContain("analyzer: python");
         expect(output).toContain("result = len(INPUT)");
         expect(output).not.toContain("RAW_SECRET_SOURCE");
     });

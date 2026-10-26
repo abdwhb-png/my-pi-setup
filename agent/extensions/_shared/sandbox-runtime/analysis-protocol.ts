@@ -3,6 +3,7 @@ import {
     parseExecutionProvenance,
     type ExecutionProvenance,
 } from "../execution-provenance/index.ts";
+import { parseAnalysisErrorClass, type AnalysisErrorClass } from "./errors.ts";
 import {
     parseSandboxExecutionContext,
     type SandboxExecutionContext,
@@ -100,6 +101,7 @@ export type AnalysisHostResponse =
     | {
           ok: false;
           error: string;
+          errorClass?: AnalysisErrorClass;
           execution?: ExecutionProvenance;
           sandboxContext?: SandboxExecutionContext;
       };
@@ -112,9 +114,11 @@ export function parseAnalysisHostResponse(
     }
     const response = value as Record<string, unknown>;
     if (response.ok === false && typeof response.error === "string") {
+        const errorClass = parseAnalysisErrorClass(response.errorClass);
         return {
             ok: false,
             error: response.error,
+            ...(errorClass ? { errorClass } : {}),
             ...(parseExecutionProvenance(response.execution)
                 ? { execution: parseExecutionProvenance(response.execution) }
                 : {}),

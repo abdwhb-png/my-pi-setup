@@ -207,13 +207,14 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Derive a bounded result from command output, a project file, inline content, prior Think archives, or up to 16 command outputs without placing the raw source in model context. Use it when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed. Normal results contain a compact JSON status header, including indexStatus, followed by the bounded derivation. Direct source echoes and terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files or as general memory. Produced derivations are indexed temporarily for artifact search.",
+                'Derive a bounded result from command output, a project file, inline content, prior Think archives, or up to 16 command outputs without placing the raw source in model context. Use it when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed. For standalone calculations, use action="content", content="", program="export default 1 + 2;". Normal results contain a compact JSON status header, including indexStatus, followed by the bounded derivation. Direct source echoes and terminal failures set isError and return a safe JSON code, reason, recovery, and optional validated errorClass. Never use it to edit files or as general memory. Produced derivations are indexed temporarily for artifact search.',
             promptSnippet:
                 "Derive a bounded result without placing the raw source in context",
             promptGuidelines: [
                 "Use think_execute when only a bounded derivation is needed from source data, such as filtering, extraction, aggregation, comparison, or summarization.",
                 "Keep native tools as the natural choice when their exact output must be observed, edited, or reused directly.",
                 "Treat expected source size as a secondary signal for context savings, not as a threshold or the definition of think_execute.",
+                'For standalone calculations, use action="content" and content=""; content supplies INPUT data, not a task label.',
             ],
             parameters: schemas.execute,
             renderCall: renderThinkExecuteCall,

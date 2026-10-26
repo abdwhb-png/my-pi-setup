@@ -3,6 +3,8 @@ import { createJiti } from "jiti";
 import { pathToFileURL } from "node:url";
 
 import {
+    AnalysisExecutionError,
+    analysisErrorClassFromError,
     SANDBOX_ERROR_CODES,
     SandboxExecutionError,
     isSandboxExecutionError,
@@ -16,6 +18,18 @@ function loadErrorsModule() {
 }
 
 describe("shared sandbox execution errors", () => {
+    it("validates analysis classes across separate extension caches", () => {
+        const loaderA = loadErrorsModule();
+        const loaderB = loadErrorsModule();
+        const ErrorA = loaderA.AnalysisExecutionError as typeof AnalysisExecutionError;
+        const readB = loaderB.analysisErrorClassFromError as typeof analysisErrorClassFromError;
+        expect(readB(new ErrorA("SyntaxError", "private diagnostic"))).toBe("SyntaxError");
+        expect(readB(Object.assign(new Error("SyntaxError"), { errorClass: "SyntaxError" }))).toBeUndefined();
+        const forged = Object.assign(new Error("private"), { errorClass: "SECRET_SOURCE" });
+        Object.defineProperty(forged, Symbol.for("pi.sandbox-runtime.AnalysisExecutionError.v1"), { value: true });
+        expect(readB(forged)).toBeUndefined();
+    });
+
     it("publishes a closed safe code and message contract", () => {
         for (const code of SANDBOX_ERROR_CODES) {
             const cause = new Error(`technical secret for ${code}`);

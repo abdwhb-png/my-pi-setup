@@ -1,5 +1,9 @@
 import { parseExecutionProvenance } from "../_shared/execution-provenance/index.ts";
 import { redactTextPreservingContext } from "../_shared/redaction.ts";
+import {
+    parseAnalysisErrorClass,
+    type AnalysisErrorClass,
+} from "../_shared/sandbox-runtime/index.ts";
 import type { ThinkExecutionProvenance } from "./execution-provenance.ts";
 
 import type { ThinkExecuteAction } from "./types.ts";
@@ -39,6 +43,7 @@ export interface ThinkFailurePayload extends Partial<ThinkExecutionProvenance> {
     code: string;
     reason: string;
     recovery: ThinkRecovery;
+    errorClass?: AnalysisErrorClass;
 }
 
 export interface ThinkArtifactSearchFailurePayload {
@@ -68,6 +73,7 @@ export function createThinkExecuteContent(
 export function createThinkExecutionError(
     input: Omit<ThinkFailurePayload, "tool" | "status">,
 ): Error {
+    const errorClass = parseAnalysisErrorClass(input.errorClass);
     const payload: ThinkFailurePayload = {
         tool: "think_execute",
         status: "error",
@@ -76,6 +82,7 @@ export function createThinkExecutionError(
         code: input.code.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
         reason: redactTextPreservingContext(input.reason, { maxLength: 512 }),
         recovery: input.recovery,
+        ...(errorClass ? { errorClass } : {}),
     };
     const error = new Error(JSON.stringify(payload));
     error.name = "ThinkExecutionError";
@@ -242,6 +249,9 @@ export function parseThinkFailurePayload(
     const code = Reflect.get(parsed, "code");
     const reason = Reflect.get(parsed, "reason");
     const recovery = Reflect.get(parsed, "recovery");
+    const errorClass = parseAnalysisErrorClass(
+        Reflect.get(parsed, "errorClass"),
+    );
     if (
         tool !== "think_execute" ||
         status !== "error" ||
@@ -253,7 +263,16 @@ export function parseThinkFailurePayload(
     ) {
         return undefined;
     }
-    return { tool, status, action, stage, code, reason, recovery };
+    return {
+        tool,
+        status,
+        action,
+        stage,
+        code,
+        reason,
+        recovery,
+        ...(errorClass ? { errorClass } : {}),
+    };
 }
 
 function firstText(content: OpaqueValue): string | undefined {

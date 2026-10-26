@@ -11,6 +11,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type { ZeroboxInputChannel } from "../runtime/status-channel.ts";
+import { analysisErrorClassFromError } from "../../_shared/sandbox-runtime/errors.ts";
 
 import {
     appendAnalysisHostShutdownFailure,
@@ -114,6 +115,35 @@ function dependencies() {
 }
 
 describe("analysis sandbox host", () => {
+    it.each([undefined, "SECRET_SOURCE", { name: "SyntaxError" }])("drops invalid or absent worker error metadata: %j", async (errorClass) => {
+        const harness = dependencies();
+        harness.runChild.mockImplementationOnce(async () => ({
+            stdout: JSON.stringify({ ok: false, error: "legacy diagnostic", errorClass }),
+            stderr: "", exitCode: 0, truncated: false,
+        }));
+        let failure: unknown;
+        try {
+            await executeAnalysisHostRequest(normalizeAnalysisRequest({
+                id: "legacy-error", language: "javascript", program: "export default 1;",
+            }), harness.deps);
+        } catch (error) { failure = error; }
+        expect(failure).toBeInstanceOf(Error);
+        expect(analysisErrorClassFromError(failure)).toBeUndefined();
+        expect(failure).not.toHaveProperty("errorClass");
+    });
+
+    it("preserves a validated worker error class on the host failure", async () => {
+        const harness = dependencies();
+        harness.runChild.mockImplementationOnce(async () => ({
+            stdout: JSON.stringify({ ok: false, error: "SyntaxError: unexpected character", errorClass: "SyntaxError" }),
+            stderr: "", exitCode: 0, truncated: false,
+        }));
+        await expect(executeAnalysisHostRequest(normalizeAnalysisRequest({
+            id: "syntax-failure", language: "javascript", program: "export default 1 ≤ 2;",
+        }), harness.deps)).rejects.toHaveProperty("errorClass", "SyntaxError");
+        expect(harness.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it("uses a fixed structured command and keeps model data off argv", async () => {
         const harness = dependencies();
         const secret = "never-put-this-in-the-command";

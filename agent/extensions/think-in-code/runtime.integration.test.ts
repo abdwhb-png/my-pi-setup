@@ -49,6 +49,7 @@ import {
     publishSandboxRuntime,
     releaseSandboxRuntime,
     SandboxExecutionError,
+    AnalysisExecutionError,
     type AnalysisSandboxPort,
 } from "../_shared/sandbox-runtime/index.ts";
 import type {
@@ -266,6 +267,33 @@ afterEach(async () => {
 });
 
 describe("think-in-code real Pi runtime wiring", () => {
+    it("emits isError with a safe analysis category through the registered tool", async () => {
+        const state = makeBrokerState();
+        state.analysis = {
+            run: async () => { throw new AnalysisExecutionError("SyntaxError", "SyntaxError: RAW_ANALYSIS_SENTINEL"); },
+            shutdown: async () => {},
+        };
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home, extensionFactories: [thinkInCodeFactory(state)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+        await session.run(when("Analyze the invalid program", [
+            calls("think_execute", { action: "content", language: "javascript", content: "", program: "export default 1 ≤ 2;" }),
+            says("The analyzer rejected the syntax."),
+        ]));
+        const result = session.events.toolResultsFor("think_execute")[0];
+        expect(result?.isError).toBe(true);
+        const payload = JSON.parse(result?.text.match(/\{"tool":"think_execute"[^\n]+\}/)?.[0] ?? "{}");
+        expect(payload).toMatchObject({
+            code: "analysis-failed", errorClass: "SyntaxError",
+            reason: "Analysis failed (javascript: SyntaxError)", recovery: "change_program",
+        });
+        expect(JSON.stringify(result)).not.toContain("RAW_ANALYSIS_SENTINEL");
+    });
+
     it("registers exactly the two native think_* tools", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();

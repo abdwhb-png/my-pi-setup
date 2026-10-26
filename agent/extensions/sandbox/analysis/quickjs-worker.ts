@@ -1,5 +1,10 @@
 import variant from "@jitl/quickjs-ng-wasmfile-release-sync";
 import { loadQuickJs } from "@sebastianwessel/quickjs";
+import {
+    AnalysisExecutionError,
+    analysisErrorClassFromError,
+    parseAnalysisErrorClass,
+} from "../../_shared/sandbox-runtime/errors.ts";
 
 import {
     parseAnalysisRequest,
@@ -166,7 +171,11 @@ export async function runQuickJsAnalysis(
         },
     );
     if (!result.ok) {
-        throw new Error(`${result.error.name}: ${result.error.message}`);
+        const diagnostic = `${result.error.name}: ${result.error.message}`;
+        const errorClass = parseAnalysisErrorClass(result.error.name);
+        throw errorClass
+            ? new AnalysisExecutionError(errorClass, diagnostic)
+            : new Error(diagnostic);
     }
 
     const separatorBytes = stdout.length > 0 ? 1 : 0;
@@ -203,10 +212,12 @@ if (import.meta.main) {
         const result = await runQuickJsAnalysis(request);
         process.stdout.write(JSON.stringify({ ok: true, result }));
     } catch (error) {
+        const errorClass = analysisErrorClassFromError(error);
         process.stdout.write(
             JSON.stringify({
                 ok: false,
                 error: error instanceof Error ? error.message : String(error),
+                ...(errorClass ? { errorClass } : {}),
             }),
         );
         process.exitCode = 1;

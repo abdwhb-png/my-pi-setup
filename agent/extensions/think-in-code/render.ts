@@ -49,13 +49,13 @@ function firstText(content: unknown, index = 0): string | undefined {
 
 function bounded(value: string, limit: number): string {
     if (value.length <= limit) return value;
-    return `${value.slice(0, limit)}\n… (${value.length - limit} caractères masqués)`;
+    return `${value.slice(0, limit)}\n… (${value.length - limit} characters hidden)`;
 }
 
 function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} o`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Kio`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} Mio`;
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function programSummary(args: ThinkRenderArgs, expanded: boolean): string {
@@ -74,7 +74,7 @@ export function renderThinkExecuteCall(
     const expanded = Reflect.get(context, "expanded") === true;
     const lines = [
         theme.fg("toolTitle", theme.bold(`🧠 Think Execute · ${action}`)),
-        theme.fg("muted", `analyseur: ${language}`),
+        theme.fg("muted", `analyzer: ${language}`),
         theme.fg("toolOutput", programSummary(args, expanded)),
     ];
     return textComponent(context, lines.join("\n"));
@@ -94,11 +94,14 @@ export function renderThinkExecuteResult(
                 "error",
                 `✗ error · ${failure.action} · ${failure.stage} · ${failure.code}`,
             ),
-            theme.fg("muted", `récupération: ${failure.recovery}`),
+            theme.fg("muted", `recovery: ${failure.recovery}`),
         ];
-        if (options.expanded) {
-            lines.push(theme.fg("toolOutput", bounded(failure.reason, 2_000)));
-        }
+        lines.push(
+            theme.fg(
+                "toolOutput",
+                bounded(failure.reason, options.expanded ? 2_000 : 240),
+            ),
+        );
         return textComponent(context, lines.join("\n"));
     }
 
@@ -106,7 +109,7 @@ export function renderThinkExecuteResult(
     if (!header) {
         return textComponent(
             context,
-            theme.fg("error", "✗ résultat Think illisible"),
+            theme.fg("error", "✗ Unreadable Think result"),
         );
     }
 
@@ -117,10 +120,10 @@ export function renderThinkExecuteResult(
             : ` · batch ${header.succeeded ?? 0}/${header.total}`;
     const indexLabel =
         header.indexStatus === "indexed"
-            ? "indexé"
+            ? "indexed"
             : header.indexStatus === "failed"
-              ? "indexation échouée"
-              : "indexation inconnue";
+              ? "indexing failed"
+              : "indexing unknown";
     const lines = [
         theme.fg(
             header.status === "success" ? "success" : "warning",
@@ -128,7 +131,7 @@ export function renderThinkExecuteResult(
         ),
         theme.fg(
             "muted",
-            `${formatBytes(header.sourceBytes)} → ${formatBytes(header.resultBytes)} · ${archiveLabel} · ${indexLabel} · expiration ≤${retentionHours}h${header.truncated ? " · tronqué" : ""}`,
+            `${formatBytes(header.sourceBytes)} → ${formatBytes(header.resultBytes)} · ${archiveLabel} · ${indexLabel} · expiration ≤${retentionHours}h${header.truncated ? " · truncated" : ""}`,
         ),
     ];
     if (options.expanded) {
@@ -165,19 +168,22 @@ export function renderThinkArtifactSearchResult(
     const failure = parseThinkArtifactSearchFailurePayload(result.content);
     if (failure) {
         const lines = [
-            theme.fg("error", `✗ recherche d’artefacts · ${failure.code}`),
-            theme.fg("muted", `récupération: ${failure.recovery}`),
+            theme.fg("error", `✗ artifact search · ${failure.code}`),
+            theme.fg("muted", `recovery: ${failure.recovery}`),
         ];
-        if (options.expanded) {
-            lines.push(theme.fg("toolOutput", bounded(failure.reason, 2_000)));
-        }
+        lines.push(
+            theme.fg(
+                "toolOutput",
+                bounded(failure.reason, options.expanded ? 2_000 : 240),
+            ),
+        );
         return textComponent(context, lines.join("\n"));
     }
-    const output = firstText(result.content) ?? "Aucun résultat lisible";
+    const output = firstText(result.content) ?? "No readable result";
     const lines = [
         theme.fg(
             "success",
-            `✓ recherche d’artefacts · expiration ≤${retentionHours}h`,
+            `✓ artifact search · expiration ≤${retentionHours}h`,
         ),
     ];
     if (options.expanded) {

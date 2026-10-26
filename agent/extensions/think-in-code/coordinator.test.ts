@@ -24,6 +24,7 @@ import { ThinkCoordinator, __test } from "./coordinator.ts";
 import { parseThinkExecuteHeader, type ThinkFailurePayload } from "./public-contract.ts";
 import type { ExecuteRequest } from "./types.ts";
 import { unknownExecution, hostExecution, withExecutionError } from '../_shared/execution-provenance/index.ts';
+import { AnalysisExecutionError } from '../_shared/sandbox-runtime/index.ts';
 
 function ctx(cwd: string): ExtensionToolContext {
     return {
@@ -115,6 +116,41 @@ describe("ThinkCoordinator", () => {
         });
         return { store, coordinator };
     }
+
+    it.each(["SyntaxError", "ReferenceError", "TypeError"] as const)("returns a safe %s category without indexing the failed analysis", async (errorClass) => {
+        const secret = "ANALYSIS_BINDING_SENTINEL_DO_NOT_EXPOSE";
+        const analysis: AnalysisSandboxPort = {
+            run: async () => { throw new AnalysisExecutionError(errorClass, `${errorClass}: ${secret}`); },
+            shutdown: async () => {},
+        };
+        const { coordinator, store } = await setup(undefined, analysis);
+        const failure = await captureThinkFailure(coordinator.execute({
+            id: "typed-analysis-error", language: "javascript", program: "export default 1 ≤ 2;",
+            source: { kind: "content", content: secret },
+        }, ctx("/workspace/proj")));
+        expect(failure).toMatchObject({
+            code: "analysis-failed", errorClass, recovery: "change_program",
+            reason: `Analysis failed (javascript: ${errorClass})`,
+        });
+        expect(JSON.stringify(failure)).not.toContain(secret);
+        expect(store.search(secret)).toEqual([]);
+    });
+
+    it("does not trust an arbitrary error name or unbranded errorClass", async () => {
+        const secret = "SECRET_ERROR_NAME";
+        const analysis: AnalysisSandboxPort = {
+            run: async () => { throw Object.assign(new Error(secret), { name: secret, errorClass: "SyntaxError" }); },
+            shutdown: async () => {},
+        };
+        const { coordinator } = await setup(undefined, analysis);
+        const failure = await captureThinkFailure(coordinator.execute({
+            id: "unbranded-analysis-error", language: "javascript", program: "export default 1;",
+            source: { kind: "content", content: "source" },
+        }, ctx("/workspace/proj")));
+        expect(failure.reason).toBe("Analysis failed (javascript)");
+        expect(failure).not.toHaveProperty("errorClass");
+        expect(JSON.stringify(failure)).not.toContain(secret);
+    });
 
     it("puts a compact machine-readable success header before the derivation", async () => {
         const { coordinator } = await setup();

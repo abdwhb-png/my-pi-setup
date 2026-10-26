@@ -172,7 +172,11 @@ export function createThinkSchemas(): Readonly<{
             timeout: Type.Optional(Type.Number()),
             stdin: Type.Optional(Type.String()),
             content: Type.Optional(
-                Type.String({ maxLength: MAX_INLINE_CONTENT_BYTES }),
+                Type.String({
+                    maxLength: MAX_INLINE_CONTENT_BYTES,
+                    description:
+                        'Source text exposed as INPUT, not a task label. For standalone calculations, use action="content" with an empty content string (content=""); JavaScript/TypeScript still require export default, for example: export default 1 + 2;.',
+                }),
             ),
             archiveIds: Type.Optional(
                 Type.Array(Type.String({ pattern: ARCHIVE_ID_PATTERN })),

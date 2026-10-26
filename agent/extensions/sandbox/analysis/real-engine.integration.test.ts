@@ -11,6 +11,8 @@ import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
 import { candidateBackendOptions, hasCandidateRuntime, stageCandidateRuntimeInHome } from "../runtime/integration-fixtures.ts";
 import { PRIVATE_ANALYSIS_ROOT, PRIVATE_BASH } from "../runtime/shell-baseline.ts";
 import { executeAnalysisHostRequest, runAnalysisChild } from "./host.ts";
+import { analysisErrorClassFromError } from "../../_shared/sandbox-runtime/errors.ts";
+import { executionFromDetails } from "../../_shared/execution-provenance/index.ts";
 
 const enabled = process.platform === "linux" &&
     process.env.PI_SANDBOX_REAL_ANALYSIS_CONTRACT === "1" &&
@@ -47,6 +49,30 @@ async function createAnalysisFixture() {
         },
     };
 }
+
+test.skipIf(!enabled).each([
+    ["javascript", "export default 1 ≤ 2;", "SyntaxError"],
+    ["javascript", "export default missingValue;", "ReferenceError"],
+    ["javascript", "export default null.value;", "TypeError"],
+    ["typescript", 'throw new SyntaxError("invalid expression");', "SyntaxError"],
+    ["typescript", "export default missingValue;", "ReferenceError"],
+    ["typescript", "export default null.value;", "TypeError"],
+] as const)("preserves %s engine diagnostics through the real sealed worker: %s", async (language, program, errorClass) => {
+    const fixture = await createAnalysisFixture();
+    try {
+        let failure: unknown;
+        try {
+            await executeAnalysisHostRequest(normalizeAnalysisRequest({ id: "sealed-worker-error", language, program, limits: { wallTimeMs: 15_000 } }), {
+                service: fixture.service, runChild: runAnalysisChild, now: () => performance.now(),
+                bunPath: join(PRIVATE_ANALYSIS_ROOT, "bin/bun"), nodePath: join(PRIVATE_ANALYSIS_ROOT, "bin/node"),
+                prlimitPath: join(PRIVATE_ANALYSIS_ROOT, "bin/prlimit"), sandboxRoot: PRIVATE_ANALYSIS_ROOT,
+            });
+        } catch (error) { failure = error; }
+        expect(failure).toBeInstanceOf(Error);
+        expect(analysisErrorClassFromError(failure)).toBe(errorClass);
+        expect(executionFromDetails(failure)).toMatchObject({ status: "sandboxed", backend: "zerobox", profile: "analysis-strict", outcome: "failed" });
+    } finally { await fixture.dispose(); }
+}, 45_000);
 
 const cases = [
     {

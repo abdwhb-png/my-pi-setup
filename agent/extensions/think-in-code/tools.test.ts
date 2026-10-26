@@ -209,6 +209,21 @@ describe("think_* tool handlers", () => {
         );
         // language descriptions must enumerate javascript / typescript / python
         expect(schema.properties?.language?.description).toBeDefined();
+        expect(schema.properties?.content?.description).toMatch(/standalone.*empty/i);
+        expect(schema.properties?.content?.description).toMatch(/not a task label/i);
+    });
+
+    it("accepts a standalone calculation with an empty INPUT and no command", async () => {
+        const safe = fakeSafeExecution("unused");
+        const analysis = fakeAnalysis("3");
+        const { handlers } = await setup(safe, analysis);
+        const result = await handlers.execute({
+            action: "content", content: "", language: "javascript", program: "export default 1 + 2;",
+        }, ctx("/workspace/proj"), { toolCallId: "standalone-calculation" }) as { content: { text: string }[] };
+        expect(JSON.parse(result.content[0].text)).toMatchObject({ status: "success", sourceBytes: 0 });
+        expect(result.content[1].text).toBe("3");
+        expect(safe.execute).not.toHaveBeenCalled();
+        expect(analysis.run).toHaveBeenCalledWith(expect.objectContaining({ bindings: expect.objectContaining({ INPUT: "" }) }), undefined);
     });
 
     it("rejects fields that do not belong to the selected action", async () => {

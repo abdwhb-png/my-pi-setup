@@ -50,6 +50,7 @@ import {
     type AnalysisResult,
 } from "../_shared/sandbox-runtime/analysis-protocol.ts";
 import {
+    analysisErrorClassFromError,
     getSandboxAnalysisPort,
     type AnalysisSandboxPort,
 } from "../_shared/sandbox-runtime/index.ts";
@@ -203,12 +204,14 @@ function analysisFailureError(
     error: unknown,
     language: ThinkLanguage,
 ): Error {
+    const errorClass = analysisErrorClassFromError(error);
     return createThinkExecutionError({
         action,
         stage: "analysis",
         code: "analysis-failed",
         reason: analyzerFailureReason(error, language),
         recovery: "change_program",
+        ...(errorClass ? { errorClass } : {}),
     });
 }
 
@@ -264,7 +267,7 @@ function whitelistTruncation(
  * raised from inside a Python `try/except`. Treat all such messages as
  * untrusted — never copy verbatim. Return a bounded, generic reason that
  * preserves only the analyzer language and, when safe, the JS/Python
- * error class name (whitelisted to short identifiers).
+ * error class from the branded, closed analysis error contract.
  */
 function analyzerFailureReason(
     error: unknown,
@@ -274,12 +277,8 @@ function analyzerFailureReason(
         language === "javascript" || language === "typescript"
             ? "javascript"
             : "python";
-    if (error instanceof Error && error.name && error.name !== "Error") {
-        const name = error.name.replace(/[^A-Za-z0-9_]/g, "").slice(0, 64);
-        if (name) {
-            return `Analysis failed (${languageLabel}: ${name})`;
-        }
-    }
+    const errorClass = analysisErrorClassFromError(error);
+    if (errorClass) return `Analysis failed (${languageLabel}: ${errorClass})`;
     return `Analysis failed (${languageLabel})`;
 }
 

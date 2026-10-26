@@ -10,6 +10,10 @@ import type { SandboxExecutionContext } from "./execution-context.ts";
 import type { SandboxProfileContexts } from "./execution-context.ts";
 
 export {
+    AnalysisExecutionError,
+    analysisErrorClassFromError,
+    parseAnalysisErrorClass,
+    type AnalysisErrorClass,
     SANDBOX_ERROR_CODES,
     SandboxExecutionError,
     isSandboxExecutionError,

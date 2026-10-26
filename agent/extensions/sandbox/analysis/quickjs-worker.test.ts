@@ -6,6 +6,19 @@ import { normalizeAnalysisRequest } from "../../_shared/sandbox-runtime/analysis
 import { runQuickJsAnalysis } from "./quickjs-worker.ts";
 
 describe("QuickJS analysis worker", () => {
+    it.each([
+        ["javascript", "export default 1 ≤ 2;", "SyntaxError"],
+        ["javascript", "export default missingValue;", "ReferenceError"],
+        ["javascript", "export default null.value;", "TypeError"],
+        ["typescript", 'throw new SyntaxError("invalid expression");', "SyntaxError"],
+        ["typescript", "export default missingValue;", "ReferenceError"],
+        ["typescript", "export default null.value;", "TypeError"],
+    ] as const)("preserves the engine error class for %s: %s", async (language, program, errorClass) => {
+        await expect(runQuickJsAnalysis(normalizeAnalysisRequest({
+            id: "engine-error", language, program,
+        }))).rejects.toHaveProperty("errorClass", errorClass);
+    });
+
     it("executes JavaScript and TypeScript with explicit bindings", async () => {
         const javascript = await runQuickJsAnalysis(
             normalizeAnalysisRequest({

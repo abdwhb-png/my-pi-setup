@@ -20,6 +20,12 @@ import {
     type NormalizedAnalysisRequest,
 } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 import {
+    AnalysisExecutionError,
+    analysisErrorClassFromError,
+    parseAnalysisErrorClass,
+    type AnalysisErrorClass,
+} from "../../_shared/sandbox-runtime/errors.ts";
+import {
     sandboxExecutionContextFromError,
     withSandboxExecutionContext,
 } from "../../_shared/sandbox-runtime/execution-context.ts";
@@ -79,6 +85,7 @@ interface WorkerResponse {
     ok: boolean;
     result?: { output: string; stderr: string };
     error?: string;
+    errorClass?: AnalysisErrorClass;
 }
 
 // Bun/JSC can reserve more virtual address space than QuickJS's own 1 GiB
@@ -140,7 +147,12 @@ function parseWorkerResponse(stdout: string): WorkerResponse {
     }
     const response = value as Record<string, unknown>;
     if (response.ok === false && typeof response.error === "string") {
-        return { ok: false, error: response.error };
+        const errorClass = parseAnalysisErrorClass(response.errorClass);
+        return {
+            ok: false,
+            error: response.error,
+            ...(errorClass ? { errorClass } : {}),
+        };
     }
     if (
         response.ok !== true ||
@@ -216,11 +228,13 @@ export async function executeAnalysisHostRequest(
             );
         }
         if (!response.ok || !response.result) {
-            throw new Error(
+            const diagnostic =
                 response.error ||
-                    child.stderr.trim() ||
-                    "Analysis worker failed",
-            );
+                child.stderr.trim() ||
+                "Analysis worker failed";
+            throw response.errorClass
+                ? new AnalysisExecutionError(response.errorClass, diagnostic)
+                : new Error(diagnostic);
         }
         result = {
             execution,
@@ -637,6 +651,9 @@ export async function appendAnalysisHostShutdownFailure(
             error: response.ok
                 ? `Analysis host cleanup failed: ${cleanupMessage}`
                 : `${response.error}; cleanup failed: ${cleanupMessage}`,
+            ...(!response.ok && response.errorClass
+                ? { errorClass: response.errorClass }
+                : {}),
             ...(response.ok
                 ? response.result.sandboxContext
                     ? { sandboxContext: response.result.sandboxContext }
@@ -668,6 +685,7 @@ if (import.meta.main) {
         );
         response = { ok: true, result };
     } catch (error) {
+        const errorClass = analysisErrorClassFromError(error);
         response = {
             ok: false,
             execution: executionFromDetails(error) ?? {
@@ -675,6 +693,7 @@ if (import.meta.main) {
                 outcome: "failed",
             },
             error: error instanceof Error ? error.message : String(error),
+            ...(errorClass ? { errorClass } : {}),
             ...(sandboxExecutionContextFromError(error)
                 ? {
                       sandboxContext: sandboxExecutionContextFromError(error),
