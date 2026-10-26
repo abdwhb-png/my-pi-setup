@@ -181,6 +181,14 @@ function deferred<T = void>(): Deferred<T> {
     return { promise, resolve, reject };
 }
 
+async function waitForCondition(condition: () => boolean): Promise<void> {
+    const deadline = performance.now() + 2000;
+    while (!condition()) {
+        if (performance.now() >= deadline) throw new Error("Fixture transition did not complete");
+        await new Promise(resolve => setTimeout(resolve, 5));
+    }
+}
+
 function fakeTheme(): Theme {
     return {
         fg: (color: string, text: string) => `fg:${color}:${text}`,
@@ -707,7 +715,11 @@ describe("sandbox lifecycle", () => {
         const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
         const starting = deferred();
-        initialize.mockImplementationOnce(() => starting.promise);
+        const entered = deferred();
+        initialize.mockImplementationOnce(() => {
+            entered.resolve();
+            return starting.promise;
+        });
 
         await writeGlobalConfig({
             network: { allowedDomains: ["stale.example"] },
@@ -717,16 +729,25 @@ describe("sandbox lifecycle", () => {
         const stale = resolveBashOperations(supervisor).exec("printf stale", cwd, {
             onData() {},
         });
-        await Promise.resolve();
+        await entered.promise;
+        const staleResult = stale.catch(error => error);
+        const startsBeforeLatest = createSandboxService.mock.calls.length;
         await writeGlobalConfig({
             network: { allowedDomains: ["latest.example"] },
             docker: { allowed: false },
         });
-        const latest = runOrdinaryBash(cwd, "printf latest");
+        const latestOutput: string[] = [];
+        const latest = resolveBashOperations(supervisor).exec("printf latest", cwd, {
+            onData: chunk => latestOutput.push(chunk.toString()),
+        });
+        await waitForCondition(() => createSandboxService.mock.calls.length > startsBeforeLatest);
         starting.resolve();
 
-        await expect(stale).rejects.toThrow("replacement runtime was not admitted");
-        await expect(latest).resolves.toBe("latest");
+        const staleError = await staleResult;
+        expect(staleError).toBeInstanceOf(Error);
+        expect(staleError.message).toBe("Sandbox startup was superseded");
+        await expect(latest).resolves.toMatchObject({ exitCode: 0 });
+        expect(latestOutput.join("")).toBe("latest");
         supervisor.shutdown();
         const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
             config: { network: { allowedDomains: string[] } };
@@ -1074,7 +1095,7 @@ describe("sandbox lifecycle", () => {
             expect(createSandboxService.mock.calls).toHaveLength(startsBeforeAExpiry);
 
             secondDeadline?.();
-            for (let attempt = 0; attempt < 8; attempt += 1) await Promise.resolve();
+            await waitForCondition(() => createSandboxService.mock.calls.length > startsBeforeAExpiry);
             expect(createSandboxService.mock.calls.length).toBeGreaterThan(startsBeforeAExpiry);
             await registered.handlers.get("session_shutdown")?.({}, ctx);
         } finally {

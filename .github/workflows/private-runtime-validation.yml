@@ -145,3 +145,15 @@ jobs:
             --expected-binary-sha256 "$PI_SANDBOX_ZEROBOX_SHA256"
           unset PI_SANDBOX_RUNTIME_BUNDLE PI_SANDBOX_ZEROBOX_BINARY PI_SANDBOX_ZEROBOX_SHA256
           PI_SANDBOX_INSTALLED_CONTRACT=1 bun test --isolate extensions/sandbox/runtime/installed-runtime.integration.test.ts
+      - name: Archive the qualified native runtime
+        run: |
+          tar -czf "$RUNNER_TEMP/qualified-native-runtime.tgz" -C "$PI_SANDBOX_RUNTIME_BUNDLE" .
+          sha256sum "$RUNNER_TEMP/qualified-native-runtime.tgz" > "$RUNNER_TEMP/qualified-native-runtime.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-native-runtime
+          path: |
+            ${{ runner.temp }}/qualified-native-runtime.tgz
+            ${{ runner.temp }}/qualified-native-runtime.sha256
+          if-no-files-found: error
+          retention-days: 14

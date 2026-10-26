@@ -90,10 +90,8 @@ export function resolveForcedSandboxOperations(
                     { ...options, deadline },
                     true,
                 );
-                return await deadline.wait(
-                    trackShellOperation(policy, command, () =>
-                        operations.exec(command, cwd, executionOptions),
-                    ),
+                return await trackShellOperation(policy, command, () =>
+                    operations.exec(command, cwd, executionOptions),
                 );
             } finally {
                 deadline.dispose();
@@ -187,10 +185,9 @@ export function resolveBashOperations(
                           })
                         : sandbox;
                 deadline.check();
-                return await deadline.wait(
-                    trackShellOperation(policy, command, () =>
-                        operations.exec(command, cwd, executionOptions),
-                    ),
+                // Operations own cancellation and cleanup; await their final provenance before returning.
+                return await trackShellOperation(policy, command, () =>
+                    operations.exec(command, cwd, executionOptions),
                 );
             } finally {
                 deadline.dispose();
