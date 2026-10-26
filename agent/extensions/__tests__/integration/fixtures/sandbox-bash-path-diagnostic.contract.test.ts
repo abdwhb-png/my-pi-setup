@@ -6,8 +6,9 @@ import {
     when,
 } from "@abdwhb-png/pi-test-harness";
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { writeFixtureFileAsync as writeFile } from "../../../_shared/testing/config-fixture.ts";
 
 import { localMachineId } from "../../../_shared/sandbox-runtime/machine-identity.ts";
 import { publicExtensionEntrypoints } from "../public-extension-session.ts";
@@ -36,7 +37,7 @@ test.skipIf(process.env.PI_SANDBOX_PATH_DIAGNOSTIC_CHILD !== "1")(
             process.chdir(cwd);
             process.env.PI_CODING_AGENT_DIR = root;
             await writeFile(
-                join(cwd, ".pi/settings.json"),
+                join(root, "config/bash-execution.json"),
                 JSON.stringify({
                     safeBash: {
                         mode: "coexist",
@@ -45,7 +46,7 @@ test.skipIf(process.env.PI_SANDBOX_PATH_DIAGNOSTIC_CHILD !== "1")(
                 }),
             );
             await writeFile(
-                join(root, "sandbox.json"),
+                join(root, "config/sandbox.json"),
                 JSON.stringify({ version: 2, machineId: localMachineId() }),
                 { mode: 0o600 },
             );

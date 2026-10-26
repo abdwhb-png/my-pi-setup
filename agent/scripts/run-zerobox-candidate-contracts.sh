@@ -89,6 +89,7 @@ export PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT=1
 export PI_SANDBOX_PATH_DIAGNOSTIC_CONTRACT=1
 export PI_SANDBOX_CACHE_EXCEPTIONS_CONTRACT=1
 
+failed_contracts=()
 for contract in \
     extensions/__tests__/integration/sandbox-write-exceptions.integration.test.ts \
     extensions/__tests__/integration/sandbox-bash-path-diagnostic.integration.test.ts \
@@ -116,5 +117,11 @@ for contract in \
     extensions/sandbox/runtime/websocket.integration.test.ts \
     extensions/sandbox/runtime/fork-contract.integration.test.ts \
     extensions/sandbox/runtime/safe-bash-fork-contract.integration.test.ts; do
-    bun test --isolate "$contract"
+    if ! bun test --isolate "$contract"; then
+        failed_contracts+=("$contract")
+    fi
 done
+if (( ${#failed_contracts[@]} )); then
+    printf 'Failed Zerobox candidate contract: %s\n' "${failed_contracts[@]}" >&2
+    exit 1
+fi

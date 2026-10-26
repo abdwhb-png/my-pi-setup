@@ -173,7 +173,7 @@ describe.skipIf(process.platform !== "linux" ||
                     network: { allowedDomains: [`localhost:${address.port}`] },
                 });
                 await writeFile(
-                    resolve(fixture, ".pi/settings.json"),
+                    resolve(fixture, ".pi/config/bash-execution.json"),
                     JSON.stringify({ safeBash: { mode: "coexist" } }),
                 );
                 session = await createTestSession({
