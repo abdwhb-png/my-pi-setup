@@ -213,7 +213,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             expect(output).toContain("Docker break-glass exec expired");
         } finally { breakGlassSupervisor.shutdown(); await breakGlassService.shutdown(); }
 
-        expect(bodies).toHaveLength(8);
+        expect(requests.filter(request => request === `POST /exec/${execId}/start`)).toHaveLength(7);
         expect(bodies[0]).toMatchObject({ DetachKeys: "", Privileged: false });
         expect(unexpected).toEqual([]);
     } finally {
