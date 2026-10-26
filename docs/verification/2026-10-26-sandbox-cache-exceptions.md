@@ -13,7 +13,7 @@ Admission schema 3 carries the exact exception pairs. Pi verifies the receipt be
 ## Validation
 
 - Native CI: 1,235 passing Pi regression tests across 133 files, with 79 explicit opt-in skips and no failures. All 26 candidate contract files, five pinned-builder tests and the fresh installed-runtime Pi contract passed.
-- Zerobox package suite on WSL2: 439 tests passed; four explicit benchmarks remained ignored. An earlier concurrent glob run encountered a Bubblewrap mount setup failure before one target started; its log was retained, and sequential checks passed.
+- Zerobox package suite on WSL2: 439 tests passed; three Docker SDK scenarios and one explicit benchmark remained ignored. An earlier concurrent glob run encountered a Bubblewrap mount setup failure before one target started; its log was retained, and sequential checks passed.
 - The original Workbench command passed both test files and all 35 tests inside the downloaded native runtime with the normal Vitest configuration loader. Duration: 216.13 seconds. The earlier WSL-built candidate also passed all 35 tests in 181.05 seconds.
 - After daily promotion, a fresh local Pi contract passed real `bash` and `safe_bash`, private temporary storage, environment/read-scope protection and admission identity: 14 assertions. The normal Workbench configuration loader resolves all five global cache exceptions in sandbox mode.
 - Extension ownership checks passed. Full typecheck still reports four diagnostics outside changed files: `agent-browser-sandbox-artifacts.integration.test.ts`, `sandbox/preparation.test.ts` and two locations in `sandbox/runtime/runtime-bundle.test.ts`. This report does not claim a clean global typecheck.
