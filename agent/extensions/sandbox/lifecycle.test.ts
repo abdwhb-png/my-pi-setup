@@ -1483,7 +1483,7 @@ describe("sandbox lifecycle", () => {
             select: ["host (unavailable: global host.allowed is false)"],
         });
         ctx.mode = "tui";
-        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        const overlay = automateOverlay(ctx, ["\r"]);
         await registered.handlers.get("session_start")?.({}, ctx);
         try {
             await sandboxCommand(registered).handler("", ctx);
@@ -1499,12 +1499,12 @@ describe("sandbox lifecycle", () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
         ctx.mode = "tui";
-        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        const overlay = automateOverlay(ctx, ["\r"]);
         await registered.handlers.get("session_start")?.({}, ctx);
         try {
             await sandboxCommand(registered).handler("", ctx);
             expect(overlay.rendered).toHaveLength(2);
-            expect(overlay.rendered[1]?.join("\n")).toContain(renderPanelTitle(fakeTheme(), SANDBOX_SECTIONS[0], false));
+            expect(overlay.rendered[1]?.join("\n")).toContain(renderPanelTitle(fakeTheme(), SANDBOX_SECTIONS[0], true));
             expect(currentShellPolicy()?.mode).toBe("sandbox");
         } finally {
             await registered.handlers.get("session_shutdown")?.({}, ctx);
@@ -1516,7 +1516,7 @@ describe("sandbox lifecycle", () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
         ctx.mode = "tui";
-        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        const overlay = automateOverlay(ctx, ["\r"]);
         ctx.ui.select = async () => {
             expect(overlay.closed).toBe(1);
             return "host";

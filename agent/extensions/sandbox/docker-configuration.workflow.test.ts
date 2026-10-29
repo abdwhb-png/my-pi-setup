@@ -28,7 +28,7 @@ async function workflow(options: { named?: boolean; missingGlobal?: boolean; acc
     });
     cleanup.push(async () => {
         session?.dispose();
-        if (server.listening) { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+        if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
         rmSync(root, { recursive: true, force: true });
     });
     mkdirSync(join(root, "config"), { recursive: true });
