@@ -319,7 +319,10 @@ function validateDocuments(
         authorityPath: globalPath,
     });
     const { docker: _docker, ...shellConfig } = resolved.config;
-    validatePiSandboxConfig(shellConfig, docker);
+    // Selected installations are resolved metadata, not raw environment fields.
+    const { installations: _installations, ...environment } =
+        shellConfig.environment;
+    validatePiSandboxConfig({ ...shellConfig, environment }, docker);
 }
 function atomicWrite(
     path: string,

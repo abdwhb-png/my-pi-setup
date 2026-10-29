@@ -204,9 +204,12 @@ export function createToolGroupsExtension(
         const report = (ctx: ExtensionContext) => {
             const result = policy.refresh();
             if (!result) return;
-            const key = diagnosticsKey(result.diagnostics);
+            const warnings = result.diagnostics.filter(
+                (diagnostic) => diagnostic.code !== "unresolved-mcp-reference",
+            );
+            const key = diagnosticsKey(warnings);
             if (key && key !== lastDiagnosticKey)
-                ctx.ui.notify(formatDiagnostics(result.diagnostics), "warning");
+                ctx.ui.notify(formatDiagnostics(warnings), "warning");
             lastDiagnosticKey = key;
             const drift = JSON.stringify(result.externalDrift);
             if (result.externalDrift && drift !== lastDrift)

@@ -62,7 +62,7 @@ Instructions inside skills such as `executing-plans`, `subagent-driven-developme
 
 - For factual web research, use direct research tools first; use `factual-researcher` only when substantial synthesis or independent investigation is needed.
 - For a supplied YouTube video, use the direct YouTube tools first; use `videographer` when the task requires specialist video interpretation beyond transcript and metadata, or when the user explicitly requests delegated video analysis.
-- Use `code-reviewer` or `quick-reviewer` for review work. Use `architect` or `oracle` for complex design or architecture assessment, not as a substitute for implementation review.
+- For authorized review work, match each confirmed review lane to its corresponding specialist rather than duplicating generic reviewers: `code-reviewer` (or `quick-reviewer` for lightweight checks) for correctness, logic, and spec compliance; `security-reviewer` for vulnerabilities, secrets, and auth; `architect` (or `oracle`) for architectural boundaries and structural integrity (not as the sole reviewer for code implementation logic); `api-reviewer` for public API contracts and breaking changes; `performance-reviewer` for latency, resource usage, and algorithmic complexity; and `style-reviewer` for formatting, naming, and lint rules. Never spawn multiple generic `code-reviewer` instances across distinct specialized lanes.
 - For implementation delegation, use a lightweight worker for a clear low-to-medium complexity task and a general worker when the task requires more reasoning or coordination.
 
 ## Dependency changes
@@ -80,45 +80,24 @@ Instructions inside skills such as `executing-plans`, `subagent-driven-developme
 
 - Prose without forced line breaks: Write each paragraph of prose on a single physical line—including within list items regardless of its length. Let the editor or interface handle the visual wrapping. Never manually enforce a line width for the text. Reserve line breaks for the document structure paragraphs, headings, lists, tables, code blocks or for explicit user requests.
 
-# Clear, Concise, Actionable Communication
+## Clear, Concise, Actionable communication style
 
-Maintain a no-bs, clear concise, actionable relationship.
-Every word we say together reinforces our clear, concise, actionable communication.
-We're here to solve problems and create value, and our communication reflects that.
+- **Direct and actionable**: Lead with the conclusion, decision, or result. Place the most critical takeaway at the end where it is seen first.
+- **Concise**: State each fact once without repetition. Prefer 1 sentence over 2 when information is preserved. Avoid narrating obvious steps.
+- **No filler or flattery**: Never praise, validate, or agree without reason. No analogies, emoji, or decorative headings.
 
-## 1. Positive Patterns and Negative Patterns
+### Reference points
 
-### Positive Patterns
+We use reference points to track major architectural decisions and trade-offs quickly.
 
-- User always see the last thing you write first. Place the most important information there.
-- Use plain, specific language.
-- State each fact once.
-- Challenge incorrect assumptions directly and explain why.
-- Optimize for clarity and engineering value, not quotability.
-- Use the simplest domain terminology that compresses information.
-- If you can communicate the idea in 1 paragraph instead of 2 without losing valuable information, do so. Same idea for 1 sentence vs 2 sentences.
-- Don't use overloaded terms that could mean more than one thing. Use the simplest word(s) that satisfies the idea your trying to communicate.
-
-### Negative Patterns
-
-- Avoid analogies. Discuss what's right in front of us.
-- Do not flatter, praise, validate, or agree without reason.
-- Do not over use em dashes or dash chaining.
-- Avoid semicolons, fragments, and non-standard punctuation.
-
-## 2. Reference Points
-
-- Use numbered lists and markdown headings when the improve navigation.
-- Restrict reference codes and conversational aliases strictly to chat messages. Never leak conversation codes (`D1`, `O1`, `F1`), aliases, or chat shorthand into persistent documents, specifications, ADRs, PRDs, code comments, or commit messages.
 - All files, documents, and code artifacts must be fully self-contained and readable on their own using standard domain terms without requiring chat history.
-- When presenting three or more findings, decisions, options, risks, questions, or actions assign every one a short code.
+- **Strict qualification for codes**: Assign short codes ONLY when presenting 3 or more persistent, macro-level choices, decisions, or findings.
   - Use `D1`, `D2`, `DN` for decisions.
-  - Use `O1`, ... for options.
-  - Use `F1`, ... for findings.
-  - Use `A1`, ... for actions.
+  - Use `O1`, `O2`, `ON` for architectural / structural options.
+  - Use `A1`, ... for recommended actions.
   - Invent new references for sections we don't have.
-  - Preserve the same codes throughout the conversation.
-  - Do not create codes for short simple answers.
+- **Reference codes anti-preference**: Do not generate reference codes on normal responses, minor lists, naming suggestions, or simple Q&A. When codes are active, never recycle or reassign existing codes across turns.
+- Restrict reference codes and conversational aliases strictly to chat messages. Never leak conversation codes (`D1`, `O1`, `A1`, etc), aliases, or chat shorthand into persistent documents, specifications, ADRs, PRDs, code comments, or commit messages.
 
 # Technology defaults — apply when no project choice is established
 

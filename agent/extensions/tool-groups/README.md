@@ -52,6 +52,7 @@ wins and dedicated files are skipped. Keep the key absent when using
 
 - Exact tool, such as `"read"`: included when registered; otherwise emits an
   `unknown-tool` diagnostic.
+- MCP reference, such as `"mcp:context7"` or `"mcp:context7/search"`: resolves against Pi's registered native namespaces and excludes hidden tools. A malformed reference emits `invalid-mcp-reference`; a valid reference with no matching registered tool remains an informational `unresolved-mcp-reference` and grants no tools.
 - Nested group, such as `"@inspect"`: expands recursively. Cycles emit a
   `cycle` diagnostic and do not activate the cyclic reference.
 - `*` glob, such as `"mcp:*"`: matches zero or more characters.
@@ -145,7 +146,7 @@ supported list syntax.
   that list. Malformed policy data fails closed.
 - Calling a placeholder directly throws. It has no prompt guidance.
 - Expansion preserves first-occurrence order and removes duplicates.
-- Diagnostics are deduplicated by code, group and member and reported through Pi UI notifications.
+- Resolution diagnostics are deduplicated by code, group and member. Warnings are reported through Pi UI notifications; valid unresolved MCP references remain available in `/context` without automatic notifications.
 - Initialize the runtime owner even when no groups are configured.
 - Reevaluate on policy, registry and session changes. Observe external writes without adopting them or overwriting every request.
 - `tool_call` enforces the same resolved policy, so stale history cannot execute a hidden tool.
@@ -155,7 +156,11 @@ Diagnostic codes:
 - `cycle`: a recursive group reference was found.
 - `missing-group`: an alias references an undefined group.
 - `unknown-tool`: an exact member is not registered.
+- `invalid-mcp-reference`: an MCP reference does not match `mcp:<server>` or `mcp:<server>/<tool>`.
+- `unresolved-mcp-reference`: a valid MCP reference has no matching tool in the registered catalog; informational only.
 - `unmatched-pattern`: a `*` or `?` member matched no tool.
+
+`/context` shows diagnostics from the last policy resolution, including the originating group and reference. They update when an existing policy refresh observes a changed registry. The registered catalog cannot distinguish a slow connection, an unavailable server, or a syntactically valid typo; use Pi's `/mcp` command for connection diagnostics. Tool groups consume Pi's public registry and naming APIs and do not read MCP configuration, manage connections, or recreate discovery state.
 
 ## Reloading Configuration
 

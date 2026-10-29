@@ -13,6 +13,7 @@
             "agent/roles/*": "ask"
         },
         "bash": {
+            "*": "allow",
             "rm *": "ask",
             "sudo *": "ask",
             "docker *": "ask",

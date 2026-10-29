@@ -1,3 +1,4 @@
+import { parseMcpReference } from "../mcp/ref-resolver.ts";
 import {
     TOOL_GROUP_PREFIX,
     fromToolGroupAlias,
@@ -79,6 +80,8 @@ export function resolveToolAliases(
             cycle: `Cycle detected: ${extra ?? member}`,
             "missing-group": `Group not found: ${member}`,
             "unknown-tool": `Unknown tool: ${member}`,
+            "invalid-mcp-reference": `Invalid MCP reference: ${member}. Expected mcp:<server> or mcp:<server>/<tool>.`,
+            "unresolved-mcp-reference": `No matching registered tool for MCP reference: ${member}. Use /mcp for connection diagnostics.`,
             "unmatched-pattern": `No tools match pattern: ${member}`,
         };
         diagnostics.push({ code, group, member, message: messages[code] });
@@ -108,11 +111,15 @@ export function resolveToolAliases(
         } else if (isGlob(member)) {
             expandGlobInGroup(member, originGroup);
         } else if (member.startsWith("mcp:") && resolveMcp) {
+            if (!parseMcpReference(member)) {
+                emitDiag("invalid-mcp-reference", member, originGroup);
+                return;
+            }
             // MCP reference — expand to concrete names via the resolver, then
             // validate each against the available registry like any other tool.
             const resolved = resolveMcp(member);
             if (resolved.length === 0) {
-                emitDiag("unknown-tool", member, originGroup);
+                emitDiag("unresolved-mcp-reference", member, originGroup);
                 return;
             }
             for (const name of resolved) {
@@ -176,30 +183,7 @@ export function resolveToolAliases(
 
     // ── Main loop over activeNames ────────────────────
     for (const item of activeNames) {
-        if (item.startsWith(TOOL_GROUP_PREFIX)) {
-            expandGroup(item, []);
-        } else if (isGlob(item)) {
-            expandGlobInGroup(item, "<active>");
-        } else if (item.startsWith("mcp:") && resolveMcp) {
-            const resolved = resolveMcp(item);
-            if (resolved.length === 0) {
-                emitDiag("unknown-tool", item, "<active>");
-                continue;
-            }
-            for (const name of resolved) {
-                if (!available.has(name)) {
-                    emitDiag("unknown-tool", name, "<active>");
-                    continue;
-                }
-                addName(name);
-            }
-        } else {
-            if (!available.has(item)) {
-                emitDiag("unknown-tool", item, "<active>");
-                continue;
-            }
-            addName(item);
-        }
+        dispatchMember(item, "<active>", []);
     }
 
     return { names, expandedAliases, diagnostics };

@@ -35,6 +35,8 @@ export type ToolGroupDiagnosticCode =
     | "cycle"
     | "missing-group"
     | "unknown-tool"
+    | "invalid-mcp-reference"
+    | "unresolved-mcp-reference"
     | "unmatched-pattern";
 
 /** A single diagnostic emitted during alias resolution. */

@@ -89,9 +89,7 @@ Register conditional usage hints through `registerToolPresentation()`.
 Keep safe-bash permissions and sandbox descriptions intact. Do not append
 repeated reminders to conversation history or edit role `pi-agent`.
 
-Keep `/context` observations limited to catalog metadata, active names,
-differences and declared sources. Do not retain or log request payloads,
-complete prompts, arguments or secrets. Leave Pi's default prompt unchanged.
+Keep `/context` observations limited to catalog metadata, active names, differences, declared sources, and diagnostics from the last policy resolution. Reading that snapshot does not refresh policy or change visibility. Unresolved MCP references describe registry resolution only; native `/mcp` owns connection diagnostics. Do not retain or log request payloads, complete prompts, arguments or secrets. Leave Pi's default prompt unchanged.
 
 Keep `tool-groups` last in the resolved extension order and register the
 finalizer after its policy hooks. The architecture and real-runner tests enforce

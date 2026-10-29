@@ -6,11 +6,12 @@ import { join } from "node:path";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { type ExtensionAPI, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { manageDockerAccess } from "./docker-configuration.ts";
+import { loadSandboxConfig } from "./index.ts";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
-async function workflow(options: { named?: boolean; missingGlobal?: boolean; accepted?: boolean; engineInfo?: boolean; revokeOnReinspection?: boolean } = {}) {
+async function workflow(options: { named?: boolean; missingGlobal?: boolean; accepted?: boolean; engineInfo?: boolean; installations?: boolean; revokeOnReinspection?: boolean } = {}) {
     const root = mkdtempSync(join(tmpdir(), "pi-docker-workflow-"));
     let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
     const store = new ProjectTrustStore(root);
@@ -36,9 +37,11 @@ async function workflow(options: { named?: boolean; missingGlobal?: boolean; acc
     store.set(root, true);
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(join(root, "engine.sock"), resolve); });
     const globalPath = join(root, "config", "sandbox.json"), projectPath = join(root, ".pi", "config", "sandbox.json");
-    const original = JSON.stringify({ version: 2, machineId: "fixture", docker: { allowed: true, endpoint: `unix://${join(root, "engine.sock")}` } });
+    const environment = options.installations ? { installations: { tool: [{ root, files: ["fixture-tool"], path: [] }] } } : undefined;
+    if (options.installations) writeFileSync(join(root, "fixture-tool"), "fixture");
+    const original = JSON.stringify({ version: 2, machineId: "fixture", ...(environment ? { environment } : {}), docker: { allowed: true, endpoint: `unix://${join(root, "engine.sock")}` } });
     if (!options.missingGlobal) writeFileSync(globalPath, original, { mode: 0o600 });
-    writeFileSync(projectPath, JSON.stringify(options.named ? { docker: { enabled: true, targets: [{ selector, operations: ["logs"] }] } } : {}), { mode: 0o600 });
+    writeFileSync(projectPath, JSON.stringify({ ...(options.installations ? { environment: { installations: ["tool"] } } : {}), ...(options.named ? { docker: { enabled: true, targets: [{ selector, operations: ["logs"] }] } } : {}) }), { mode: 0o600 });
     session = await createTestSession({ cwd: root,
         extensionFactories: [(pi: ExtensionAPI) => { pi.registerCommand("configure-fixture-docker", { description: "Configure isolated fixture Docker access", handler: async (_args, ctx) => {
             try { await manageDockerAccess(ctx, { agentDir: root, machineId: "fixture", ...(options.named ? { selector } : {}), onChanged: async () => { applied++; } }); }
@@ -77,4 +80,19 @@ test("editing a saved container-name grant preserves its identity when discovery
     const saved = JSON.parse(readFileSync(result.projectPath, "utf8"));
     expect(saved.docker.targets).toEqual([{ selector: result.selector, operations: ["exec"] }]);
     expect(JSON.parse(readFileSync(result.globalPath, "utf8")).docker.trustedExecTargets).toEqual([result.selector]);
+});
+
+test("saving Docker access preserves installed tools and their project selection", async () => {
+    const result = await workflow({ installations: true });
+    expect(result.failure).toBeUndefined();
+    expect(result.applied).toBe(1);
+    const global = JSON.parse(readFileSync(result.globalPath, "utf8"));
+    const project = JSON.parse(readFileSync(result.projectPath, "utf8"));
+    expect(global.environment).toEqual(JSON.parse(result.original).environment);
+    expect(project.environment).toEqual({ installations: ["tool"] });
+    expect(project.docker.targets[0].operations).toEqual(["exec"]);
+    const resolved = loadSandboxConfig(result.root, { agentDir: result.root, machineId: "fixture", projectTrusted: true });
+    expect(resolved.config.environment.installations?.map(tool => tool.name)).toEqual(["tool"]);
+    expect(resolved.config.filesystem.allowRead).toContain(join(result.root, "fixture-tool"));
+    expect(resolved.config.filesystem.denyWrite).toContain(join(result.root, "fixture-tool"));
 });

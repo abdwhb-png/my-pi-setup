@@ -1,4 +1,3 @@
-
 /**
  * /context
  *
@@ -728,6 +727,18 @@ export default function contextExtension(pi: ExtensionAPI) {
                 label: "Policy sources",
                 value: policy.sources.join(", "),
             });
+            const resolutions = new Set(
+                policy.diagnostics.map(
+                    (diagnostic) =>
+                        `[${diagnostic.code}] ${diagnostic.group}: ${diagnostic.message}`,
+                ),
+            );
+            for (const value of resolutions) {
+                diagnostics.push({
+                    label: "Last policy resolution",
+                    value,
+                });
+            }
         }
         return diagnostics;
     };

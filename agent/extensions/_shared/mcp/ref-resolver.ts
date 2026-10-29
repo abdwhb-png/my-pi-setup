@@ -6,16 +6,23 @@ import {
 
 type RegisteredMcpTool = Pick<ToolInfo, "name" | "namespace" | "exposure">;
 
+export function parseMcpReference(
+    reference: string,
+): { server: string; tool?: string } | undefined {
+    const match = /^mcp:([A-Za-z0-9_-]+)(?:\/(.+))?$/.exec(reference);
+    const server = match?.[1];
+    return server ? { server, tool: match?.[2] } : undefined;
+}
+
 /** Read the live registry: MCP tools can arrive after session_start or disappear on reconnect. */
 export function createMcpRefResolver(
     registered: () => readonly RegisteredMcpTool[],
 ): (reference: string) => string[] {
     return (reference) => {
         if (!reference.startsWith("mcp:")) return [reference];
-        const match = /^mcp:([A-Za-z0-9_-]+)(?:\/(.+))?$/.exec(reference);
-        if (!match) return [];
-        const [, server, tool] = match;
-        if (!server) return [];
+        const parsed = parseMcpReference(reference);
+        if (!parsed) return [];
+        const { server, tool } = parsed;
         const namespace = mcpNamespace(server);
         const tools = registered().filter(
             (entry) =>
