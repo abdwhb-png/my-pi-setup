@@ -8,6 +8,7 @@ import {
 /** Safe display metadata for the active runtime. Contains no Engine endpoint or credentials. */
 export interface DockerAccessSummary {
     mode: "off" | "targeted" | "full";
+    engineInfo?: boolean;
     profile: string;
     targets: {
         selector: string;
@@ -27,23 +28,29 @@ export interface DockerAccessSummary {
     }[];
 }
 
+const OBSERVATION_OPERATIONS: DockerOperation[] = [
+    "ps",
+    "inspect",
+    "logs",
+    "stats",
+];
+const LIFECYCLE_OPERATIONS: DockerOperation[] = ["start", "stop", "restart"];
+export const DOCKER_PERMISSION_GROUPS: ReadonlyArray<
+    readonly [string, readonly DockerOperation[]]
+> = [
+    ["Read-only access", OBSERVATION_OPERATIONS],
+    ["Execute commands", ["exec"]],
+    ["Start, stop and restart", LIFECYCLE_OPERATIONS],
+];
 export const DOCKER_ACCESS_PROFILES: ReadonlyArray<{
     label: string;
     operations: DockerOperation[];
 }> = [
     {
         label: "Exploitation",
-        operations: [
-            "ps",
-            "inspect",
-            "logs",
-            "stats",
-            "start",
-            "stop",
-            "restart",
-        ],
+        operations: [...OBSERVATION_OPERATIONS, ...LIFECYCLE_OPERATIONS],
     },
-    { label: "Observation", operations: ["ps", "inspect", "logs", "stats"] },
+    { label: "Observation", operations: [...OBSERVATION_OPERATIONS] },
     { label: "Administration", operations: [...DOCKER_OPERATIONS] },
 ];
 
@@ -140,6 +147,7 @@ export function summarizeDockerAccess(
     else if (targets.length > 0) profile = "Mixed";
     return {
         mode: "targeted",
+        ...(policy.engineInfo ? { engineInfo: true } : {}),
         profile,
         targets,
         hostAccessException: targets.some(

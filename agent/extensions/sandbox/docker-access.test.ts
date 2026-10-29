@@ -120,3 +120,22 @@ test.each(["engine", "broker"])("does not report a target absent when %s inspect
         visibleIds: async () => { throw new Error("fixture inspection unavailable"); },
     })).rejects.toThrow("fixture inspection unavailable");
 });
+
+test("user discovery groups replicas by actual Compose labels and includes standalone containers", async () => {
+    const { discoverDockerTargets } = await import("./docker-access.ts");
+    const compose = { Labels: { "com.docker.compose.project": "example", "com.docker.compose.service": "api" } };
+    const dependencies = { calls: 0, async request(path: string) { this.calls++; expect(path).toBe("/containers/json?all=1"); return [compose, compose, { Names: ["/standalone"] }]; } };
+    expect(await discoverDockerTargets("unix:///fixture", dependencies)).toEqual([
+        { type: "compose-service", project: "example", service: "api" }, { type: "container-name", name: "standalone" },
+    ]);
+    expect(dependencies.calls).toBe(1);
+});
+
+test("metadata inspection never invents a broker authorization verdict", async () => {
+    const { inspectDockerMetadata } = await import("./docker-access.ts");
+    const result = await inspectDockerMetadata({ mode: "targeted", endpoint: "unix:///fixture", targets: [{ selector: { type: "container-name", name: "fixture" }, allowUnsafeTarget: false }] }, {
+        request: async path => path.startsWith("/containers/json") ? [{ Id: "abc", Names: ["/fixture"] }] : { Mounts: [{ Type: "bind", Source: "/project", Destination: "/app", RW: true }] },
+    });
+    expect(result[0].containers[0].access).toBe("unverified");
+    expect(formatDockerAccess(result).join("\n")).toContain("broker access not checked");
+});

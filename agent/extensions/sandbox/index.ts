@@ -5,6 +5,8 @@ import {
     isProjectConfigTrusted,
     CONFIG_OWNERS,
 } from "../_shared/config-loader.ts";
+import { withSandboxPublicationLockSync } from "./capabilities/publication-lock.ts";
+import { manageDockerAccess } from "./docker-configuration.ts";
 /**
  * Sandbox Extension - OS-level isolation runtime for Bash operations and
  * analysis workers.
@@ -655,55 +657,61 @@ export async function persistProjectDockerPreference(
         scope: "project",
         cwd: cwd,
     });
-    return withFileMutationQueue(projectPath, async () => {
-        if (!isProjectConfigTrusted(cwd, agentDir))
-            throw new Error(
-                "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+    return withFileMutationQueue(projectPath, async () =>
+        withSandboxPublicationLockSync(sandboxConfigPath(agentDir), () => {
+            if (!isProjectConfigTrusted(cwd, agentDir))
+                throw new Error(
+                    "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+                );
+            assertSandboxConfigMigrated(agentDir, cwd);
+            const current = readProjectSandboxConfig(projectPath) ?? {};
+            const currentDocker = current.docker;
+            const dockerFields =
+                typeof currentDocker === "object" &&
+                currentDocker !== null &&
+                !Array.isArray(currentDocker)
+                    ? currentDocker
+                    : {};
+            const next = {
+                ...current,
+                docker: { ...dockerFields, enabled: preference === "on" },
+            };
+            const global = readGlobalSandboxConfig(
+                sandboxConfigPath(agentDir),
+                localMachineId(),
             );
-        assertSandboxConfigMigrated(agentDir, cwd);
-        const current = readProjectSandboxConfig(projectPath) ?? {};
-        const currentDocker = current.docker;
-        const dockerFields =
-            typeof currentDocker === "object" &&
-            currentDocker !== null &&
-            !Array.isArray(currentDocker)
-                ? currentDocker
-                : {};
-        const next = {
-            ...current,
-            docker: { ...dockerFields, enabled: preference === "on" },
-        };
-        const global = readGlobalSandboxConfig(
-            sandboxConfigPath(agentDir),
-            localMachineId(),
-        );
-        const docker = resolveDockerPolicy({
-            globalConfig: global?.docker,
-            projectConfig: next.docker,
-        });
-        const baseline = createDefaultSandboxBaseline(docker);
-        resolveShellPolicy({
-            cwd,
-            baseline,
-            global,
-            project: next,
-            authorityPath: sandboxConfigPath(agentDir),
-        });
-        mkdirSync(dirname(projectPath), { recursive: true, mode: 0o700 });
-        const temporaryPath = `${projectPath}.${randomUUID()}.tmp`;
-        try {
-            writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-                encoding: "utf8",
-                mode: 0o600,
-                flag: "wx",
+            const docker = resolveDockerPolicy({
+                globalConfig: global?.docker,
+                projectConfig: next.docker,
             });
-            renameSync(temporaryPath, projectPath);
-        } catch (error) {
-            if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
-            throw error;
-        }
-        return loadSandboxConfig(cwd, { agentDir });
-    });
+            const baseline = createDefaultSandboxBaseline(docker);
+            resolveShellPolicy({
+                cwd,
+                baseline,
+                global,
+                project: next,
+                authorityPath: sandboxConfigPath(agentDir),
+            });
+            mkdirSync(dirname(projectPath), { recursive: true, mode: 0o700 });
+            const temporaryPath = `${projectPath}.${randomUUID()}.tmp`;
+            try {
+                writeFileSync(
+                    temporaryPath,
+                    `${JSON.stringify(next, null, 2)}\n`,
+                    {
+                        encoding: "utf8",
+                        mode: 0o600,
+                        flag: "wx",
+                    },
+                );
+                renameSync(temporaryPath, projectPath);
+            } catch (error) {
+                if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+                throw error;
+            }
+            return loadSandboxConfig(cwd, { agentDir });
+        }),
+    );
 }
 
 export function createSandboxedBashOps(
@@ -2135,6 +2143,7 @@ export function createSandboxExtension(
                 "migrate",
                 "recover",
                 "docker",
+                "docker configure",
                 "docker on",
                 "docker off",
                 "docker break-glass",
@@ -2275,10 +2284,31 @@ export function createSandboxExtension(
                             },
                         });
                         try {
-                            await sandboxCommand.handler(
-                                intent.action,
-                                actionContext,
-                            );
+                            if (
+                                intent.action === "docker configure" &&
+                                intent.target
+                            ) {
+                                await manageDockerAccess(actionContext, {
+                                    agentDir: getAgentDir(),
+                                    machineId: localMachineId(),
+                                    selector: intent.target,
+                                    onChanged: async () => {
+                                        if (
+                                            !(await reconfigureServices(
+                                                ctx,
+                                                loadShell(ctx),
+                                            ))
+                                        )
+                                            throw new Error(
+                                                "Permissions saved, but runtime activation failed. Inspect /sandbox doctor.",
+                                            );
+                                    },
+                                });
+                            } else
+                                await sandboxCommand.handler(
+                                    intent.action,
+                                    actionContext,
+                                );
                         } catch (error) {
                             actionProblem = configurationErrorMessage(error);
                         }
@@ -2521,6 +2551,24 @@ export function createSandboxExtension(
                 }
                 return;
             }
+            if (arg === "docker configure") {
+                try {
+                    await manageDockerAccess(ctx, {
+                        agentDir: getAgentDir(),
+                        machineId: localMachineId(),
+                        onChanged: async () => {
+                            const resolved = loadShell(ctx);
+                            if (!(await reconfigureServices(ctx, resolved)))
+                                throw new Error(
+                                    "Permissions saved, but runtime activation failed. Inspect /sandbox doctor.",
+                                );
+                        },
+                    });
+                } catch (error) {
+                    ctx.ui.notify(configurationErrorMessage(error), "error");
+                }
+                return;
+            }
             if (arg === "docker on" || arg === "docker off") {
                 if (!ctx.isProjectTrusted()) {
                     ctx.ui.notify(
@@ -2610,7 +2658,7 @@ export function createSandboxExtension(
                     );
                     if (candidates.length === 0) {
                         ctx.ui.notify(
-                            "No accessible global Docker target permits break-glass exec.",
+                            "No eligible container: select a project target, approve its host access globally, and allow exec. Use /sandbox docker configure; a temporary grant cannot create these permissions.",
                             "error",
                         );
                         return;

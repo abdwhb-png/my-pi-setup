@@ -31,6 +31,7 @@ import {
     selectInstallations,
     type GlobalInstallations,
 } from "./installations.ts";
+import { withSandboxPublicationLockSync } from "./publication-lock.ts";
 
 type ManageInstallationsOptions = {
     agentDir: string;
@@ -241,40 +242,48 @@ export async function manageInstallations(
         before: Buffer | undefined,
         next: Record<string, unknown>,
     ) {
-        await withFileMutationQueue(path, async () => {
-            const trusted = isProjectConfigTrusted(
-                ctx.cwd,
-                options.agentDir,
-                ctx.isProjectTrusted(),
-            );
-            if (path === projectPath && !trusted)
-                throw new Error(
-                    "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+        await withFileMutationQueue(path, async () =>
+            withSandboxPublicationLockSync(globalPath, () => {
+                const trusted = isProjectConfigTrusted(
+                    ctx.cwd,
+                    options.agentDir,
+                    ctx.isProjectTrusted(),
                 );
-            assertSandboxConfigMigrated(
-                options.agentDir,
-                trusted ? ctx.cwd : undefined,
-            );
-            const current = readBytes(path);
-            if (!sameBytes(before, current)) {
-                throw new Error(`Configuration changed while editing: ${path}`);
-            }
-            mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-            const temporary = join(
-                dirname(path),
-                `.sandbox-${randomUUID()}.tmp`,
-            );
-            try {
-                writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, {
-                    mode: 0o600,
-                    flag: "wx",
-                });
-                renameSync(temporary, path);
-            } catch (error) {
-                if (existsSync(temporary)) unlinkSync(temporary);
-                throw error;
-            }
-        });
+                if (path === projectPath && !trusted)
+                    throw new Error(
+                        "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+                    );
+                assertSandboxConfigMigrated(
+                    options.agentDir,
+                    trusted ? ctx.cwd : undefined,
+                );
+                const current = readBytes(path);
+                if (!sameBytes(before, current)) {
+                    throw new Error(
+                        `Configuration changed while editing: ${path}`,
+                    );
+                }
+                mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+                const temporary = join(
+                    dirname(path),
+                    `.sandbox-${randomUUID()}.tmp`,
+                );
+                try {
+                    writeFileSync(
+                        temporary,
+                        `${JSON.stringify(next, null, 2)}\n`,
+                        {
+                            mode: 0o600,
+                            flag: "wx",
+                        },
+                    );
+                    renameSync(temporary, path);
+                } catch (error) {
+                    if (existsSync(temporary)) unlinkSync(temporary);
+                    throw error;
+                }
+            }),
+        );
     }
 
     try {

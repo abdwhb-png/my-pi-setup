@@ -699,3 +699,16 @@ it.each([false, true])("avoids a writable overlay for a read-only file alias (wr
         } finally { await spec.cleanup?.(); }
     } finally { await lease.dispose(); await rm(root, { recursive: true, force: true }); }
 });
+
+it.each([false, true])("checks engine-information support before launch (supported=%s)", async supported => {
+    const parent = await mkdtemp(join(tmpdir(), "z-info-"));
+    const binaryPath = join(parent, "zerobox");
+    const lease = await createPrivateTempLease({ rootDir: join(parent, "r") });
+    try {
+        await writeFile(binaryPath, "engine", { mode: 0o700 });
+        const backend = createZeroboxBackend({ ...(await createRuntimeBundleFixture(binaryPath, expectedProvenance.version)), binaryPath, runCommand: (file, args) => supported && args[0] === "profile" ? { exitCode: 0, stdout: JSON.stringify({ definitions: { DockerAccessPolicy: { properties: { engineInfo: { type: "boolean" } } } } }), stderr: "" } : successfulRun(file, args) });
+        const policy = createBashPolicy({ cwd: parent, lease, config: validatePiSandboxConfig({}, { mode: "targeted", endpoint: "unix:///fixture.sock", targets: [], engineInfo: true }) });
+        if (supported) { const spec = await backend.prepare({ file: "/bin/true", args: [], cwd: parent }, policy, lease); await spec.cleanup?.(); }
+        else await expect(backend.prepare({ file: "/bin/true", args: [], cwd: parent }, policy, lease)).rejects.toMatchObject({ code: "unsupported-capability" });
+    } finally { await lease.dispose(); await rm(parent, { recursive: true, force: true }); }
+});

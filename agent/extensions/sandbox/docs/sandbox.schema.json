@@ -197,6 +197,10 @@
               "maximum": 1440,
               "default": 30,
               "description": "Ceiling for /sandbox docker break-glass. Global only; a project document cannot set it."
+            },
+            "allowEngineInfo": {
+              "type": "boolean",
+              "default": false
             }
           },
           "allOf": [
@@ -364,6 +368,10 @@
               "items": {
                 "$ref": "#/$defs/projectDockerTarget"
               }
+            },
+            "engineInfo": {
+              "type": "boolean",
+              "default": false
             }
           }
         },

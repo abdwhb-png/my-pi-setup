@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +7,8 @@ import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { applyLayoutMigration, planLayoutMigration, recoverLayoutMigration } from "../../_shared/scripts/extension-layout-migration.ts";
 import sandboxExtension, { loadSandboxConfig } from "../index.ts";
 import {
+    previewSandboxDocuments,
+    publishSandboxDocuments,
     cancelIncompleteMigration,
     previewLegacyMigration,
     publishLegacyMigration,
@@ -441,3 +444,84 @@ test("refuses blind marker removal after an interrupted destination is edited", 
     expect(existsSync(globalPath + ".migration")).toBeTrue();
     expect(readFileSync(globalPath, "utf8")).toContain("operator");
 });
+
+test("another process cannot publish over a transaction before its marker is installed", () => {
+    const { agent, project } = fixture();
+    const globalPath = join(agent, "config", "sandbox.json"), projectPath = join(project, "config", "sandbox.json");
+    const selector = { type: "container-name", name: "api" };
+    const global = { version: 2, machineId: "machine", docker: { allowed: true, unsafeTargets: [selector], trustedExecTargets: [selector] } };
+    const local = { docker: { enabled: true, targets: [{ selector, operations: ["exec"] }] } };
+    writeFileSync(globalPath, JSON.stringify(global), { mode: 0o600 });
+    writeFileSync(projectPath, JSON.stringify(local), { mode: 0o600 });
+    const sources = previewSandboxDocuments(globalPath, projectPath);
+    let attempted = false;
+    publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources, globalLayer: global, projectLayer: local,
+        filesystem: { rename(from, to) {
+            if (to === globalPath + ".migration" && !attempted) {
+                attempted = true;
+                const child = spawnSync(process.execPath, ["--eval", `
+                    const { publishSandboxDocuments, previewSandboxDocuments } = await import(${JSON.stringify(join(import.meta.dir, "migration.ts"))});
+                    const globalPath = ${JSON.stringify(globalPath)}, projectPath = ${JSON.stringify(projectPath)};
+                    try {
+                        publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources: previewSandboxDocuments(globalPath, projectPath), globalLayer: ${JSON.stringify({ ...global, docker: { allowed: true, unsafeTargets: [], trustedExecTargets: [] } })}, projectLayer: ${JSON.stringify(local)} });
+                        process.exit(2);
+                    } catch (error) { process.exit(String(error).includes("running") ? 0 : 3); }
+                `], { encoding: "utf8", timeout: 10000 });
+                expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: "" });
+            }
+            renameSync(from, to);
+        } },
+    });
+    expect(attempted).toBe(true);
+    const stale = previewSandboxDocuments(globalPath, projectPath);
+    publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources: stale, globalLayer: { ...global, docker: { allowed: true, unsafeTargets: [], trustedExecTargets: [] } }, projectLayer: local });
+    expect(() => publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources: stale, globalLayer: global, projectLayer: local })).toThrow("changed after preview");
+    expect(JSON.parse(readFileSync(globalPath, "utf8")).docker.trustedExecTargets).toEqual([]);
+}, 20000);
+
+test("recovery cannot modify a transaction still owned by another process", () => {
+    const { agent, project } = fixture();
+    const globalPath = join(agent, "config", "sandbox.json"), projectPath = join(project, "config", "sandbox.json");
+    const global = { version: 2, machineId: "machine", host: { allowed: false } };
+    writeFileSync(globalPath, JSON.stringify(global), { mode: 0o600 });
+    writeFileSync(projectPath, "{}", { mode: 0o600 });
+    let tested = false;
+    publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources: previewSandboxDocuments(globalPath, projectPath), globalLayer: { ...global, host: { allowed: true } }, projectLayer: {}, filesystem: { rename(from, to) {
+        renameSync(from, to);
+        if (to !== globalPath) return;
+        tested = true;
+        const child = spawnSync(process.execPath, ["--eval", `
+            const { recoverIncompleteMigration } = await import(${JSON.stringify(join(import.meta.dir, "migration.ts"))});
+            try { recoverIncompleteMigration(${JSON.stringify(globalPath)}); process.exit(2); }
+            catch (error) { process.exit(String(error).includes("running") ? 0 : 3); }
+        `], { encoding: "utf8", timeout: 10000 });
+        expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: "" });
+    } } });
+    expect(tested).toBe(true);
+    expect(JSON.parse(readFileSync(globalPath, "utf8")).host.allowed).toBe(true);
+    expect(existsSync(globalPath + ".migration")).toBe(false);
+}, 20000);
+
+test("an exited publisher releases ownership so its interrupted transaction can be recovered", () => {
+    const { agent, project } = fixture();
+    const globalPath = join(agent, "config", "sandbox.json"), projectPath = join(project, "config", "sandbox.json");
+    const original = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: false } });
+    writeFileSync(globalPath, original, { mode: 0o600 });
+    writeFileSync(projectPath, "{}", { mode: 0o600 });
+    const child = spawnSync(process.execPath, ["--eval", `
+        const { renameSync } = await import("node:fs");
+        const { publishSandboxDocuments, previewSandboxDocuments } = await import(${JSON.stringify(join(import.meta.dir, "migration.ts"))});
+        const globalPath = ${JSON.stringify(globalPath)}, projectPath = ${JSON.stringify(projectPath)};
+        publishSandboxDocuments({ globalPath, projectPath, machineId: "machine", sources: previewSandboxDocuments(globalPath, projectPath), globalLayer: { version: 2, machineId: "machine", host: { allowed: true } }, projectLayer: {}, filesystem: { rename(from, to) {
+            renameSync(from, to);
+            if (to === globalPath) process.exit(0);
+        } } });
+        process.exit(2);
+    `], { encoding: "utf8", timeout: 10000 });
+    expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: "" });
+    expect(existsSync(globalPath + ".migration")).toBe(true);
+    expect(recoverIncompleteMigration(globalPath)).toEqual({ recovered: "restored" });
+    expect(readFileSync(globalPath, "utf8")).toBe(original);
+    expect(readFileSync(projectPath, "utf8")).toBe("{}");
+    expect(existsSync(globalPath + ".migration")).toBe(false);
+}, 20000);

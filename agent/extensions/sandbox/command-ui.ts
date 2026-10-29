@@ -29,9 +29,11 @@ import {
     dockerClientInspectionLines,
     type DockerClientInspection,
 } from "./docker-client-inspection.ts";
+import { dockerSelectorLabel } from "./docker-presentation.ts";
 import { sandboxDoctorLines, type SandboxDoctorInspection } from "./doctor.ts";
 import type { SandboxExecutableInspection } from "./executable-inspection.ts";
 import type { LoadSandboxConfigResult } from "./index.ts";
+import type { DockerTargetSelector } from "./runtime/contracts.ts";
 
 export const SANDBOX_SECTIONS = [
     "Status",
@@ -43,6 +45,7 @@ export type SandboxSection = (typeof SANDBOX_SECTIONS)[number];
 export type SandboxDashboardAction =
     | "mode"
     | "installations"
+    | "docker configure"
     | "docker on"
     | "docker off"
     | "docker break-glass"
@@ -62,8 +65,11 @@ export interface SandboxDashboardSource {
 export interface SandboxDashboardState {
     section: SandboxSection;
     executable?: string;
+    selected?: number;
+    offset?: number;
 }
 export interface SandboxDashboardIntent {
+    target?: DockerTargetSelector;
     action: SandboxDashboardAction;
     state: SandboxDashboardState;
 }
@@ -73,6 +79,7 @@ type UiContext = Pick<ExtensionContext, "mode"> & {
 type Tone = "text" | "muted" | "success" | "warning" | "danger";
 type Fact = { label: string; value: string; tone?: Tone };
 type Item = {
+    target?: DockerTargetSelector;
     label: string;
     value?: string;
     tone?: Tone;
@@ -117,7 +124,6 @@ function executableResult(
 }
 
 class SandboxDashboard implements Component {
-    private focus: "navigation" | "content";
     private snapshot: SandboxDashboardSnapshot;
     private section: SandboxSection;
     private selected = 0;
@@ -139,7 +145,8 @@ class SandboxDashboard implements Component {
         ) => void,
     ) {
         this.section = state.section;
-        this.focus = state.section === "Status" ? "navigation" : "content";
+        this.selected = state.selected ?? 0;
+        this.offset = state.offset ?? 0;
         this.snapshot = source.read();
         this.unsubscribe = subscribeSandboxRuntime(() => this.refresh());
         if (this.section === "Doctor") void this.inspect();
@@ -662,6 +669,22 @@ class SandboxDashboard implements Component {
                   ? this.snapshot.clients
                   : undefined;
         const facts: Fact[] = [
+            ...(configured.mode === "targeted" && !configured.targets.length
+                ? [
+                      {
+                          label: "Next step",
+                          value: "No services authorized. Add a Docker service.",
+                          tone: "warning" as const,
+                      },
+                  ]
+                : []),
+            {
+                label: "Engine information",
+                value:
+                    configured.mode === "full" || configured.engineInfo
+                        ? "Allowed"
+                        : "Not allowed",
+            },
             {
                 label: "Configured",
                 value:
@@ -721,6 +744,34 @@ class SandboxDashboard implements Component {
         return {
             facts,
             items: [
+                {
+                    label: configured.targets.length
+                        ? "Add a Docker service or edit access"
+                        : "Add a Docker service",
+                    action: "docker configure",
+                },
+                {
+                    label: "Manage engine information and revocations",
+                    action: "docker configure",
+                },
+                ...(config.docker.mode === "targeted"
+                    ? config.docker.targets
+                          .filter(
+                              (target) =>
+                                  target.selector.type !==
+                                  "ephemeral-container",
+                          )
+                          .map((target) => ({
+                              label:
+                                  "Manage " +
+                                  dockerSelectorLabel(target.selector),
+                              value:
+                                  (target.operations ?? []).join(", ") ||
+                                  "Inherited operations",
+                              action: "docker configure" as const,
+                              target: target.selector,
+                          }))
+                    : []),
                 {
                     label: "Target permissions",
                     details: [
@@ -788,12 +839,6 @@ class SandboxDashboard implements Component {
     }
     render(width: number): string[] {
         const colors = createUiColors(this.theme);
-        const valueText = (value: string, tone: Tone = "text") =>
-            colors[tone](
-                `${tone === "success" ? "✓ " : tone === "warning" ? "! " : tone === "danger" ? "× " : ""}${value}`,
-            );
-        const field = (fact: Fact) =>
-            colors.meta(`${fact.label}: `) + valueText(fact.value, fact.tone);
         const page = this.page();
         this.selected = Math.min(
             this.selected,
@@ -803,48 +848,42 @@ class SandboxDashboard implements Component {
         const frameWidth = Math.min(96, width);
         const focused =
             this.detail?.label ??
-            (this.focus === "navigation"
-                ? this.section
-                : (page.items[this.selected]?.label ?? this.section));
-        if (height < 7 || width < 24) {
-            this.capacity = 1;
+            page.items[this.selected]?.label ??
+            this.section;
+        if (height < 7 || width < 24)
             return [
                 colors.primary(this.section),
                 colors.text(focused),
-                colors.muted(
-                    this.detail
-                        ? "Esc back · ↑↓ scroll"
-                        : "Esc close · Tab panes",
-                ),
+                colors.muted("Esc close"),
             ]
                 .slice(0, height)
                 .map((line) => truncateToWidth(line, Math.max(1, width)));
-        }
         const resolved = resolveResponsivePanelLayout(frameWidth, [
-            {
-                mode: "split",
-                minWidth: 64,
-                panels: [{ minWidth: 18, maxWidth: 18 }, { minWidth: 40 }],
-            },
             { mode: "single", minWidth: 4, panels: [{ minWidth: 2 }] },
         ] as const);
         if (!resolved) return [];
-        const split = resolved.mode === "split";
-        const navigation = SANDBOX_SECTIONS.map((section) =>
+        const contentWidth = resolved.layout.panelWidths[0];
+        const field = (fact: Fact) =>
+            colors.meta(fact.label + ": ") +
+            colors[fact.tone ?? "text"](
+                `${fact.tone === "success" ? "✓ " : fact.tone === "warning" ? "! " : ""}${fact.value}`,
+            );
+        const tabs = SANDBOX_SECTIONS.map((section) =>
             section === this.section
-                ? colors.primary(this.theme.bold(`› ${section}`))
-                : colors.text(`  ${section}`),
-        );
-        const contentWidth = resolved.layout.panelWidths[split ? 1 : 0];
-        const prelude: string[] = [];
-        if (this.snapshot.actionProblem)
-            prelude.push(colors.danger("× Last action failed"));
-        if (this.snapshot.resolved?.shell.mode === "host")
-            prelude.push(colors.warning("⚠ Host mode: unsandboxed"));
-        if (this.snapshot.resolved?.config.docker.mode === "full")
-            prelude.push(colors.warning("⚠ Full Docker: host control"));
+                ? colors.primary(this.theme.bold("› " + section))
+                : colors.muted(section),
+        ).join("  ");
+        const prelude = [truncateToWidth(tabs, frameWidth - 4)];
+        if (frameWidth < 48)
+            prelude[0] = colors.primary(this.section + " · ←→ tabs");
         const body: string[] = [];
         const starts: number[] = [];
+        if (this.snapshot.resolved?.shell.mode === "host")
+            prelude.push(colors.warning("Host mode: unsandboxed"));
+        if (this.snapshot.resolved?.config.docker.mode === "full")
+            prelude.push(colors.warning("Full Docker: host control"));
+        if (this.snapshot.actionProblem)
+            body.push(colors.danger("Last action failed"));
         if (this.detail)
             body.push(
                 ...(this.detail.details ?? []).map((line) =>
@@ -854,90 +893,58 @@ class SandboxDashboard implements Component {
         else {
             body.push(...page.facts.map(field), "");
             for (let index = 0; index < page.items.length; index++) {
-                const item = page.items[index];
                 starts.push(wrapPanelLines(body, contentWidth).length);
-                const selected =
-                    this.focus === "content" && index === this.selected;
-                const marker = selected ? colors.primary("› ") : "  ";
-                const label = item.value
-                    ? field({
-                          label: item.label,
-                          value: item.value,
-                          tone: item.tone,
-                      })
-                    : colors.text(item.label);
+                const item = page.items[index];
                 body.push(
-                    marker + label + (item.details ? colors.subtle("  ▸") : ""),
+                    (index === this.selected ? colors.primary("› ") : "  ") +
+                        (item.value
+                            ? field({
+                                  label: item.label,
+                                  value: item.value,
+                                  tone: item.tone,
+                              })
+                            : colors.text(item.label)) +
+                        (item.details ? "  ▸" : ""),
                 );
             }
         }
-        const showContent = split || this.focus === "content";
-        const lines = wrapPanelLines(
-            showContent ? body : navigation,
-            contentWidth,
-        );
-        const titles = split
-            ? [
-                  renderPanelTitle(
-                      this.theme,
-                      "Sections",
-                      this.focus === "navigation",
-                  ),
-                  renderPanelTitle(
-                      this.theme,
-                      this.detail?.label ?? this.section,
-                      this.focus === "content",
-                  ),
-              ]
-            : [
-                  renderPanelTitle(
-                      this.theme,
-                      this.focus === "navigation"
-                          ? "Sections"
-                          : (this.detail?.label ?? this.section),
-                      true,
-                  ),
-              ];
         this.capacity = Math.max(
             1,
             computeFramedPanelViewportRows(height, {
                 preludeRows: prelude.length,
-                hasPanelTitles: true,
+                hasPanelTitles: height >= 11,
             }),
         );
-        if (showContent && !this.detail) {
-            const selectedStart = starts[this.selected] ?? 0;
-            if (selectedStart < this.offset) this.offset = selectedStart;
-            else if (selectedStart >= this.offset + this.capacity)
-                this.offset = selectedStart - this.capacity + 1;
+        const lines = wrapPanelLines(body, contentWidth);
+        if (!this.detail) {
+            const start = starts[this.selected] ?? 0;
+            if (start < this.offset) this.offset = start;
+            else if (start >= this.offset + this.capacity)
+                this.offset = start - this.capacity + 1;
         }
-        this.capacity = Math.min(
-            this.capacity,
-            Math.max(split ? navigation.length : 1, lines.length),
-        );
         const viewport = slicePanelViewport(lines, this.offset, this.capacity);
         this.offset = viewport.offset;
         this.maxScroll = viewport.maxOffset;
-        const navLines = split
-            ? wrapPanelLines(navigation, resolved.layout.panelWidths[0])
-            : [];
         return renderFramedPanels({
             theme: this.theme,
             title: `Sandbox · ${this.snapshot.resolved ? basename(this.snapshot.resolved.shell.projectRoot) : "Configuration problem"}`,
             layout: resolved.layout,
-            prelude,
-            panelTitles: titles,
-            panelRows: viewport.lines.map((line, index) =>
-                split ? [navLines[index] ?? "", line] : [line],
-            ),
+            prelude: wrapPanelLines(prelude, frameWidth - 4),
+            panelTitles:
+                height >= 11
+                    ? [
+                          renderPanelTitle(
+                              this.theme,
+                              this.detail?.label ?? this.section,
+                              true,
+                          ),
+                      ]
+                    : undefined,
+            panelRows: viewport.lines.map((line) => [line]),
             footer: colors.muted(
-                frameWidth < 64
-                    ? this.detail
-                        ? "Esc back · Tab panes"
-                        : "Esc close · Tab panes"
-                    : this.detail
-                      ? "Esc back · Tab panes · ↑↓/PgUp/PgDn scroll"
-                      : "Esc close · Tab panes · ↑↓ select · Enter open",
+                this.detail
+                    ? "Esc back · ↑↓/PgUp/PgDn scroll"
+                    : "Esc close · ←→ tabs · ↑↓ select · Enter open",
             ),
             maxHeight: height,
         });
@@ -972,6 +979,16 @@ class SandboxDashboard implements Component {
     }
     handleInput(data: string): void {
         if (this.settled || isKeyRelease(data)) return;
+        const latest = this.source.read();
+        if (
+            latest.runtime !== this.snapshot.runtime ||
+            latest.error !== this.snapshot.error ||
+            latest.actionProblem !== this.snapshot.actionProblem ||
+            latest.resolved?.shell.sandboxFingerprint !==
+                this.snapshot.resolved?.shell.sandboxFingerprint ||
+            latest.resolved?.shell.mode !== this.snapshot.resolved?.shell.mode
+        )
+            this.refresh(latest);
         if (matchesKey(data, Key.escape)) {
             if (this.detail) {
                 this.detail = undefined;
@@ -980,20 +997,19 @@ class SandboxDashboard implements Component {
             } else this.close();
             return;
         }
-        if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
-            this.focus = this.focus === "navigation" ? "content" : "navigation";
-            this.offset = 0;
-        } else if (matchesKey(data, Key.left)) {
-            this.focus = "navigation";
-            this.offset = 0;
-        } else if (this.focus === "navigation") {
-            if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
-                this.selectSection(matchesKey(data, Key.up) ? -1 : 1);
-                return;
-            }
-            if (!matchesKey(data, Key.right) && !matchesKey(data, Key.enter))
-                return;
-            this.focus = "content";
+        if (
+            !this.detail &&
+            (matchesKey(data, Key.left) ||
+                matchesKey(data, Key.right) ||
+                matchesKey(data, Key.tab) ||
+                matchesKey(data, Key.shift("tab")))
+        ) {
+            this.selectSection(
+                matchesKey(data, Key.left) || matchesKey(data, Key.shift("tab"))
+                    ? -1
+                    : 1,
+            );
+            return;
         } else if (this.detail) {
             let next = this.offset;
             if (matchesKey(data, Key.up)) next -= 1;
@@ -1021,21 +1037,27 @@ class SandboxDashboard implements Component {
                 this.detail = item;
                 this.offset = 0;
             } else if (item?.action) {
-                this.close(item.action);
+                this.close(item.action, item.target);
                 return;
             }
         } else return;
         this.tui.requestRender();
     }
-    private close(action?: SandboxDashboardAction): void {
+    private close(
+        action?: SandboxDashboardAction,
+        target?: DockerTargetSelector,
+    ): void {
         this.dispose();
         this.done(
             action
                 ? {
                       action,
+                      ...(target ? { target } : {}),
                       state: {
                           section: this.section,
                           executable: this.state.executable,
+                          selected: this.selected,
+                          offset: this.offset,
                       },
                   }
                 : undefined,

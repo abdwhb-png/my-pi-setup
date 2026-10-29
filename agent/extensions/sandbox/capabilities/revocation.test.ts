@@ -58,3 +58,10 @@ test("removing a mediated direct TCP port revokes admitted descendants", () => {
  expect(sandboxAccessRemoved(previous,expanded)).toBe(false);
  expect(sandboxAccessRemoved(previous,disabled)).toBe(true);
 });
+
+test("revoking engine information invalidates admissions independently of target selection", () => {
+ const base = validatePiSandboxConfig({}, { mode: "targeted", endpoint: "unix:///fixture.sock", targets: [] });
+ const allowed = { ...base, docker: { mode: "targeted" as const, endpoint: "unix:///fixture.sock", targets: [], engineInfo: true as const } };
+ expect(sandboxAccessRemoved(allowed, base)).toBe(true);
+ expect(sandboxAccessRemoved(base, allowed)).toBe(false);
+});

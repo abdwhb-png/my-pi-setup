@@ -61,7 +61,9 @@ function operations(value: unknown): DockerOperation[] | undefined {
         invalid("Duplicate Docker operation");
     return parsed;
 }
-function selector(value: unknown): DockerTargetSelector {
+export function parseDockerTargetSelector(
+    value: unknown,
+): DockerTargetSelector {
     const input = record(value, "Docker target selector");
     if (input.type === "container-name") {
         known(input, ["type", "name"], "container selector");
@@ -93,13 +95,14 @@ function target(value: unknown): DockerTargetGrant {
     )
         invalid("allowUnsafeTarget must be boolean");
     return {
-        selector: selector(input.selector),
+        selector: parseDockerTargetSelector(input.selector),
         operations: operations(input.operations),
         allowUnsafeTarget: input.allowUnsafeTarget === true,
     };
 }
 interface DockerCeiling {
     allowed: boolean;
+    allowEngineInfo: boolean;
     mode: "targeted" | "full";
     endpoint: string;
     operations?: DockerOperation[];
@@ -113,6 +116,7 @@ function parseCeiling(value: unknown): DockerCeiling {
         docker,
         [
             "allowed",
+            "allowEngineInfo",
             "mode",
             "endpoint",
             "operations",
@@ -124,6 +128,11 @@ function parseCeiling(value: unknown): DockerCeiling {
     );
     if (docker.allowed !== undefined && typeof docker.allowed !== "boolean")
         invalid("global docker.allowed must be boolean");
+    if (
+        docker.allowEngineInfo !== undefined &&
+        typeof docker.allowEngineInfo !== "boolean"
+    )
+        invalid("global docker.allowEngineInfo must be boolean");
     const mode = docker.mode ?? "targeted";
     if (mode !== "full" && mode !== "targeted")
         invalid("global docker.mode must be targeted or full");
@@ -156,7 +165,7 @@ function parseCeiling(value: unknown): DockerCeiling {
         invalid("global docker.unsafeTargets must be an array");
     const unsafeTargets = (
         Array.isArray(docker.unsafeTargets) ? docker.unsafeTargets : []
-    ).map(selector);
+    ).map(parseDockerTargetSelector);
     if (
         new Set(unsafeTargets.map(dockerSelectorKey)).size !==
         unsafeTargets.length
@@ -171,7 +180,7 @@ function parseCeiling(value: unknown): DockerCeiling {
         Array.isArray(docker.trustedExecTargets)
             ? docker.trustedExecTargets
             : []
-    ).map(selector);
+    ).map(parseDockerTargetSelector);
     if (
         new Set(trustedExecTargets.map(dockerSelectorKey)).size !==
         trustedExecTargets.length
@@ -188,6 +197,7 @@ function parseCeiling(value: unknown): DockerCeiling {
         );
     return {
         allowed: docker.allowed === true,
+        allowEngineInfo: docker.allowEngineInfo === true,
         mode,
         endpoint,
         operations: limits,
@@ -198,12 +208,18 @@ function parseCeiling(value: unknown): DockerCeiling {
 }
 function parseProject(value: unknown): {
     enabled: boolean;
+    engineInfo: boolean;
     targets?: DockerTargetGrant[];
 } {
     const project = record(value, "project docker");
-    known(project, ["enabled", "targets"], "project docker");
+    known(project, ["enabled", "targets", "engineInfo"], "project docker");
     if (project.enabled !== undefined && typeof project.enabled !== "boolean")
         invalid("project docker.enabled must be boolean");
+    if (
+        project.engineInfo !== undefined &&
+        typeof project.engineInfo !== "boolean"
+    )
+        invalid("project docker.engineInfo must be boolean");
     const targets =
         project.targets === undefined
             ? undefined
@@ -240,7 +256,11 @@ function parseProject(value: unknown): {
                       invalid("Duplicate Docker target");
                   return parsed;
               })();
-    return { enabled: project.enabled === true, targets };
+    return {
+        enabled: project.enabled === true,
+        engineInfo: project.engineInfo === true,
+        targets,
+    };
 }
 export function dockerSelectorKey(selector: DockerTargetSelector): string {
     if (selector.type === "container-name")
@@ -276,6 +296,10 @@ export function resolveDockerPolicy(
     if (!project.enabled || !ceiling.allowed) return { mode: "disabled" };
     if (project.targets === undefined && ceiling.mode === "full")
         return { mode: "full", endpoint: ceiling.endpoint };
+    if (project.engineInfo && !ceiling.allowEngineInfo)
+        invalid(
+            "Project requested Docker engine information beyond global limits",
+        );
     const permitted = new Set(ceiling.operations ?? DOCKER_OPERATIONS);
     const unsafe = new Set(ceiling.unsafeTargets.map(dockerSelectorKey));
     const trustedExec = new Set(
@@ -298,7 +322,12 @@ export function resolveDockerPolicy(
                 : {}),
         };
     });
-    return { mode: "targeted", endpoint: ceiling.endpoint, targets };
+    return {
+        mode: "targeted",
+        endpoint: ceiling.endpoint,
+        targets,
+        ...(project.engineInfo ? { engineInfo: true as const } : {}),
+    };
 }
 export function dockerPolicyHasUnsafeTargets(
     policy: SandboxDockerPolicy,

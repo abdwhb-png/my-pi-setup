@@ -27,6 +27,7 @@ import {
     type CapabilityAuthority,
 } from "./legacy-authority.ts";
 import { resolveShellPolicy } from "./policy.ts";
+import { withSandboxPublicationLockSync } from "./publication-lock.ts";
 
 interface SourceSnapshot {
     path: string;
@@ -97,7 +98,7 @@ function snapshot(path: string): SourceSnapshot {
 function assertUnchanged(source: SourceSnapshot): void {
     if (snapshot(source.path).digest !== source.digest) {
         throw new Error(
-            "Migration source changed after preview: " + source.path,
+            "Sandbox configuration changed after preview: " + source.path,
         );
     }
 }
@@ -460,43 +461,48 @@ export function recoverIncompleteMigration(
 ): MigrationRecoveryResult | undefined {
     const markerPath = globalPath + ".migration";
     if (!existsSync(markerPath)) return undefined;
-    const marker = readMarker(markerPath, globalPath);
-    const states = marker.destinations.map(destinationState);
-    if (states.some((state) => state === "unexpected"))
-        throw new Error(
-            "Migration recovery refused because a destination changed after interruption",
-        );
-    if (states.every((state) => state === "published" || state === "both")) {
-        const machineId = record(
-            JSON.parse(marker.destinations[0].body),
-        )?.machineId;
-        if (typeof machineId !== "string")
-            throw new Error("Migration marker machine identity is invalid");
-        validateDocuments(
-            marker.destinations[0].path,
-            marker.destinations[1].path,
-            machineId,
-        );
+    return withSandboxPublicationLockSync(globalPath, () => {
+        if (!existsSync(markerPath)) return undefined;
+        const marker = readMarker(markerPath, globalPath);
+        const states = marker.destinations.map(destinationState);
+        if (states.some((state) => state === "unexpected"))
+            throw new Error(
+                "Migration recovery refused because a destination changed after interruption",
+            );
+        if (
+            states.every((state) => state === "published" || state === "both")
+        ) {
+            const machineId = record(
+                JSON.parse(marker.destinations[0].body),
+            )?.machineId;
+            if (typeof machineId !== "string")
+                throw new Error("Migration marker machine identity is invalid");
+            validateDocuments(
+                marker.destinations[0].path,
+                marker.destinations[1].path,
+                machineId,
+            );
+            removeTemporaryPaths(marker);
+            removeDurably(markerPath);
+            return { recovered: "completed" };
+        }
+        for (const [index, destination] of marker.destinations.entries()) {
+            if (states[index] === "published")
+                restoreDestination(destination, filesystem);
+        }
+        for (const destination of marker.destinations) {
+            if (
+                destinationState(destination) !== "before" &&
+                destinationState(destination) !== "both"
+            )
+                throw new Error(
+                    "Migration recovery could not verify restored destination",
+                );
+        }
         removeTemporaryPaths(marker);
         removeDurably(markerPath);
-        return { recovered: "completed" };
-    }
-    for (const [index, destination] of marker.destinations.entries()) {
-        if (states[index] === "published")
-            restoreDestination(destination, filesystem);
-    }
-    for (const destination of marker.destinations) {
-        if (
-            destinationState(destination) !== "before" &&
-            destinationState(destination) !== "both"
-        )
-            throw new Error(
-                "Migration recovery could not verify restored destination",
-            );
-    }
-    removeTemporaryPaths(marker);
-    removeDurably(markerPath);
-    return { recovered: "restored" };
+        return { recovered: "restored" };
+    });
 }
 
 /** Reads historic inputs without mutation. The caller must select the proposed global ceiling. */
@@ -649,109 +655,155 @@ export function publishLegacyMigration(
             inactive: options.preview.inactive,
         };
     }
-    const globalBody =
-        JSON.stringify(
-            serializeGlobal(options.machineId, options.globalCeiling),
-            null,
-            2,
-        ) + "\n";
-    const projectBody =
-        JSON.stringify(
+    const published = publishSandboxDocuments({
+        globalPath: options.globalPath,
+        projectPath: options.projectPath,
+        machineId: options.machineId,
+        sources: options.preview.sources,
+        globalLayer: serializeGlobal(options.machineId, options.globalCeiling),
+        projectLayer:
             options.projectOverride ?? options.preview.proposedProject,
-            null,
-            2,
-        ) + "\n";
-    mkdirSync(dirname(options.globalPath), { recursive: true, mode: 0o700 });
-    mkdirSync(dirname(options.projectPath), { recursive: true, mode: 0o700 });
-    const globalTemporaryPath =
-        options.globalPath + "." + process.pid + "." + randomUUID() + ".tmp";
-    const projectTemporaryPath =
-        options.projectPath + "." + process.pid + "." + randomUUID() + ".tmp";
-    writeDurably(globalTemporaryPath, globalBody);
-    writeDurably(projectTemporaryPath, projectBody);
-    try {
-        validateDocuments(
+        filesystem: options.filesystem,
+    });
+    return { ...published, inactive: options.preview.inactive };
+}
+
+export function previewSandboxDocuments(
+    globalPath: string,
+    projectPath: string,
+) {
+    return [snapshot(globalPath), snapshot(projectPath)];
+}
+
+export function publishSandboxDocuments(options: {
+    globalPath: string;
+    projectPath: string;
+    machineId: string;
+    sources: SourceSnapshot[];
+    globalLayer: SandboxConfigLayer;
+    projectLayer: SandboxConfigLayer;
+    filesystem?: MigrationFileOperations;
+}): Omit<PublishMigrationResult, "inactive"> {
+    return withSandboxPublicationLockSync(options.globalPath, () => {
+        const markerPath = options.globalPath + ".migration";
+        if (existsSync(markerPath))
+            throw new Error(
+                "Sandbox update is incomplete. Run /sandbox recover.",
+            );
+        options.sources.forEach(assertUnchanged);
+        const globalBody = JSON.stringify(options.globalLayer, null, 2) + "\n";
+        const projectBody =
+            JSON.stringify(options.projectLayer, null, 2) + "\n";
+        mkdirSync(dirname(options.globalPath), {
+            recursive: true,
+            mode: 0o700,
+        });
+        mkdirSync(dirname(options.projectPath), {
+            recursive: true,
+            mode: 0o700,
+        });
+        const globalTemporaryPath =
+            options.globalPath +
+            "." +
+            process.pid +
+            "." +
+            randomUUID() +
+            ".tmp";
+        const projectTemporaryPath =
+            options.projectPath +
+            "." +
+            process.pid +
+            "." +
+            randomUUID() +
+            ".tmp";
+        writeDurably(globalTemporaryPath, globalBody);
+        writeDurably(projectTemporaryPath, projectBody);
+        try {
+            validateDocuments(
+                globalTemporaryPath,
+                projectTemporaryPath,
+                options.machineId,
+            );
+        } catch (error) {
+            unlinkSync(globalTemporaryPath);
+            unlinkSync(projectTemporaryPath);
+            throw error;
+        }
+        options.sources.forEach(assertUnchanged);
+        const beforeGlobal = snapshot(options.globalPath);
+        const beforeProject = snapshot(options.projectPath);
+        const snapshots = new Map(
+            [...options.sources, beforeGlobal, beforeProject].map((source) => [
+                source.path,
+                source,
+            ]),
+        );
+        const archives = [...snapshots.values()]
+            .map(archive)
+            .filter((entry): entry is ArchiveRecord => entry !== undefined);
+        options.sources.forEach(assertUnchanged);
+        const archiveByPath = new Map(
+            archives.map((entry) => [entry.path, entry]),
+        );
+        const destinations: MigrationDestination[] = [
+            {
+                path: options.globalPath,
+                body: globalBody,
+                digest: sha256(globalBody),
+                before: { digest: beforeGlobal.digest },
+                ...(archiveByPath.get(options.globalPath)
+                    ? {
+                          archivePath: archiveByPath.get(options.globalPath)!
+                              .archivePath,
+                      }
+                    : {}),
+            },
+            {
+                path: options.projectPath,
+                body: projectBody,
+                digest: sha256(projectBody),
+                before: { digest: beforeProject.digest },
+                ...(archiveByPath.get(options.projectPath)
+                    ? {
+                          archivePath: archiveByPath.get(options.projectPath)!
+                              .archivePath,
+                      }
+                    : {}),
+            },
+        ];
+        const marker: MigrationMarker = {
+            version: 1,
+            state: "publishing",
+            destinations,
+            archives,
+            temporaryPaths: [globalTemporaryPath, projectTemporaryPath],
+        };
+        atomicWrite(
+            markerPath,
+            JSON.stringify(marker, null, 2) + "\n",
+            options.filesystem ?? {},
+        );
+        (options.filesystem?.rename ?? renameSync)(
             globalTemporaryPath,
+            options.globalPath,
+        );
+        syncPath(dirname(options.globalPath));
+        (options.filesystem?.rename ?? renameSync)(
             projectTemporaryPath,
+            options.projectPath,
+        );
+        syncPath(dirname(options.projectPath));
+        validateDocuments(
+            options.globalPath,
+            options.projectPath,
             options.machineId,
         );
-    } catch (error) {
-        unlinkSync(globalTemporaryPath);
-        unlinkSync(projectTemporaryPath);
-        throw error;
-    }
-    options.preview.sources.forEach(assertUnchanged);
-    const beforeGlobal = snapshot(options.globalPath);
-    const beforeProject = snapshot(options.projectPath);
-    const snapshots = new Map(
-        [...options.preview.sources, beforeGlobal, beforeProject].map(
-            (source) => [source.path, source],
-        ),
-    );
-    const archives = [...snapshots.values()]
-        .map(archive)
-        .filter((entry): entry is ArchiveRecord => entry !== undefined);
-    options.preview.sources.forEach(assertUnchanged);
-    const archiveByPath = new Map(archives.map((entry) => [entry.path, entry]));
-    const destinations: MigrationDestination[] = [
-        {
-            path: options.globalPath,
-            body: globalBody,
-            digest: sha256(globalBody),
-            before: { digest: beforeGlobal.digest },
-            ...(archiveByPath.get(options.globalPath)
-                ? {
-                      archivePath: archiveByPath.get(options.globalPath)!
-                          .archivePath,
-                  }
-                : {}),
-        },
-        {
-            path: options.projectPath,
-            body: projectBody,
-            digest: sha256(projectBody),
-            before: { digest: beforeProject.digest },
-            ...(archiveByPath.get(options.projectPath)
-                ? {
-                      archivePath: archiveByPath.get(options.projectPath)!
-                          .archivePath,
-                  }
-                : {}),
-        },
-    ];
-    const marker: MigrationMarker = {
-        version: 1,
-        state: "publishing",
-        destinations,
-        archives,
-        temporaryPaths: [globalTemporaryPath, projectTemporaryPath],
-    };
-    atomicWrite(
-        markerPath,
-        JSON.stringify(marker, null, 2) + "\n",
-        options.filesystem ?? {},
-    );
-    (options.filesystem?.rename ?? renameSync)(
-        globalTemporaryPath,
-        options.globalPath,
-    );
-    syncPath(dirname(options.globalPath));
-    (options.filesystem?.rename ?? renameSync)(
-        projectTemporaryPath,
-        options.projectPath,
-    );
-    syncPath(dirname(options.projectPath));
-    validateDocuments(
-        options.globalPath,
-        options.projectPath,
-        options.machineId,
-    );
-    removeDurably(markerPath);
-    return {
-        published: true,
-        archives: archives.map((entry) => entry.archivePath),
-        inactive: options.preview.inactive,
-    };
+        removeDurably(markerPath);
+        return {
+            published: true,
+            archives: archives.map((entry) => entry.archivePath),
+        };
+    });
 }
 /** Kept for callers that named cancellation; it now performs verified recovery. */
 export function cancelIncompleteMigration(

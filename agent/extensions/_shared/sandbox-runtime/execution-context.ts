@@ -228,6 +228,9 @@ function parseDockerSummary(value: unknown): DockerAccessSummary | undefined {
     return {
         mode: docker.mode as DockerAccessSummary["mode"],
         profile: docker.profile,
+        ...(typeof docker.engineInfo === "boolean"
+            ? { engineInfo: docker.engineInfo }
+            : {}),
         targets,
         hostAccessException: docker.hostAccessException,
         ...(typeof docker.boundedInspection === "boolean"

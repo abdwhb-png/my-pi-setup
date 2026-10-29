@@ -275,3 +275,11 @@ test("mediated direct admission requires schema two and exact effective ports", 
         ),
     ).toThrow(/schema|mediated|port/i);
 });
+
+test("engine-information authority cannot enter an admission with a malformed value or wrong mode", () => {
+    for (const docker of [
+        { mode: "targeted", endpoint: "unix:///fixture.sock", targets: [], engineInfo: "true" },
+        { mode: "disabled", engineInfo: true },
+        { mode: "full", endpoint: "unix:///fixture.sock", engineInfo: true },
+    ]) expect(() => parseSandboxAdmissionReport({ ...receipt(), docker })).toThrow("invalid Docker rules");
+});

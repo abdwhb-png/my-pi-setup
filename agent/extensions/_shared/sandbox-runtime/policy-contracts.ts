@@ -40,6 +40,7 @@ export type SandboxDockerPolicy =
           mode: "targeted";
           endpoint: string;
           targets: DockerTargetGrant[];
+          engineInfo?: true;
       }
     | { mode: "full"; endpoint: string };
 

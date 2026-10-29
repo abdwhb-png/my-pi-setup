@@ -149,3 +149,10 @@ test("validates disabled Docker sections and project-only exceptions before acti
         },
     })).toThrow("Project cannot add a Docker unsafe exception");
 });
+
+test("engine information requires a distinct global permission and project request", () => {
+    expect(resolveDockerPolicy({ globalConfig: { allowed: true, allowEngineInfo: true }, projectConfig: { enabled: true, engineInfo: true } })).toMatchObject({ mode: "targeted", engineInfo: true, targets: [] });
+    expect(resolveDockerPolicy({ globalConfig: { allowed: true, allowEngineInfo: true }, projectConfig: { enabled: true } })).not.toHaveProperty("engineInfo");
+    expect(() => resolveDockerPolicy({ globalConfig: { allowed: true }, projectConfig: { enabled: true, engineInfo: true } })).toThrow("engine information");
+    expect(() => resolveDockerPolicy({ globalConfig: { allowEngineInfo: "true" } })).toThrow("boolean");
+});

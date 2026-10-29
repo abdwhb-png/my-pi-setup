@@ -161,6 +161,8 @@ export function sandboxAccessRemoved(
             return true;
         if (previous.docker.mode === "full") return next.docker.mode !== "full";
         if (next.docker.mode === "targeted") {
+            if (previous.docker.engineInfo && !next.docker.engineInfo)
+                return true;
             const targets = next.docker.targets;
             return previous.docker.targets.some((old) => {
                 const current = targets.find(

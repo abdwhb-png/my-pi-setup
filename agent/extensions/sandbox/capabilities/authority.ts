@@ -407,7 +407,7 @@ export function readProjectSandboxConfig(
     const layer = validateLayer(root, "project");
     if (layer.docker !== undefined) {
         const docker = record(layer.docker, "project docker");
-        known(docker, ["enabled", "targets"], "project docker");
+        known(docker, ["enabled", "targets", "engineInfo"], "project docker");
         if (docker.enabled !== undefined && typeof docker.enabled !== "boolean")
             invalid("project docker.enabled must be boolean");
     }

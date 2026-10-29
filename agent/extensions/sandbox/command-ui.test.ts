@@ -105,16 +105,7 @@ function section(
     from: SandboxSection = "Status",
 ) {
     const names = SANDBOX_SECTIONS;
-    view.handleInput?.("\x1b[D");
-    for (
-        let step = 0;
-        step <
-        (names.indexOf(name) - names.indexOf(from) + names.length) %
-            names.length;
-        step++
-    )
-        view.handleInput?.("\x1b[B");
-    view.handleInput?.("\x1b[C");
+    for (let step = 0; step < (names.indexOf(name) - names.indexOf(from) + names.length) % names.length; step++) view.handleInput?.("\x1b[C");
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -122,7 +113,6 @@ describe("sandbox dashboard", () => {
     it("keeps label and value styling separate in technical details", async () => {
         const f = fixture();
         const view = await f.opened;
-        view.handleInput?.("\t");
         view.handleInput?.("\x1b[B");
         view.handleInput?.("\x1b[B");
         view.handleInput?.("\r");
@@ -130,25 +120,13 @@ describe("sandbox dashboard", () => {
         expect(f.fg).toHaveBeenCalledWith("muted", "Runtime: ");
         expect(f.fg).toHaveBeenCalledWith("text", "enabled");
     });
-    it("uses section navigation beside content and colors labels separately", async () => {
-        const f = fixture();
-        const view = await f.opened;
-        const screen = text(view);
-        expect(screen).toContain("Sections");
-        expect(screen).not.toContain("[Status]");
-        expect(
-            screen
-                .split("\n")
-                .some(
-                    (line) =>
-                        line.includes("Status") && line.includes("Shell mode:"),
-                ),
-        ).toBe(true);
+    it("shows horizontal tabs and separates label styling", async () => {
+        const f = fixture(); const view = await f.opened;
+        expect(text(view)).not.toContain("Sections");
+        expect(text(view)).toContain("› Status  Permissions");
         expect(f.fg).toHaveBeenCalledWith("muted", "Shell mode: ");
-        expect(f.fg).toHaveBeenCalledWith("text", "Sandbox");
-        view.handleInput?.("\x1b[B");
+        view.handleInput?.("\x1b[C");
         expect(text(view)).toContain("Files:");
-        view.handleInput?.("\t");
         view.handleInput?.("\r");
         expect(text(view)).toContain("Read access");
     });
@@ -157,11 +135,6 @@ describe("sandbox dashboard", () => {
         const view = await f.opened;
         const message = `Action refused: ${"reason ".repeat(20)}precise final cause`;
         f.change({ ...f.data.snapshot, actionProblem: message });
-        view.handleInput?.("\x1b[C");
-        view.handleInput?.("\x1b[B");
-        view.handleInput?.("\r");
-        text(view);
-        view.handleInput?.("\x1b[A");
         view.handleInput?.("\r");
         expect(text(view)).toContain("precise final");
         expect(text(view)).toContain("cause");
@@ -187,7 +160,7 @@ describe("sandbox dashboard", () => {
         expect(text(view)).not.toContain("Global authority");
         view.handleInput?.("\x1b");
         view.handleInput?.("\x1b");
-        expect(await f.closed).toEqual({
+        expect(await f.closed).toMatchObject({
             action: "inspect-command",
             state: { section: "Doctor", executable: undefined },
         });
@@ -215,14 +188,14 @@ describe("sandbox dashboard", () => {
             expect(output).not.toMatch(/\[\d+\/\d+↑↓\]/);
             expect(output).toContain("✓ Ready");
             expect(output).toContain("✓ Applied");
-            for (const role of ["success", "accent", "muted", "dim", "text"])
+            for (const role of ["success", "accent", "muted", "text"])
                 expect(f.fg.mock.calls.some((call) => call[0] === role)).toBe(
                     true,
                 );
             view.handleInput?.("\x1b");
             expect(await f.closed).toBeUndefined();
         });
-    for (const [left, right, enter, escape, down, up] of [
+    for (const [left, right, enter, escape] of [
         ["\x1b[D", "\x1b[C", "\r", "\x1b", "\x1b[B", "\x1b[A"],
         [
             "\x1b[1;1D",
@@ -236,10 +209,9 @@ describe("sandbox dashboard", () => {
         it(`navigates panes, sections and controls with ${right === "\x1b[C" ? "legacy" : "Kitty"} keys`, async () => {
             const f = fixture();
             const view = await f.opened;
-            view.handleInput?.(down!);
+            view.handleInput?.(right!);
             expect(text(view)).toContain("Files:");
             expect(text(view)).not.toContain("grant-29");
-            view.handleInput?.(right!);
             view.handleInput?.(enter!);
             expect(text(view)).toContain("Read access");
             view.handleInput?.("\x1b[F");
@@ -247,21 +219,12 @@ describe("sandbox dashboard", () => {
             view.handleInput?.(escape!);
             expect(text(view)).toContain("Manage local installations");
             view.handleInput?.(left!);
-            view.handleInput?.(up!);
             expect(text(view)).toContain("Shell mode:");
             view.handleInput?.(enter!);
-            view.handleInput?.(down!);
-            view.handleInput?.(enter!);
-            expect(text(view)).toContain("Shell mode:");
-            view.handleInput?.(up!);
-            view.handleInput?.(enter!);
-            expect(await f.closed).toEqual({
-                action: "mode",
-                state: { section: "Status", executable: undefined },
-            });
+            expect(await f.closed).toMatchObject({ action: "mode", state: { section: "Status", executable: undefined } });
             expect(f.redraw).toHaveBeenCalled();
         });
-    it("switches pane focus with Tab and Shift-Tab and ignores key releases", async () => {
+    it("switches tabs with Tab and Shift-Tab and ignores key releases", async () => {
         const f = fixture();
         const view = await f.opened;
         const first = text(view);
@@ -271,10 +234,10 @@ describe("sandbox dashboard", () => {
         expect(f.redraw).not.toHaveBeenCalled();
         view.handleInput?.("\t");
         view.handleInput?.("\x1b[B");
-        expect(text(view)).toContain("Shell mode:");
+        expect(text(view)).toContain("Files:");
         view.handleInput?.("\x1b[Z");
         view.handleInput?.("\x1b[B");
-        expect(text(view)).toContain("Files:");
+        expect(text(view)).toContain("Shell mode:");
     });
     it("shows pending policy instead of an applied receipt or cached Docker success", async () => {
         const f = fixture();
@@ -291,9 +254,7 @@ describe("sandbox dashboard", () => {
                 compose: { state: "exposed", issues: [] },
             },
         });
-        view.handleInput?.("\x1b[C");
         view.handleInput?.("\x1b[B");
-        view.handleInput?.("\r");
         expect(text(view)).toContain("Changes pending");
         expect(text(view)).not.toContain("Applied");
         section(view, "Docker");
@@ -538,7 +499,6 @@ describe("sandbox dashboard", () => {
     it("preserves selection and visible close controls on narrow, short and resized terminals", async () => {
         const f = fixture(6);
         const view = await f.opened;
-        view.handleInput?.("\x1b[C");
         view.handleInput?.("\x1b[B");
         expect(text(view, 32)).toContain("Refresh");
         for (const [rows, width] of [
@@ -557,5 +517,17 @@ describe("sandbox dashboard", () => {
                 "Esc",
             );
         }
+    });
+});
+
+describe("action-oriented navigation", () => {
+    it("switches tabs directly and offers target configuration for an empty Docker policy", async () => {
+        const f = fixture();
+        const view = await f.opened;
+        for (let i = 0; i < 3; i++) view.handleInput?.("\x1b[C");
+        const screen = text(view);
+        expect(screen).toContain("Add a Docker service");
+        expect(screen).not.toContain("Sections");
+        expect(screen).not.toContain("Tab panes");
     });
 });

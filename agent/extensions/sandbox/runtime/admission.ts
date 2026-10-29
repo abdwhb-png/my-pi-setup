@@ -204,6 +204,8 @@ export function parseSandboxAdmissionReport(
         !record(docker) ||
         !["disabled", "targeted", "full"].includes(String(docker.mode)) ||
         (docker.mode !== "disabled" && typeof docker.endpoint !== "string") ||
+        (docker.engineInfo !== undefined &&
+            (docker.mode !== "targeted" || docker.engineInfo !== true)) ||
         (docker.mode === "targeted" &&
             (!Array.isArray(docker.targets) ||
                 !docker.targets.every(

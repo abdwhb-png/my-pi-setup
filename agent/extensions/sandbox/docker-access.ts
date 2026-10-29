@@ -1,6 +1,9 @@
 import { request as httpRequest } from "node:http";
 import { createBashOperations } from "../_shared/command-execution/exec.ts";
-import type { DockerTargetSelector } from "./runtime/contracts.ts";
+import type {
+    DockerTargetSelector,
+    SandboxDockerPolicy,
+} from "./runtime/contracts.ts";
 import type { PiSandboxConfig } from "./runtime/policies.ts";
 import {
     createSandboxService,
@@ -17,7 +20,7 @@ export interface DockerTargetAccess {
         id: string;
         name: string;
         state: string;
-        access: "accessible" | "excluded";
+        access: "accessible" | "excluded" | "unverified";
         facts: string[];
         mounts: { source: string; destination: string; writable: boolean }[];
     }[];
@@ -34,7 +37,30 @@ export async function inspectDockerAccess(
     config: PiSandboxConfig,
     dependencies: DockerInspectionDependencies = {},
 ): Promise<DockerTargetAccess[]> {
-    const policy = config.docker;
+    const targets = await inspectDockerMetadata(config.docker, dependencies);
+    if (targets.some((target) => target.containers.length > 0)) {
+        // Ask the real broker. The UI never duplicates its authorization rules.
+        const visible = dependencies.visibleIds
+            ? await dependencies.visibleIds(cwd, config)
+            : await probeVisibleIds(
+                  cwd,
+                  config,
+                  dependencies.createService?.bind(dependencies),
+              );
+        for (const target of targets)
+            for (const container of target.containers) {
+                container.access = visible.has(container.id)
+                    ? "accessible"
+                    : "excluded";
+            }
+    }
+    return targets;
+}
+
+export async function inspectDockerMetadata(
+    policy: SandboxDockerPolicy,
+    dependencies: Pick<DockerInspectionDependencies, "request"> = {},
+): Promise<DockerTargetAccess[]> {
     if (policy.mode !== "targeted") return [];
     const request = dependencies.request?.bind(dependencies) ?? requestEngine;
     const targets: DockerTargetAccess[] = [];
@@ -94,7 +120,7 @@ export async function inspectDockerAccess(
                     typeof summary.State === "string"
                         ? summary.State
                         : "unknown",
-                access: "excluded",
+                access: "unverified",
                 facts: describeAccessFacts(inspect),
                 mounts: Array.isArray(inspect.Mounts)
                     ? inspect.Mounts.map(object)
@@ -114,22 +140,6 @@ export async function inspectDockerAccess(
             });
         }
         targets.push({ selector, containers });
-    }
-    if (targets.some((target) => target.containers.length > 0)) {
-        // Ask the real broker. The UI never duplicates its authorization rules.
-        const visible = dependencies.visibleIds
-            ? await dependencies.visibleIds(cwd, config)
-            : await probeVisibleIds(
-                  cwd,
-                  config,
-                  dependencies.createService?.bind(dependencies),
-              );
-        for (const target of targets)
-            for (const container of target.containers) {
-                container.access = visible.has(container.id)
-                    ? "accessible"
-                    : "excluded";
-            }
     }
     return targets;
 }
@@ -249,8 +259,13 @@ function requestEngine(path: string, endpoint: string): Promise<unknown> {
 async function probeVisibleIds(
     cwd: string,
     config: PiSandboxConfig,
-    createService: (config: PiSandboxConfig) => SandboxService = (config) =>
-        createSandboxService({ backend: createZeroboxBackend(), config }),
+    createService: (policyConfig: PiSandboxConfig) => SandboxService = (
+        policyConfig,
+    ) =>
+        createSandboxService({
+            backend: createZeroboxBackend(),
+            config: policyConfig,
+        }),
 ): Promise<Set<string>> {
     // A temporary read-only diagnostic grant tests target eligibility, even when
     // the real grant intentionally omits ps. No authority file is changed.
@@ -319,7 +334,7 @@ export function formatDockerAccess(targets: DockerTargetAccess[]): string[] {
             ? [`Docker target ${selector}: absent`]
             : target.containers.flatMap((container) => [
                   `Docker container ${container.name}: ${container.state}`,
-                  `  Target access: ${container.access === "excluded" ? "blocked by the broker for this grant" : "eligible for this grant (operation execution not tested)"}`,
+                  `  Target access: ${container.access === "unverified" ? "metadata inspected; broker access not checked" : container.access === "excluded" ? "blocked by the broker for this grant" : "eligible for this grant (operation execution not tested)"}`,
                   ...container.facts.map((fact) => `  ${fact}`),
                   ...container.mounts.map(
                       (mount) =>
@@ -332,4 +347,36 @@ export function formatDockerAccess(targets: DockerTargetAccess[]): string[] {
                       : []),
               ]);
     });
+}
+
+/** User-initiated discovery only; never installed as a sandbox-visible Engine route. */
+export async function discoverDockerTargets(
+    endpoint: string,
+    dependencies: Pick<DockerInspectionDependencies, "request"> = {},
+): Promise<DockerTargetSelector[]> {
+    const request = dependencies.request?.bind(dependencies) ?? requestEngine;
+    const response = await request("/containers/json?all=1", endpoint);
+    if (!Array.isArray(response))
+        throw new Error("Docker container list is invalid");
+    const selectors = new Map<string, DockerTargetSelector>();
+    for (const value of response) {
+        const summary = object(value);
+        const labels = object(summary.Labels ?? {});
+        const project = labels["com.docker.compose.project"];
+        const service = labels["com.docker.compose.service"];
+        const name = strings(summary.Names)[0]?.replace(/^\//, "");
+        const selector: DockerTargetSelector | undefined =
+            typeof project === "string" &&
+            project &&
+            typeof service === "string" &&
+            service
+                ? { type: "compose-service", project, service }
+                : name
+                  ? { type: "container-name", name }
+                  : undefined;
+        if (selector) selectors.set(JSON.stringify(selector), selector);
+    }
+    return [...selectors.values()].toSorted((a, b) =>
+        JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    );
 }

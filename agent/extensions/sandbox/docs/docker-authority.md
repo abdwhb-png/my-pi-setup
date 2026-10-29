@@ -12,6 +12,24 @@ Broker access to the project's targets within global security limits
 
 An absent or false global authorization disables Docker everywhere. An absent project file, Docker section or enabled flag leaves Docker disabled in that project. Each project selects its own containers or Compose services without registering ordinary targets globally.
 
+## Configure access interactively
+
+Open `/sandbox docker` and choose **Add a Docker service**, or run `/sandbox docker configure`. The panel keeps horizontal section tabs; use left/right to change section, up/down to choose an action, Enter to open, and Escape to go back.
+
+The configuration workflow discovers existing containers, including stopped ones, and groups Compose replicas using their actual project/service labels. Editing an existing grant preserves its stored selector, including a container name for a Compose-managed container. If no global document exists, the workflow prepares its machine identity in memory and creates it only after final consent. It does not execute Compose files or expose unrestricted host inventory to sandbox commands. Choose read-only operations, command execution, or start/stop/restart within global limits. Review the selected service's mounts and host access, then confirm the final permission summary. Nothing is selected or saved automatically.
+
+Host-access and permanent-exec exceptions are remembered globally, but each project must still select the service and operations. Editing project operations does not revoke global trust. Removing a project service and revoking its global host-access exception are separate actions. Global revocation affects every project selecting that service. Commands in an approved container may access mounted host files independently of the shell's filesystem restrictions.
+
+Configuration updates preserve unrelated settings and use the same durable publication/recovery mechanism as migration. All participating configuration writers and recovery share a Linux kernel file lock through `/usr/bin/flock`. The owner-only `.publish-lock` file retains its inode; do not delete it to release an active lock. The kernel releases ownership on process exit, including abrupt termination, so recovery never relies on a stale-lock timeout. Restart existing Pi sessions after upgrading so every writer uses the new lock. A concurrent edit or changed container inspection requires a fresh approval. An interrupted update blocks new admissions until `/sandbox recover` verifies recovery. Saved configuration and successful runtime activation are reported separately.
+
+Only existing containers are supported by targeted access. Container creation, image builds and other unsupported Engine routes remain refused.
+
+### Engine information
+
+The **Engine information permission** action controls `docker info`. Global `docker.allowEngineInfo` authorizes the capability; project `docker.engineInfo` requests it. Both default to false. This permission is independent of target operations and allows only `GET /info`, including its versioned route. It can disclose host identity, versions, container/image counts and daemon configuration. Full mode already includes this access.
+
+The permission requires a qualified Zerobox runtime supporting the optional `engineInfo` policy field. Older runtimes reject that field instead of silently granting access. Revocation invalidates runtimes retaining the removed capability. A successful information query does not establish permission to execute commands in any container.
+
 ## Configure the global ceiling
 
 Add a Docker section to the existing `~/.pi/agent/config/sandbox.json`, preserving its version and machine identity:

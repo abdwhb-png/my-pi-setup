@@ -67,8 +67,10 @@ Docker needs global `allowed: true` with an explicit policy and project `enabled
 
 | Diagnostic or symptom | Meaning |
 | --- | --- |
-| Docker enabled but no containers are available | Declare targets in the project's `.pi/config/sandbox.json`. Global authorization alone selects no target. |
+| Docker enabled but no containers are available | Use `/sandbox docker configure` to add a service. Global authorization alone selects no target. |
 | Project attempts to set endpoint, mode or unsafe exception | These fields belong only in the global document. Select project targets and operations within the global operation limits. |
+| Engine information permission is missing | Review the explicit engine-information permission in `/sandbox docker configure`. A wrapper may report Docker as stopped when this query is refused. |
+| Docker API route is unsupported | Targeted mode supports existing container operations, not creation or image builds. |
 | Docker operation not granted | The effective target operation list does not authorize it. |
 | Docker target not authorized | Check the exact container name or Compose project/service selector and live target eligibility. |
 | Empty successful `docker ps` | The broker may have excluded every container. This is not proof of usable target access. |

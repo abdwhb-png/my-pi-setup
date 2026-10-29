@@ -647,6 +647,28 @@ class ZeroboxBackend implements SandboxBackend {
         if (!policy.strict) {
             throw new SandboxExecutionError("strict-unavailable");
         }
+        if (policy.docker.mode === "targeted" && policy.docker.engineInfo) {
+            const request = Promise.resolve(
+                this.#runCommand(this.#binaryPath, ["profile", "schema"], {
+                    cwd: homedir(),
+                    env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
+                    signal: deadline?.signal,
+                }),
+            );
+            const schema = await (deadline ? deadline.wait(request) : request);
+            if (
+                schema.exitCode !== 0 ||
+                !/"engineInfo"\s*:/.test(schema.stdout)
+            ) {
+                throw new SandboxExecutionError("unsupported-capability", {
+                    diagnostic:
+                        "The installed Zerobox broker does not support Docker engine information. Qualify and promote a matching runtime before enabling this permission.",
+                    cause: new Error(
+                        "Zerobox lacks Docker engine-information support",
+                    ),
+                });
+            }
+        }
         if (
             policy.network.mediatedDirectTcp &&
             !capabilities.mediatedDirectTcp

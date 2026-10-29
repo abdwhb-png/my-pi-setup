@@ -66,6 +66,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             };
             if (path === "/_ping") return respond("OK", "200 OK", "API-Version: 1.52\r\n");
             if (path === "/version") return respond({ ApiVersion: "1.52", MinAPIVersion: "1.24" });
+            if (path === "/info") return respond({ ServerVersion: "fixture-engine" });
             if (path === "/containers/json") return respond([summary]);
             if (path === `/containers/${id}/json`) return respond({ Id: id, Name: "/fixture-api", Config: { User: "", Tty: false, Labels: labels }, State: { Running: true }, HostConfig: {}, Mounts: hostAccessTarget ? [{ Type: "bind", Source: "/host/auths", Destination: "/auths", RW: true }] : [] });
             if (path === `/containers/${id}/exec`) {
@@ -100,6 +101,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
         for (const profile of DOCKER_ACCESS_PROFILES) {
             const service = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
                 mode: "targeted", endpoint: `unix://${endpoint}`,
+                ...(profile.label === "Administration" ? { engineInfo: true as const } : {}),
                 targets: [{ selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: profile.operations, allowUnsafeTarget: false }],
             }) });
             const supervisor = createBashProcessSupervisor();
@@ -111,7 +113,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
                     const result = await operations.exec("docker info >/dev/null 2>&1; docker info >/dev/null 2>&1; true", root, { onData: chunk => { output += chunk.toString(); }, timeout: 15 });
                     expect(result.exitCode).toBe(0);
                     expect(output.split("Zerobox: Docker broker rejected request:")).toHaveLength(2);
-                    expect(output).toContain("operation is not granted or route is unsupported");
+                    expect(output).toContain("engine information permission is missing");
                     expect(requests).not.toContain("GET /info");
                 }
                 for (const command of ["docker exec fixture-api true", "docker compose exec -T api true"]) {
@@ -128,6 +130,11 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
                     }
                 }
                 if (profile.label === "Administration") {
+                    let info = "";
+                    const information = await operations.exec("docker info --format '{{.ServerVersion}}'", root, { onData: chunk => { info += chunk.toString(); }, timeout: 15 });
+                    expect(information.exitCode, info).toBe(0);
+                    expect(info).toContain("fixture-engine");
+                    expect(requests).toContain("GET /info");
                     waitForStdinEof = true;
                     let output = "";
                     const stdinOperations = createSandboxedBashOps(service, supervisor, { stdin: "printf input-complete\n" });
