@@ -4,7 +4,7 @@ The setup operator installs an explicitly selected private release on Linux or W
 
 ## Host prerequisites
 
-Install Git, Python 3, Bun, Node.js, GitHub CLI and Socket Firewall using their official installation instructions before running the bootstrap. The operator verifies executable availability; it does not install host tools, modify system services, change kernel settings, or authorize networking. Use the versions qualified with the release. The repository records its Bun package-manager version in `agent/package.json`; the native runtime workflow records its builder toolchain.
+Install Git, Python 3, a C/C++ build toolchain (`build-essential` on Ubuntu, required when native package prebuilds are unavailable), Bun, Node.js, GitHub CLI and Socket Firewall using their official installation instructions before running the bootstrap. The operator verifies executable availability; it does not install host tools, modify system services, change kernel settings, or authorize networking. Use the versions qualified with the release. The repository records its Bun package-manager version in `agent/package.json`; the native runtime workflow records its builder toolchain.
 
 Authenticate GitHub CLI through `gh auth login`, using its normal secure flow. Set up Git access to any private package forks through your existing Git credential channel. Provider credentials are configured separately after installation; never put them in the profile or a release.
 

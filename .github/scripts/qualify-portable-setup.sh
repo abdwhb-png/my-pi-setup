@@ -17,7 +17,7 @@ else
   ! uname -r | grep -qi microsoft
 fi
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git unzip xz-utils python3 php-cli composer golang-go bubblewrap libcap2-bin gh
+sudo apt-get install -y ca-certificates curl git unzip xz-utils python3 build-essential php-cli composer golang-go bubblewrap libcap2-bin gh
 if test -e /proc/sys/kernel/unprivileged_userns_clone; then
   sudo sysctl -w kernel.unprivileged_userns_clone=1
 fi
