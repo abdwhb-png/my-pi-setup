@@ -76,7 +76,7 @@ for (const packageSource of sources) {
     run(
         process.execPath,
         [join(source, 'bin/pi'), 'install', packageSource],
-        source,
+        join(source, 'agent'),
     );
 }
 delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;

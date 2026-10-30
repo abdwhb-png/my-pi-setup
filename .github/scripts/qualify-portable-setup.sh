@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Disposable CI hosts only. The production operator never installs host tools.
 set -euo pipefail
+umask 022
 test "${GITHUB_ACTIONS:-}" = true
 test "$(uname -m)" = x86_64
 source_root=$(pwd -P)
@@ -29,6 +30,9 @@ if ! command -v node >/dev/null || [[ $(node --version) != v24.18.0 ]]; then
   export PATH="$qualification_root/node/bin:$PATH"
 fi
 # Bootstrap the firewall first, then retain it around every supported install.
+export npm_config_min_release_age=7
+export npm_config_ignore_scripts=true
+export npm_config_allow_git=none
 npm view sfw@2.0.6 version | grep -Fx 2.0.6
 npm install --prefix "$qualification_root/host" --ignore-scripts --no-audit --no-fund sfw@2.0.6
 export PATH="$qualification_root/host/node_modules/.bin:$PATH"
@@ -50,6 +54,10 @@ export QUALIFICATION_ROOT="$qualification_root"
 export QUALIFICATION_ZEROBOX="$qualification_root/zerobox"
 export HOME="$qualification_root/producer-home"
 mkdir -p "$HOME"
+cat > "$HOME/.bunfig.toml" <<'BUN_CONFIG'
+[install]
+minimumReleaseAge = 604800
+BUN_CONFIG
 export PI_CODING_AGENT_DIR="$source_root/agent"
 export PI_OFFLINE=1
 export PI_PACKAGE_FINALIZER_ACTIVE=1

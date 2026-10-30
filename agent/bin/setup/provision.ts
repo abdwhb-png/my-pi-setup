@@ -55,7 +55,7 @@ export async function provision(root: string, bundle: string): Promise<void> {
         run(
             process.execPath,
             [join(root, 'bin/pi'), 'install', source],
-            root,
+            agentDir,
             installEnv,
         );
     }
