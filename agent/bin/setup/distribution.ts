@@ -282,14 +282,15 @@ async function captureProfile(
                 throw new Error('Invalid installed package metadata');
             pinned = `npm:${pkg.name}@${pkg.version}`;
         } else if (source.startsWith('git:github.com/')) {
-            if (
-                run(
-                    'git',
-                    ['status', '--porcelain', '--untracked-files=no'],
-                    installed,
-                )
-            )
-                throw new Error(`Modified installed Git package: ${source}`);
+            const modified = run(
+                'git',
+                ['status', '--porcelain', '--untracked-files=no'],
+                installed,
+            );
+            if (modified)
+                throw new Error(
+                    `Modified installed Git package: ${source}\n${modified}`,
+                );
             pinned = `${source.split('@')[0]}@${run('git', ['rev-parse', 'HEAD'], installed)}`;
         } else if (source === './extensions/tool-groups') pinned = source;
         else throw new Error(`Unpackaged external resource: ${source}`);

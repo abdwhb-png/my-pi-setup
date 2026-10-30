@@ -43,7 +43,7 @@ const evidence = join(work, 'evidence');
 const sources = [
     'npm:pi-hermes-memory@0.9.10',
     'npm:@gotgenes/pi-permission-system@33.0.0',
-    'git:github.com/abdwhb-png/pi-fancy-footer@53e304c7695b5b3e9e1d01ac456ed342432b9169',
+    'git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9',
     './extensions/tool-groups',
 ];
 const milestones: string[] = [];
