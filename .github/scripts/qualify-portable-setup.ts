@@ -121,8 +121,11 @@ run(
 passed('producer imports the frozen Pi runtime and real package sources');
 
 run(
-    process.execPath,
+    'timeout',
     [
+        '--kill-after=10s',
+        '300s',
+        process.execPath,
         'test',
         '--isolate',
         'bin/setup',
@@ -203,8 +206,11 @@ run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
 
 run(
-    process.execPath,
+    'timeout',
     [
+        '--kill-after=10s',
+        '300s',
+        process.execPath,
         'test',
         '--isolate',
         'extensions/sandbox/runtime/installed-runtime.integration.test.ts',
