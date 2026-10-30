@@ -1,14 +1,5 @@
-import { randomUUID } from "node:crypto";
-import {
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readFileSync,
-    writeFileSync,
-    renameSync,
-    unlinkSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import {
@@ -23,6 +14,7 @@ import {
     readProjectSandboxConfig,
     sandboxConfigPath,
 } from "./authority.ts";
+import { publishConfigFile } from "./config-publication.ts";
 import {
     installationReadPaths,
     parseGlobalInstallations,
@@ -63,15 +55,6 @@ function toMessage(error: unknown): string {
 function readBytes(path: string): Buffer | undefined {
     if (!existsSync(path)) return undefined;
     return readFileSync(path);
-}
-
-function sameBytes(
-    left: Buffer | undefined,
-    right: Buffer | undefined,
-): boolean {
-    if (left === undefined || right === undefined) return left === right;
-    if (left.byteLength !== right.byteLength) return false;
-    return left.equals(right);
 }
 
 function sortUnique(values: string[]): string[] {
@@ -257,31 +240,7 @@ export async function manageInstallations(
                     options.agentDir,
                     trusted ? ctx.cwd : undefined,
                 );
-                const current = readBytes(path);
-                if (!sameBytes(before, current)) {
-                    throw new Error(
-                        `Configuration changed while editing: ${path}`,
-                    );
-                }
-                mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-                const temporary = join(
-                    dirname(path),
-                    `.sandbox-${randomUUID()}.tmp`,
-                );
-                try {
-                    writeFileSync(
-                        temporary,
-                        `${JSON.stringify(next, null, 2)}\n`,
-                        {
-                            mode: 0o600,
-                            flag: "wx",
-                        },
-                    );
-                    renameSync(temporary, path);
-                } catch (error) {
-                    if (existsSync(temporary)) unlinkSync(temporary);
-                    throw error;
-                }
+                publishConfigFile(path, before, next);
             }),
         );
     }

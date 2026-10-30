@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
@@ -201,6 +203,49 @@ async function expectFailure(action: () => Promise<unknown>, message: string): P
 }
 
 describe("pi-fork-release", () => {
+  it("imports verified packed artifacts without the source checkout", async () => {
+    const producer = createDeploymentFixture();
+    const built = await deploy(producer);
+    const target = createDeploymentFixture();
+    rmSync(target.sourceRoot, { recursive: true });
+    const runtime = await deployFork({
+      ...target,
+      packedRoot: join(built.releaseRoot, "packed"),
+      nodeExecutable: process.execPath,
+    });
+    expect(runtime.manifest.packages).toEqual(built.manifest.packages);
+    expect(verifyRuntimeCoherence(runtime, target.agentDir)).toEqual({ ok: true, errors: [] });
+  });
+
+  it("rejects an altered imported archive without changing the installed graph", async () => {
+    const producer = createDeploymentFixture();
+    const built = await deploy(producer);
+    const target = createDeploymentFixture();
+    const packedRoot = join(target.root, "incoming");
+    cpSync(join(built.releaseRoot, "packed"), packedRoot, { recursive: true });
+    const packedManifest = JSON.parse(readFileSync(join(packedRoot, "release-manifest.json"), "utf8"));
+    const archive = join(packedRoot, packedManifest.packages[0].tarball);
+    chmodSync(archive, 0o600);
+    writeFileSync(archive, "altered");
+    const before = readFileSync(join(target.agentDir, "package.json"));
+    await expectFailure(() => deployFork({ ...target, packedRoot }), "Tarball hash mismatch");
+    expect(readFileSync(join(target.agentDir, "package.json"))).toEqual(before);
+    expect(readFileSync(join(target.agentDir, "bun.lock"), "utf8")).toBe("old-lock\n");
+    expect(existsSync(join(target.runtimeRoot, "current"))).toBe(false);
+  });
+
+  it("rejects imported tarballs reached through a directory symlink", async () => {
+    const producer = createDeploymentFixture();
+    const built = await deploy(producer);
+    const target = createDeploymentFixture();
+    const packedRoot = join(target.root, "incoming");
+    mkdirSync(packedRoot);
+    writeFileSync(join(packedRoot, "release-manifest.json"), readFileSync(join(built.releaseRoot, "packed", "release-manifest.json")));
+    symlinkSync(join(built.releaseRoot, "packed", "tarballs"), join(packedRoot, "tarballs"));
+    await expectFailure(() => deployFork({ ...target, packedRoot }), "Unsafe release tarball");
+    expect(existsSync(join(target.runtimeRoot, "current"))).toBe(false);
+  });
+
   it("records the package bin and smoke-tests its Bun entry", async () => {
     const fixture = createDeploymentFixture({ cliPath: "dist/bundle/cli.js", bunEntrypoint: true });
 

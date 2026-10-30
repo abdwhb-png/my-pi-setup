@@ -14,6 +14,12 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 The daily `pi` command uses `~/.pi/bin/pi`, which launches the promoted, read-only fork release under `~/.pi/runtime/pi-core/releases/`. Source builds in `~/engineering/pi-core` do not change the active runtime until `pi-fork deploy` succeeds. Use `pi-fork status` and `pi-fork verify` to inspect it, or `pi-fork rollback` to activate the previous release. After cloning this repository, run `pi-fork deploy` before `bun install` in `agent/`: the committed Pi pins refer to local release tarballs excluded from Git. Bare/self `pi update` is blocked; set `PI_REAL_BIN` only when intentionally testing another Pi executable. See [ADR-026](./adr/ADR-026-immutable-local-pi-fork-releases.md).
 
+### Importing a packed Pi runtime
+
+`~/.pi/bin/pi-fork import /path/to/packed` installs a previously built Pi release without the `pi-core` source checkout. The directory must contain `release-manifest.json` and its referenced tarballs. Transfer the `packed/` directory, not an installed `node_modules` tree. Import verifies the package hashes, copies only the declared archives into staging, installs dependencies through Socket Firewall, runs the runtime smoke checks, synchronizes the agent pins, and promotes the runtime only after coherence verification. Bun, Node and Socket Firewall must already be available. An existing release with the same identity is rejected, as with `deploy`.
+
+This imports only the Pi core runtime. For the complete installation, private distribution, update and optional global memory workflow, use `pi-setup` as documented in [Portable Pi setup](./portable-setup.md).
+
 ## Context engineering
 
 Pi - Load project skills and instructions

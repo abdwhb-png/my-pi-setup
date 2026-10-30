@@ -1,0 +1,58 @@
+{
+    "environment": {
+        "installations": {
+            "pnpm-corepack": [
+                {
+                    "root": "/usr/bin",
+                    "files": ["node", "env", "pnpm"],
+                    "path": ["."]
+                },
+                {
+                    "root": "/usr/lib/node_modules/corepack",
+                    "path": []
+                }
+            ],
+            "bun": [
+                {
+                    "root": "~/.bun/bin",
+                    "path": ["."]
+                }
+            ],
+            "go": [
+                {
+                    "root": "/usr/local/go",
+                    "path": ["bin"]
+                }
+            ],
+            "python": [
+                {
+                    "root": "~/miniconda3",
+                    "path": ["bin"]
+                }
+            ],
+            "php": [
+                {
+                    "root": "~/.config/herd-lite/bin",
+                    "files": ["php", "php.ini", "cacert.pem", "composer"],
+                    "path": ["."]
+                }
+            ]
+        },
+        "variables": {
+            "XDG_CACHE_HOME": "~/.cache/pi/dev-tools/xdg",
+            "npm_config_cache": "~/.cache/pi/dev-tools/npm",
+            "BUN_INSTALL_CACHE_DIR": "~/.cache/pi/dev-tools/bun",
+            "COREPACK_HOME": "~/.cache/pi/dev-tools/corepack",
+            "COREPACK_ENABLE_NETWORK": "1",
+            "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+            "PIP_CACHE_DIR": "~/.cache/pi/dev-tools/pip",
+            "UV_CACHE_DIR": "~/.cache/pi/dev-tools/uv",
+            "GOCACHE": "~/.cache/pi/dev-tools/go/build",
+            "GOMODCACHE": "~/.cache/pi/dev-tools/go/mod",
+            "COMPOSER_CACHE_DIR": "~/.cache/pi/dev-tools/composer"
+        }
+    },
+    "filesystem": {
+        "allowWrite": ["~/.cache/pi/dev-tools"]
+    }
+}

@@ -2,10 +2,11 @@ import { deployFork, rollbackFork, verifyRuntimeCoherence, type CoherenceReport 
 import type { PiInstallationPaths } from "./pi-installation-paths.ts";
 import { loadCurrentPiRuntime, type ActivePiRuntime } from "./pi-runtime-store.ts";
 
-const USAGE = "Usage: pi-fork <status|deploy|verify|rollback>";
+const USAGE = "Usage: pi-fork <status|deploy|verify|rollback> | pi-fork import PACKED_DIRECTORY";
 const COMMANDS = new Set(["status", "deploy", "verify", "rollback"]);
 
 export interface PiForkCliDependencies {
+  importPacked(path: string): Promise<ActivePiRuntime>;
   deploy(): Promise<ActivePiRuntime>;
   rollback(): Promise<ActivePiRuntime>;
   loadCurrent(): ActivePiRuntime;
@@ -18,6 +19,11 @@ export function createPiForkCliDependencies(
   paths: PiInstallationPaths,
 ): PiForkCliDependencies {
   return {
+    importPacked: (packedRoot) => deployFork({
+      packedRoot,
+      runtimeRoot: paths.runtimeRoot,
+      agentDir: paths.agentDir,
+    }),
     deploy: () =>
       deployFork({
         sourceRoot: paths.sourceRoot,
@@ -44,12 +50,18 @@ export async function runPiForkCli(
     dependencies.writeOutput(USAGE);
     return 0;
   }
-  if (args.length !== 1 || !COMMANDS.has(args[0])) {
+  const importing = args[0] === "import" && args.length === 2 && Boolean(args[1]?.trim()) && !args[1]?.startsWith("-");
+  if (!importing && (args.length !== 1 || !COMMANDS.has(args[0]))) {
     dependencies.writeError(USAGE);
     return 2;
   }
 
   try {
+    if (importing) {
+      const runtime = await dependencies.importPacked(args[1]!);
+      dependencies.writeOutput(`Imported Pi fork release: ${runtime.releaseId}`);
+      return 0;
+    }
     return await dispatchCommand(args[0], dependencies);
   } catch (cause) {
     dependencies.writeError(cause instanceof Error ? cause.message : String(cause));

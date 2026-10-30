@@ -1,0 +1,90 @@
+name: Portable Pi setup qualification
+
+on:
+  push:
+    branches: ["codex/portable-setup-ci-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  QUALIFIED_RUNTIME_RUN: "40901222245"
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qualified-native-runtime
+          run-id: ${{ env.QUALIFIED_RUNTIME_RUN }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-runtime
+      - name: Qualify on the native Ubuntu kernel
+        env:
+          QUALIFICATION_PLATFORM: ubuntu
+        run: bash .github/scripts/qualify-portable-setup.sh "$RUNNER_TEMP/native-runtime" "$RUNNER_TEMP/portable-qualification"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portable-setup-ubuntu-evidence
+          path: ${{ runner.temp }}/portable-qualification/evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  wsl2:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Preserve Unix line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: qualified-native-runtime
+          run-id: ${{ env.QUALIFIED_RUNTIME_RUN }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-runtime
+      - name: Install Ubuntu 24.04 under WSL2
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          wsl --set-default-version 2
+          if ($LASTEXITCODE -ne 0) { throw "Cannot select WSL2" }
+          wsl --install --distribution Ubuntu-24.04 --web-download --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "Cannot install Ubuntu under WSL2" }
+          wsl --list --verbose
+          wsl -d Ubuntu-24.04 -u root -- bash -lc 'uname -r | grep -i microsoft-standard-WSL2; useradd -m -s /bin/bash qualifier; echo "qualifier ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/qualifier; chmod 440 /etc/sudoers.d/qualifier'
+          if ($LASTEXITCODE -ne 0) { throw "WSL2 prerequisite failed" }
+      - name: Qualify inside the WSL2 Linux filesystem
+        shell: pwsh
+        run: |
+          $source = (wsl -d Ubuntu-24.04 -- wslpath -a "$env:GITHUB_WORKSPACE").Trim()
+          $runtime = (wsl -d Ubuntu-24.04 -- wslpath -a "$env:RUNNER_TEMP/native-runtime").Trim()
+          wsl -d Ubuntu-24.04 -u qualifier -- env GITHUB_ACTIONS=true CI=true QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "cp -a '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
+          if ($LASTEXITCODE -ne 0) { throw "WSL2 qualification failed" }
+      - name: Collect WSL2 evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/wsl-evidence" | Out-Null
+          $destination = (wsl -d Ubuntu-24.04 -- wslpath -a "$env:RUNNER_TEMP/wsl-evidence").Trim()
+          wsl -d Ubuntu-24.04 -u root -- bash -lc "if test -d /home/qualifier/qualification/evidence; then cp -a /home/qualifier/qualification/evidence/. '$destination/'; fi"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portable-setup-wsl2-evidence
+          path: ${{ runner.temp }}/wsl-evidence/
+          if-no-files-found: warn
+          retention-days: 14

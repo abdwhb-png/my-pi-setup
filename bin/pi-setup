@@ -1,0 +1,4 @@
+#!/usr/bin/env bun
+import { resolve } from "node:path";
+import { runSetup } from "../agent/bin/setup/cli.ts";
+process.exitCode = await runSetup(process.argv.slice(2), resolve(import.meta.dir, ".."));

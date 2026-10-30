@@ -25,6 +25,10 @@ function createDependencies() {
   const output: string[] = [];
   const errors: string[] = [];
   const dependencies: PiForkCliDependencies = {
+    importPacked: async (path) => {
+      calls.push(`import:${path}`);
+      return runtime("imported");
+    },
     deploy: async () => {
       calls.push("deploy");
       return runtime("deployed");
@@ -48,6 +52,14 @@ function createDependencies() {
 }
 
 describe("pi-fork-cli", () => {
+  it("imports an explicit packed directory and rejects missing arguments", async () => {
+    const fixture = createDependencies();
+    expect(await runPiForkCli(["import"], fixture.dependencies)).toBe(2);
+    expect(fixture.calls).toEqual([]);
+    expect(await runPiForkCli(["import", "./packed"], fixture.dependencies)).toBe(0);
+    expect(fixture.calls).toEqual(["import:./packed"]);
+    expect(fixture.output.join("\n")).toContain("imported");
+  });
   it("rejects invalid arguments before dispatching stateful commands", async () => {
     const fixture = createDependencies();
 

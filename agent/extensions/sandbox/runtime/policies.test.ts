@@ -46,6 +46,37 @@ const lease = {
 };
 
 describe("sandbox policies", () => {
+    it("honors explicit persistent caches without granting access", () => {
+        const cache = join(homedir(), ".cache/pi/dev-tools");
+        const config = validatePiSandboxConfig({
+            environment: {
+                allowedVariables: ["npm_config_cache"],
+                variables: {
+                    XDG_CACHE_HOME: cache,
+                    BUN_INSTALL_CACHE_DIR: cache + "/bun",
+                },
+                deniedVariables: ["BUN_INSTALL_CACHE_DIR"],
+            },
+        });
+        for (const build of [createBashPolicy, createThinkPolicy]) {
+            const policy = build({
+                cwd,
+                lease,
+                config,
+                hostEnv: { npm_config_cache: cache + "/npm" },
+            });
+            expect(policy.environment.set.XDG_CACHE_HOME).toBe(cache);
+            expect(policy.environment.set.npm_config_cache).toBe(
+                cache + "/npm",
+            );
+            expect(
+                policy.environment.set.BUN_INSTALL_CACHE_DIR,
+            ).toBeUndefined();
+            expect(policy.environment.set.HOME).toBe(SANDBOX_PRIVATE_HOME);
+            expect(policy.filesystem.allowWrite).not.toContain(cache);
+        }
+    });
+
     it("limits an empty read configuration to the project and sandbox necessities", () => {
         const config = validatePiSandboxConfig({});
         const policy = createBashPolicy({ cwd, lease, config, hostEnv: {} });
