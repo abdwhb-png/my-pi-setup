@@ -17,6 +17,7 @@ test('package verification loads the destination runtime installed after the ope
             name: '@earendil-works/pi-coding-agent',
             type: 'module',
             main: './index.js',
+            exports: { '.': { import: './index.js' } },
         });
         writeFileSync(
             join(moduleRoot, 'index.js'),
