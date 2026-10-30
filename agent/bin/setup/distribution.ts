@@ -292,7 +292,11 @@ async function captureProfile(
                     `Modified installed Git package: ${source}\n${modified}`,
                 );
             pinned = `${source.split('@')[0]}@${run('git', ['rev-parse', 'HEAD'], installed)}`;
-        } else if (source === './extensions/tool-groups') pinned = source;
+        } else if (
+            source === './extensions/tool-groups' ||
+            source === 'extensions/tool-groups'
+        )
+            pinned = './extensions/tool-groups';
         else throw new Error(`Unpackaged external resource: ${source}`);
         validatePackageSource(pinned);
         packages.push(pinned);

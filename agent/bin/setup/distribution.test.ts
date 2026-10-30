@@ -50,8 +50,17 @@ test('pack, publish and download preserve a private profile and verify release a
         };
         write(join(root, 'bin/pi'), '#!/bin/sh\n');
         write(join(root, 'bin/pi-setup'), '#!/bin/sh\n');
+        writeJson(join(root, 'agent/extensions/tool-groups/package.json'), {
+            name: 'fixture-tool-groups',
+            version: '1.0.0',
+            pi: { extensions: ['./index.ts'] },
+        });
+        write(
+            join(root, 'agent/extensions/tool-groups/index.ts'),
+            'export default function () {}',
+        );
         run('git', ['init', '--quiet'], root);
-        run('git', ['add', 'bin'], root);
+        run('git', ['add', 'bin', 'agent/extensions'], root);
         run(
             'git',
             [
@@ -66,7 +75,7 @@ test('pack, publish and download preserve a private profile and verify release a
             root,
         );
         writeJson(join(root, 'agent/settings.json'), {
-            packages: [],
+            packages: ['extensions/tool-groups'],
             defaultProvider: 'fixture',
             defaultModel: 'fixture-model',
         });
@@ -169,7 +178,7 @@ test('pack, publish and download preserve a private profile and verify release a
         });
         archive('extract', join(output, 'setup.tgz'), join(home, 'unpacked'));
         const manifest = validateBundle(join(home, 'unpacked'));
-        expect(manifest.packages).toEqual([]);
+        expect(manifest.packages).toEqual(['./extensions/tool-groups']);
         expect(Object.keys(manifest.files)).not.toContain(
             'setup/agent/auth.json',
         );
