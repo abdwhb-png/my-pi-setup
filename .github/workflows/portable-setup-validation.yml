@@ -65,14 +65,14 @@ jobs:
           wsl --install --distribution Ubuntu-24.04 --web-download --no-launch
           if ($LASTEXITCODE -ne 0) { throw "Cannot install Ubuntu under WSL2" }
           wsl --list --verbose
-          wsl -d Ubuntu-24.04 -u root --exec bash -lc 'uname -r | grep -i microsoft-standard-WSL2; useradd -m -s /bin/bash qualifier; echo "qualifier ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/qualifier; chmod 440 /etc/sudoers.d/qualifier'
+          wsl -d Ubuntu-24.04 -u root --exec bash -lc 'set -euo pipefail; uname -r | grep -i microsoft-standard-WSL2; apt-get update; apt-get install -y git sudo; useradd -m -s /bin/bash qualifier; echo "qualifier ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/qualifier; chmod 440 /etc/sudoers.d/qualifier'
           if ($LASTEXITCODE -ne 0) { throw "WSL2 prerequisite failed" }
       - name: Qualify inside the WSL2 Linux filesystem
         shell: pwsh
         run: |
           $source = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:GITHUB_WORKSPACE").Trim()
           $runtime = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:RUNNER_TEMP/native-runtime").Trim()
-          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "cp -a '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
+          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "set -euo pipefail; git -c safe.directory='$source' clone --no-local '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
           if ($LASTEXITCODE -ne 0) { throw "WSL2 qualification failed" }
       - name: Collect WSL2 evidence
         if: always()

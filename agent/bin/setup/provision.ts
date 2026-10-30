@@ -54,19 +54,24 @@ export async function provision(root: string, bundle: string): Promise<void> {
         }
         run(
             process.execPath,
-            [join(root, 'bin/pi'), 'install', source],
+            [join(root, 'bin/pi'), 'install', source, '--no-approve'],
             agentDir,
             installEnv,
         );
     }
     // Preserve resource filters: package installation owns persistence, the profile owns selection.
     writeJson(settingsPath, settings);
-    run(process.execPath, [join(root, 'bin/pi'), 'list'], root, {
-        ...process.env,
-        PI_CODING_AGENT_DIR: agentDir,
-        PI_REAL_BIN: undefined,
-        PI_PACKAGE_FINALIZER_ACTIVE: undefined,
-    });
+    run(
+        process.execPath,
+        [join(root, 'bin/pi'), 'list', '--no-approve'],
+        root,
+        {
+            ...process.env,
+            PI_CODING_AGENT_DIR: agentDir,
+            PI_REAL_BIN: undefined,
+            PI_PACKAGE_FINALIZER_ACTIVE: undefined,
+        },
+    );
     const { stageRuntimeRelease } =
         await import('../../extensions/sandbox/runtime/distribution/stage-release.ts');
     const provenance = json(join(bundle, 'zerobox/provenance.json'));

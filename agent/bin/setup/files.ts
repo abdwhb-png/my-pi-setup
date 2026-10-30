@@ -26,13 +26,16 @@ export function run(
         maxBuffer: 64 * 1024 * 1024,
     });
     if (result.error || result.status !== 0) {
-        const detail = redactTextPreservingContext(
-            result.stderr?.trim() ||
-                result.stdout?.trim() ||
-                result.error?.message ||
-                'No diagnostic output',
-            { maxLength: 4000 },
-        );
+        // Redact before taking each stream's tail, so truncation cannot split a secret.
+        const detail =
+            [result.stdout, result.stderr, result.error?.message]
+                .filter((output): output is string => Boolean(output?.trim()))
+                .map((output) =>
+                    redactTextPreservingContext(output.trim(), {
+                        maxLength: Infinity,
+                    }).slice(-2000),
+                )
+                .join('\n') || 'No diagnostic output';
         throw new Error(
             `Command failed: ${command} (exit ${result.status ?? 'unavailable'}). ${detail}`,
             { cause: result.error },

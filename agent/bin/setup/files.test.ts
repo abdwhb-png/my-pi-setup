@@ -16,3 +16,12 @@ test('subprocess failures preserve actionable context and redact known credentia
         expect(message).not.toContain('fixture-credential-value');
     }
 });
+
+test('subprocess failures retain the final cause after verbose warning output', () => {
+    expect(() =>
+        run(process.execPath, [
+            '-e',
+            'console.error("warning\\n".repeat(2000)); console.error("Terminal installation cause"); process.exit(1)',
+        ]),
+    ).toThrow('Terminal installation cause');
+});

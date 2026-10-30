@@ -75,12 +75,12 @@ writeJson(join(source, 'agent/settings.json'), {
 for (const packageSource of sources) {
     run(
         process.execPath,
-        [join(source, 'bin/pi'), 'install', packageSource],
+        [join(source, 'bin/pi'), 'install', packageSource, '--no-approve'],
         join(source, 'agent'),
     );
 }
 delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;
-run(process.execPath, [join(source, 'bin/pi'), 'list'], source);
+run(process.execPath, [join(source, 'bin/pi'), 'list', '--no-approve'], source);
 await stageRuntimeRelease({
     candidateRoot: zero,
     runtimeBase: join(source, 'runtimes'),
