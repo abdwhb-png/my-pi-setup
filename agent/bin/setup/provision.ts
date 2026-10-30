@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
 import { validateBundle } from './distribution.ts';
@@ -156,9 +158,17 @@ export async function verifyPackages(
     root: string,
     sources: string[],
 ): Promise<void> {
-    const { DefaultPackageManager, SettingsManager } =
-        await import('@earendil-works/pi-coding-agent');
     const agentDir = join(root, 'agent');
+    // Resolve after deployment: a fresh bootstrap starts without agent dependencies.
+    const entry = createRequire(join(agentDir, 'package.json')).resolve(
+        '@earendil-works/pi-coding-agent',
+    );
+    const {
+        DefaultPackageManager,
+        SettingsManager,
+    }: typeof import('@earendil-works/pi-coding-agent') = await import(
+        pathToFileURL(entry).href
+    );
     const manager = new DefaultPackageManager({
         cwd: root,
         agentDir,

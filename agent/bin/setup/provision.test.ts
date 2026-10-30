@@ -1,10 +1,34 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { inventory, json, writeJson } from './files.ts';
-import { prepareInstalledProfile } from './provision.ts';
+import { prepareInstalledProfile, verifyPackages } from './provision.ts';
+
+test('package verification loads the destination runtime installed after the operator module', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-late-runtime-'));
+    try {
+        const moduleRoot = join(
+            root,
+            'agent/node_modules/@earendil-works/pi-coding-agent',
+        );
+        writeJson(join(moduleRoot, 'package.json'), {
+            name: '@earendil-works/pi-coding-agent',
+            type: 'module',
+            main: './index.js',
+        });
+        writeFileSync(
+            join(moduleRoot, 'index.js'),
+            'export class SettingsManager { static create() { throw new Error("Destination runtime loaded"); } } export class DefaultPackageManager {}',
+        );
+        await expect(verifyPackages(root, [])).rejects.toThrow(
+            'Destination runtime loaded',
+        );
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test('installation relocates every bundled profile and seeds the runtime changelog marker', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-profile-'));
