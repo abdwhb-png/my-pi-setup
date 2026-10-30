@@ -72,7 +72,7 @@ jobs:
         run: |
           $source = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:GITHUB_WORKSPACE").Trim()
           $runtime = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:RUNNER_TEMP/native-runtime").Trim()
-          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "set -euo pipefail; git -c safe.directory='$source' -c safe.directory='$source/.git' clone --no-local '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
+          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "set -euo pipefail; git config --global --add safe.directory '$source/.git'; git clone --no-local '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
           if ($LASTEXITCODE -ne 0) { throw "WSL2 qualification failed" }
       - name: Collect WSL2 evidence
         if: always()
