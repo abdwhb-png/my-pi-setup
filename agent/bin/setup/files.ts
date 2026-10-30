@@ -9,6 +9,7 @@ import {
     readlinkSync,
     existsSync,
     renameSync,
+    chmodSync,
 } from 'node:fs';
 import { dirname, resolve, relative, isAbsolute, join } from 'node:path';
 import { redactTextPreservingContext } from '../../extensions/_shared/secret-redaction.ts';
@@ -124,4 +125,11 @@ export function archive(
         source,
         destination,
     ]);
+}
+
+export function writableDirectories(root: string): void {
+    if (!existsSync(root) || !lstatSync(root).isDirectory()) return;
+    chmodSync(root, 0o700);
+    for (const entry of readdirSync(root, { withFileTypes: true }))
+        if (entry.isDirectory()) writableDirectories(join(root, entry.name));
 }

@@ -24,6 +24,7 @@ import {
     object,
     run,
     writeJson,
+    writableDirectories,
 } from './files.ts';
 
 export const DISTRIBUTION_REPOSITORY = 'abdwhb-png/my-pi-distribution';
@@ -244,6 +245,7 @@ export async function packDistribution(
         });
         writeJson(join(output, 'inventory.json'), manifest);
     } finally {
+        writableDirectories(temporary);
         rmSync(temporary, { recursive: true, force: true });
     }
 }
@@ -495,6 +497,7 @@ export function publishDistribution(directory: string, tag: string): void {
             DISTRIBUTION_REPOSITORY,
         ]);
     } finally {
+        writableDirectories(temporary);
         rmSync(temporary, { recursive: true, force: true });
     }
 }

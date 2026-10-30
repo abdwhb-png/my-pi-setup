@@ -7,6 +7,7 @@ import {
     symlinkSync,
     readFileSync,
     chmodSync,
+    existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -171,6 +172,7 @@ test('pack, publish and download preserve a private profile and verify release a
             `const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3]);`,
         );
         const output = join(home, 'output');
+        chmodSync(join(runtime, 'packed/tarballs'), 0o555);
         run(process.execPath, [script, root, output], root, {
             ...process.env,
             HOME: home,
@@ -257,6 +259,11 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
             process.env = originalEnv;
         }
     } finally {
+        const frozen = join(
+            root,
+            'runtime/pi-core/releases/fixture/packed/tarballs',
+        );
+        if (existsSync(frozen)) chmodSync(frozen, 0o700);
         rmSync(home, { recursive: true, force: true });
     }
 }, 20000);

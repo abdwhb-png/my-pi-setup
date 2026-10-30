@@ -9,7 +9,6 @@ import {
     rmSync,
     writeFileSync,
     lstatSync,
-    chmodSync,
 } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { validateBundle } from './distribution.ts';
@@ -21,6 +20,7 @@ import {
     object,
     run,
     writeJson,
+    writableDirectories,
 } from './files.ts';
 
 const STATE = '.pi-setup-state.json';
@@ -129,12 +129,6 @@ function localState(path: string): boolean {
         path === 'agent/config/sandbox.json' ||
         path === 'agent/config/setup-bindings.json'
     );
-}
-function writableDirectories(root: string): void {
-    if (!existsSync(root) || !lstatSync(root).isDirectory()) return;
-    chmodSync(root, 0o700);
-    for (const entry of readdirSync(root, { withFileTypes: true }))
-        if (entry.isDirectory()) writableDirectories(join(root, entry.name));
 }
 function safeParents(root: string, path: string): void {
     const parts = path.split('/');
