@@ -11,6 +11,7 @@ import {
     writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { basename, join } from "node:path";
 
 import { SandboxExecutionError } from "./contracts.ts";
@@ -27,6 +28,42 @@ function permissions(mode: number): number {
 }
 
 describe("private Zerobox temp leases", () => {
+    it("allocates default leases with a long Unicode home without using that home", async () => {
+        const home = await mkdtemp(join(tmpdir(), "pi home é-"));
+        try {
+            const result = spawnSync(process.execPath, ["-e", `
+                const { createPrivateTempLease, worstCaseProxySocketPath } = await import(${JSON.stringify(import.meta.dir + "/private-temp.ts")});
+                const leases = await Promise.all(Array.from({ length: 8 }, () => createPrivateTempLease()));
+                try {
+                    for (const lease of leases) {
+                        if (lease.root.startsWith(process.env.HOME)) throw new Error("Home-dependent lease");
+                        if (Buffer.byteLength(worstCaseProxySocketPath(lease.zeroboxHome)) >= 108) throw new Error("Socket budget exceeded");
+                    }
+                } finally { await Promise.all(leases.map(lease => lease.dispose())); }
+            `], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+            expect(result.stderr).toBe("");
+            expect(result.status).toBe(0);
+            expect(await lstat(join(home, ".pi")).catch(() => null)).toBeNull();
+        } finally { await rm(home, { recursive: true, force: true }); }
+    });
+
+    it("rejects a directory owned by another uid before changing its permissions", async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), "z-"));
+        await chmod(rootDir, 0o750);
+        try {
+            const result = spawnSync(process.execPath, ["-e", `
+                const { assertPrivateRootDirectory } = await import(${JSON.stringify(import.meta.dir + "/private-temp.ts")});
+                const uid = process.getuid();
+                process.getuid = () => uid + 1;
+                try { await assertPrivateRootDirectory(${JSON.stringify(rootDir)}); process.exitCode = 1; }
+                catch (error) { if (error.code !== "invalid-policy") throw error; }
+            `], { encoding: "utf8" });
+            expect(result.stderr).toBe("");
+            expect(result.status).toBe(0);
+            expect(permissions((await lstat(rootDir)).mode)).toBe(0o750);
+        } finally { await rm(rootDir, { recursive: true, force: true }); }
+    });
+
     it("creates unique bounded owner-only trees and an exact marker", async () => {
         const parent = await mkdtemp(join(tmpdir(), "z-"));
         const rootDir = join(parent, "r");

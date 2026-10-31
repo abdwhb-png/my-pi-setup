@@ -53,7 +53,29 @@ export interface RecoveryResult {
 }
 
 function defaultRootDir(): string {
-    return join(homedir(), ".pi", "zbx");
+    if (!process.getuid) {
+        throw new SandboxExecutionError("invalid-policy", {
+            cause: new Error("Private leases require a Unix user identity"),
+        });
+    }
+    // A fixed, short sticky-directory parent keeps socket paths independent of HOME/TMPDIR.
+    return `/tmp/pi-z-${process.getuid().toString(36)}`;
+}
+
+async function assertDefaultParent(): Promise<void> {
+    const parent = await lstat("/tmp");
+    if (
+        !parent.isDirectory() ||
+        parent.isSymbolicLink() ||
+        parent.uid !== 0 ||
+        ((parent.mode & 0o022) !== 0 && (parent.mode & 0o1000) === 0)
+    ) {
+        throw new SandboxExecutionError("invalid-policy", {
+            cause: new Error(
+                "Private leases require a root-owned sticky /tmp directory",
+            ),
+        });
+    }
 }
 
 function cleanupError(cause: unknown): SandboxExecutionError {
@@ -109,7 +131,11 @@ function assertSocketBudget(zeroboxHome: string): void {
 
 export async function assertPrivateRootDirectory(path: string): Promise<void> {
     const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    if (
+        !stat.isDirectory() ||
+        stat.isSymbolicLink() ||
+        stat.uid !== process.getuid?.()
+    ) {
         throw new SandboxExecutionError("invalid-policy", {
             cause: new Error("Private lease root is not an owned directory"),
         });
@@ -218,6 +244,7 @@ async function safeDisposeRoot(
 export async function createPrivateTempLease(
     options: PrivateTempOptions = {},
 ): Promise<PrivateTempLease> {
+    if (options.rootDir === undefined) await assertDefaultParent();
     const rootDir = resolve(options.rootDir ?? defaultRootDir());
     if (!isAbsolute(rootDir)) {
         throw new SandboxExecutionError("invalid-policy", {
@@ -330,6 +357,21 @@ function defaultIsPidAlive(pid: number): boolean {
 export async function recoverStalePrivateTempLeases(
     options: RecoveryOptions = {},
 ): Promise<RecoveryResult> {
+    if (options.rootDir === undefined) {
+        await assertDefaultParent();
+        const current = await recoverStalePrivateTempLeases({
+            ...options,
+            rootDir: defaultRootDir(),
+        });
+        const legacy = await recoverStalePrivateTempLeases({
+            ...options,
+            rootDir: join(homedir(), ".pi", "zbx"),
+        });
+        return {
+            removed: [...current.removed, ...legacy.removed],
+            retained: [...current.retained, ...legacy.retained],
+        };
+    }
     const rootDir = resolve(options.rootDir ?? defaultRootDir());
     const removed: string[] = [];
     const retained: string[] = [];

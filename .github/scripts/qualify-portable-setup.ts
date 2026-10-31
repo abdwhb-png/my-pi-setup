@@ -168,6 +168,9 @@ runTests(
         'bin/pi-runtime-store.test.ts',
         'bin/pi-wrapper-lib.test.ts',
         'extensions/_shared/redaction.test.ts',
+        'extensions/sandbox/runtime/private-temp.test.ts',
+        'extensions/sandbox/runtime/runtime-bundle.test.ts',
+        'extensions/sandbox/preparation.test.ts',
     ],
     join(source, 'agent'),
 );

@@ -4,6 +4,7 @@ on:
   push:
     branches: ["codex/private-runtime-validation-*"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -115,6 +116,9 @@ jobs:
         run: |
           python3 extensions/sandbox/runtime/distribution/build.py verify-analysis-inputs \
             --lock extensions/sandbox/runtime/distribution/input-lock.json --agent-root .
+      - name: Check repository types
+        working-directory: .pi/agent
+        run: bun run typecheck
       - name: Run Pi boundary regression suites
         working-directory: .pi/agent
         run: |

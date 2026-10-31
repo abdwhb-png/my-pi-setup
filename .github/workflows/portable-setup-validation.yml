@@ -9,11 +9,16 @@ permissions:
   contents: read
   actions: read
 
-env:
-  QUALIFIED_RUNTIME_RUN: "40901222245"
-
 jobs:
+  native-runtime:
+    uses: ./.github/workflows/private-runtime-validation.yml
+
   ubuntu:
+    needs: native-runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -27,8 +32,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: qualified-native-runtime
-          run-id: ${{ env.QUALIFIED_RUNTIME_RUN }}
-          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/native-runtime
       - name: Qualify on the native Ubuntu kernel
         env:
@@ -37,12 +40,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: portable-setup-ubuntu-evidence
+          name: portable-setup-ubuntu-${{ matrix.repetition }}-evidence
           path: ${{ runner.temp }}/portable-qualification/evidence/
           if-no-files-found: warn
           retention-days: 14
 
   wsl2:
+    needs: native-runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
@@ -53,8 +61,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: qualified-native-runtime
-          run-id: ${{ env.QUALIFIED_RUNTIME_RUN }}
-          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/native-runtime
       - name: Install Ubuntu 24.04 under WSL2
         shell: pwsh
@@ -84,7 +90,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: portable-setup-wsl2-evidence
+          name: portable-setup-wsl2-${{ matrix.repetition }}-evidence
           path: ${{ runner.temp }}/wsl-evidence/
           if-no-files-found: warn
           retention-days: 14
