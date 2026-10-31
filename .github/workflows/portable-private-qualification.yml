@@ -68,7 +68,12 @@ jobs:
             test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | select((.name == "setup.tgz" or .name == "release.json") and .size > 0)] | length')" = 2
             gh release edit "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
-          gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"
+          if ! gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"; then
+            gh --version
+            release_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_RELEASE" --jq .object.sha)
+            gh api --method GET "/repos/$GITHUB_REPOSITORY/attestations/sha1:$release_sha" -f predicate_type=release --jq '{attestationCount: (.attestations | length)}'
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: abdwhb-png/my-pi-setup
