@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { test, expect, spyOn } from 'bun:test';
 import {
     mkdtempSync,
     mkdirSync,
@@ -205,12 +205,21 @@ test('pack, publish and download preserve a private profile and verify release a
         write(
             join(fakeTools, 'gh'),
             `#!${process.execPath}
-import { appendFileSync, copyFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 appendFileSync(process.env.GH_FIXTURE_LOG, JSON.stringify(args) + '\\n');
 if (args[0] === 'repo') console.log(process.env.GH_FIXTURE_PUBLIC ? 'false' : 'true');
 else if (args[0] === 'api') console.log('{"enabled":true}');
+else if (args[1] === 'verify' && process.env.GH_FIXTURE_DELAY_ATTESTATION && readFileSync(process.env.GH_FIXTURE_LOG, 'utf8').trim().split('\\n').filter(line => JSON.parse(line)[1] === 'verify').length === 1) {
+ console.error('no attestations for tag ' + args[2]); process.exit(1);
+}
+else if (args[1] === 'verify' && process.env.GH_FIXTURE_MISSING_ATTESTATION) {
+ console.error('no attestations for tag ' + args[2]); process.exit(1);
+}
+else if (args[1] === 'verify' && process.env.GH_FIXTURE_INVALID_ATTESTATION) {
+ console.error('failed to verify attestations: invalid signature'); process.exit(1);
+}
 else if (args[1] === 'verify-asset' && process.env.GH_FIXTURE_BAD_ASSET) process.exit(9);
 else if (args[1] === 'download') {
  const destination = args[args.indexOf('--dir') + 1];
@@ -220,11 +229,15 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
 `,
         );
         const originalEnv = { ...process.env };
+        const sleep = spyOn(Bun, 'sleepSync').mockImplementation(() => {});
         try {
             process.env.PATH = `${fakeTools}:${process.env.PATH}`;
             process.env.GH_FIXTURE_LOG = join(home, 'github.jsonl');
             process.env.GH_FIXTURE_SOURCE = output;
+            process.env.GH_FIXTURE_DELAY_ATTESTATION = '1';
             publishDistribution(output, 'fixture-release');
+            expect(sleep).toHaveBeenCalledTimes(1);
+            delete process.env.GH_FIXTURE_DELAY_ATTESTATION;
             const downloaded = downloadDistribution(
                 'fixture-release',
                 join(home, 'download'),
@@ -251,12 +264,25 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
             expect(() =>
                 readFileSync(join(home, 'bad-asset/bundle/manifest.json')),
             ).toThrow();
+            process.env.GH_FIXTURE_INVALID_ATTESTATION = '1';
+            expect(() =>
+                publishDistribution(output, 'invalid-signature'),
+            ).toThrow('invalid signature');
+            expect(sleep).toHaveBeenCalledTimes(1);
+            delete process.env.GH_FIXTURE_INVALID_ATTESTATION;
+            process.env.GH_FIXTURE_MISSING_ATTESTATION = '1';
+            expect(() =>
+                publishDistribution(output, 'missing-attestation'),
+            ).toThrow('no attestations for tag');
+            expect(sleep).toHaveBeenCalledTimes(30);
+            delete process.env.GH_FIXTURE_MISSING_ATTESTATION;
             process.env.GH_FIXTURE_PUBLIC = '1';
             expect(() => publishDistribution(output, 'public-refused')).toThrow(
                 'must be private',
             );
         } finally {
             process.env = originalEnv;
+            sleep.mockRestore();
         }
     } finally {
         const frozen = join(

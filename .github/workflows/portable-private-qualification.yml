@@ -69,7 +69,10 @@ jobs:
             test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | select((.name == "setup.tgz" or .name == "release.json") and .size > 0)] | length')" = 2
             gh release edit "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
-          if ! gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"; then
+          if test "$PUBLISH_CANDIDATE" = true; then
+            # Download verifies the attestation before extracting any files, after host preparation.
+            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq .isImmutable)" = true
+          elif ! gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"; then
             echo 'Release verification failed. Fine-grained PI_DISTRIBUTION_TOKEN requires Attestations read on this repository; inspect the API result below.'
             gh --version
             release_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_RELEASE" --jq .object.sha)

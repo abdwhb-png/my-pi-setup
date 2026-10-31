@@ -489,13 +489,30 @@ export function publishDistribution(directory: string, tag: string): void {
             DISTRIBUTION_REPOSITORY,
             '--draft=false',
         ]);
-        run('gh', [
-            'release',
-            'verify',
-            tag,
-            '--repo',
-            DISTRIBUTION_REPOSITORY,
-        ]);
+        // GitHub creates the release attestation asynchronously after publication.
+        for (let attempt = 0; ; attempt++) {
+            try {
+                run('gh', [
+                    'release',
+                    'verify',
+                    tag,
+                    '--repo',
+                    DISTRIBUTION_REPOSITORY,
+                ]);
+                break;
+            } catch (error) {
+                if (
+                    attempt >= 29 ||
+                    !(error instanceof Error) ||
+                    (!error.message.includes('no attestations for tag') &&
+                        !error.message.includes(
+                            'no attestations found for release',
+                        ))
+                )
+                    throw error;
+                Bun.sleepSync(1000);
+            }
+        }
     } finally {
         writableDirectories(temporary);
         rmSync(temporary, { recursive: true, force: true });
