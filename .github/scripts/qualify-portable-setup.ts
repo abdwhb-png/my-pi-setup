@@ -1,7 +1,10 @@
 import { Database } from 'bun:sqlite';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
     cpSync,
+    openSync,
+    closeSync,
     existsSync,
     mkdirSync,
     readFileSync,
@@ -56,6 +59,42 @@ function passed(name: string) {
         kernel: run('uname', ['-r']),
         milestones,
     });
+}
+
+function runTests(
+    name: string,
+    tests: string[],
+    cwd: string,
+    env = process.env,
+) {
+    const log = join(evidence, `${name}.log`);
+    const output = openSync(log, 'wx', 0o600);
+    let result;
+    try {
+        result = spawnSync(
+            'timeout',
+            [
+                '--kill-after=10s',
+                '300s',
+                process.execPath,
+                'test',
+                '--isolate',
+                ...tests,
+            ],
+            {
+                cwd,
+                env,
+                stdio: ['ignore', output, output],
+            },
+        );
+    } finally {
+        closeSync(output);
+    }
+    assert.equal(
+        result.status,
+        0,
+        `${name} failed: ${result.error?.message ?? result.signal ?? result.status}\n${readFileSync(log, 'utf8').slice(-8000)}`,
+    );
 }
 
 // Only disposable checkout state is replaced; no personal profile enters CI.
@@ -120,14 +159,9 @@ run(
 );
 passed('producer imports the frozen Pi runtime and real package sources');
 
-run(
-    'timeout',
+runTests(
+    'operator-regressions',
     [
-        '--kill-after=10s',
-        '300s',
-        process.execPath,
-        'test',
-        '--isolate',
         'bin/setup',
         'bin/pi-fork-cli.test.ts',
         'bin/pi-fork-release.test.ts',
@@ -154,8 +188,8 @@ assert(
 );
 passed('pack and extract a synthetic profile with real validated runtimes');
 
-const home = join(work, 'destination-home');
-mkdirSync(home);
+const home = resolve(process.env.QUALIFICATION_HOME!);
+assert.equal(readdirSync(home).length, 0, 'Destination home must be empty');
 process.env.HOME = home;
 const target = join(home, '.pi');
 process.env.PI_CODING_AGENT_DIR = join(target, 'agent');
@@ -205,16 +239,9 @@ run(process.execPath, [join(target, 'bin/pi'), '--version'], home);
 run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
 
-run(
-    'timeout',
-    [
-        '--kill-after=10s',
-        '300s',
-        process.execPath,
-        'test',
-        '--isolate',
-        'extensions/sandbox/runtime/installed-runtime.integration.test.ts',
-    ],
+runTests(
+    'installed-sandbox',
+    ['extensions/sandbox/runtime/installed-runtime.integration.test.ts'],
     join(target, 'agent'),
     { ...process.env, PI_SANDBOX_INSTALLED_CONTRACT: '1' },
 );

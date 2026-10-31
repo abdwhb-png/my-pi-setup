@@ -52,6 +52,10 @@ expected=$(cut -d ' ' -f1 "$runtime_input/qualified-native-runtime.sha256")
 echo "$expected  $runtime_input/qualified-native-runtime.tgz" | sha256sum --check
 tar -xzf "$runtime_input/qualified-native-runtime.tgz" -C "$qualification_root/zerobox"
 export QUALIFICATION_SOURCE_SHA=${QUALIFICATION_SOURCE_SHA:-${GITHUB_SHA:?}}
+# A normal short home also respects Zerobox's Linux AF_UNIX socket budget.
+export QUALIFICATION_HOME=/home/pi-ci
+test ! -e "$QUALIFICATION_HOME"
+sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$QUALIFICATION_HOME"
 export QUALIFICATION_ROOT="$qualification_root"
 export QUALIFICATION_ZEROBOX="$qualification_root/zerobox"
 export HOME="$qualification_root/producer-home"
