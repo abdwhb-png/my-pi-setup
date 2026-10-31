@@ -128,13 +128,19 @@ if (privateProfile) {
                 '--repo',
                 DISTRIBUTION_REPOSITORY,
             ],
-            { stdio: 'ignore' },
+            { encoding: 'utf8' },
         );
         assert.equal(verification.error, undefined);
         assert.notEqual(
             verification.status,
             0,
             'Corrupted release asset was accepted',
+        );
+        assert(
+            verification.stderr.includes(
+                `does not contain subject sha256:${digest(readFileSync(corrupt))}`,
+            ),
+            'Corrupted asset failed for a reason other than its digest',
         );
         passed(
             'private immutable publication, download and corrupted asset refusal',

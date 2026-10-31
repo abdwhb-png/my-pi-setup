@@ -18,12 +18,20 @@ The global agent typecheck and the dedicated qualification-script typecheck pass
 
 ## Runner evidence
 
+**Final synthetic qualification passed** in [run 41180703584](https://github.com/abdwhb-png/my-pi-setup/actions/runs/41180703584) at `275c2c1258a2ea2fb249d6f3db09c30fcf35714d`: the rebuilt native-runtime job, global and qualification-script typechecks, provider-guard fixture tests, and two complete installations on each of Ubuntu and WSL2 succeeded. The native Analysis IPC contract passed with its new long Unicode HOME. Each downstream job again passed 121 regression tests (492 assertions), the installed sandbox contract (14 assertions) and eight milestones. Evidence: [Ubuntu 1](2026-10-31-portable-pi-ci-followup/41180703584/ubuntu-1.json), [Ubuntu 2](2026-10-31-portable-pi-ci-followup/41180703584/ubuntu-2.json), [WSL2 1](2026-10-31-portable-pi-ci-followup/41180703584/wsl2-1.json), [WSL2 2](2026-10-31-portable-pi-ci-followup/41180703584/wsl2-2.json).
+
+Subsequent changes affect only private publication preflight/token isolation, the explicit digest-mismatch assertion for corrupted private assets, and documentation. The dedicated script typecheck passed after those edits. They do not change the qualified production lease implementation or synthetic installation path; their positive private publication/profile/provider checks still require the private inputs below.
+
+[Run 41180204683](https://github.com/abdwhb-png/my-pi-setup/actions/runs/41180204683) passed the rebuilt native-runtime job and all four independent qualification jobs at `68ac6133441691c83b27032983c65868171868e6`. Each platform repetition passed 121 operator/launcher/runtime regression tests (492 assertions), the installed sandbox contract (14 assertions), and all eight portability milestones. The homes contained spaces and Unicode. Evidence: [Ubuntu 1](2026-10-31-portable-pi-ci-followup/41180204683/ubuntu-1.json), [Ubuntu 2](2026-10-31-portable-pi-ci-followup/41180204683/ubuntu-2.json), [WSL2 1](2026-10-31-portable-pi-ci-followup/41180204683/wsl2-1.json), [WSL2 2](2026-10-31-portable-pi-ci-followup/41180204683/wsl2-2.json).
+
 | Run | Result and interpretation |
 | --- | --- |
 | [41179963201](https://github.com/abdwhb-png/my-pi-setup/actions/runs/41179963201) | Failed at global typecheck because the native runner had not restored `pi-subagents`, `satteri`, and `croner`. Their exact existing roots and lockfiles were added to runner preparation; the gate was retained. |
 | [41180773220](https://github.com/abdwhb-png/my-pi-distribution/actions/runs/41180773220) | Private preflight exposed HTTP 403 from the immutable-release settings endpoint with `GITHUB_TOKEN`. Read-only candidate verification now uses release verification with the standard token. Publishing explicitly requires a repository-scoped secret with Contents write and Administration read. No install, publication or provider call ran. |
 
 The corrected private preflight [41180883219](https://github.com/abdwhb-png/my-pi-distribution/actions/runs/41180883219) reached the expected `release not found` refusal with the standard Actions token. Installation, publication and provider steps were skipped, confirming that a missing candidate does not fall back to another input.
+
+The explicit publication preflight [41180994774](https://github.com/abdwhb-png/my-pi-distribution/actions/runs/41180994774) refused the missing `PI_DISTRIBUTION_TOKEN` before any release creation. The repository contained no release or configured secret after these probes. Its workflow copy matches the canonical file byte-for-byte.
 
 ## Remaining qualification boundaries
 

@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "sourceCommit": "275c2c1258a2ea2fb249d6f3db09c30fcf35714d",
+  "platform": "wsl2",
+  "kernel": "6.18.54.1-microsoft-standard-WSL2",
+  "bundleSourceCommit": "01e63a4e589863f55865379190a557b3be268ee6",
+  "bundleSha256": "c993b3a1da50c834d9765bc56630895811e851d81306e2f0036d3fb27ac43dae",
+  "packages": [
+    "npm:pi-hermes-memory@0.9.10",
+    "npm:@gotgenes/pi-permission-system@33.0.0",
+    "git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9",
+    "./extensions/tool-groups"
+  ],
+  "milestones": [
+    "producer imports the frozen Pi runtime and real package sources",
+    "operator and launcher regression suites",
+    "pack and extract a synthetic profile with real validated runtimes",
+    "clean target installation, runtime coherence and daily launcher",
+    "real bash and safe_bash through the installed native sandbox",
+    "global memory transfer rebuilds search without session messages",
+    "real update, idempotency, rollback and post-rollback integrity",
+    "modified managed files refuse updates"
+  ],
+  "exclusions": [
+    "personal profile",
+    "private GitHub publication and download",
+    "provider connectivity"
+  ]
+}

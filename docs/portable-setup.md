@@ -108,6 +108,8 @@ The automated setup tests use temporary homes, real filesystem transactions, rea
 
 Related documents: [Pi architecture and runtime](ABOUT-PI.md), [sandbox configuration](../agent/extensions/sandbox/docs/configuration.md), [runtime distribution](../agent/extensions/sandbox/runtime/distribution/README.md), [implementation verification](verification/2026-10-31-portable-pi-setup.md), [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 
-The portable installation mechanism passed the [Ubuntu and WSL2 CI qualification](verification/2026-10-31-portable-pi-ci.md) at commit `2a03c42c164e2c76064bd0fe677a0f3d8c5e5dd7`, using a synthetic profile and the host constraints above. The report preserves both successful evidence and failures that led to fixes; this result does not qualify the complete personal profile or publish a distribution.
+The portable installation mechanism passed the [Ubuntu and WSL2 CI qualification](verification/2026-10-31-portable-pi-ci.md) at commit `2a03c42c164e2c76064bd0fe677a0f3d8c5e5dd7`, using a synthetic profile and the historical host constraints recorded in that report. The report preserves both successful evidence and failures that led to fixes; this result does not qualify the complete personal profile or publish a distribution.
 
 Private profile, publication and provider qualification runs only in GitHub Actions; see [the private qualification runbook](portable-private-qualification.md).
+
+The [follow-up qualification](verification/2026-10-31-portable-pi-ci-followup.md) records removal of the short-HOME constraint, repeated runner checks, and private workflow prerequisites.
