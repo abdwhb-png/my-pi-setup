@@ -228,7 +228,7 @@ test('failed responses preserve accounting without raw provider errors', async (
                     ...response,
                     stopReason: 'error' as const,
                     content: [],
-                    errorMessage: 'PRIVATE ERROR CANARY',
+                    errorMessage: '401 PRIVATE ERROR CANARY',
                 }),
             },
             cases,
@@ -238,6 +238,7 @@ test('failed responses preserve accounting without raw provider errors', async (
     ).rejects.toThrow('Provider request failed');
     expect(events.at(-1)).toMatchObject({
         event: 'response-received',
+        failure: 'authentication-rejected',
         reportedCostUSD: 0.000005,
         stopReason: 'error',
         hasText: false,

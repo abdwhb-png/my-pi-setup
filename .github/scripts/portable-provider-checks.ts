@@ -78,6 +78,37 @@ export interface ProviderCheckEvent {
     stopReason?: string;
     hasText?: boolean;
     hasThinking?: boolean;
+    failure?: string;
+}
+
+function providerFailure(message = ''): string {
+    const classifications: Array<[RegExp, string]> = [
+        [
+            /401|unauthori[sz]ed|invalid.*api.?key|no api key|authentication/i,
+            'authentication-rejected',
+        ],
+        [/region|geograph|location.*(blocked|support)/i, 'region-restricted'],
+        [
+            /429|rate.?limit|quota|credit|balance|subscription/i,
+            'quota-or-plan-restricted',
+        ],
+        [/403|forbidden|permission|access denied/i, 'access-denied'],
+        [
+            /model.*(not found|unavailable|not supported)|unknown model/i,
+            'model-unavailable',
+        ],
+        [
+            /400|invalid.*(parameter|request)|max_tokens|max_completion_tokens|reasoning_effort/i,
+            'invalid-request',
+        ],
+        [/timeout|timed out|abort/i, 'timeout'],
+        [/fetch failed|ECONN|ENOTFOUND|network/i, 'network-failure'],
+        [/unknown api|no api provider|unsupported api/i, 'api-unavailable'],
+    ];
+    return (
+        classifications.find(([pattern]) => pattern.test(message))?.[1] ??
+        'unclassified'
+    );
 }
 
 export async function inspectProviderCases(
@@ -197,6 +228,9 @@ export async function qualifyProviders(
             event: 'response-received',
             reportedCostUSD: response.usage.cost.total,
             stopReason: response.stopReason,
+            ...(response.stopReason === 'error'
+                ? { failure: providerFailure(response.errorMessage) }
+                : {}),
             hasText: response.content.some(
                 (part) => part.type === 'text' && part.text.trim().length > 0,
             ),
