@@ -51,6 +51,8 @@ Earlier release-test timeouts remain negative evidence. Ten consecutive local re
 
 ## Boundaries
 
+These boundaries describe the historical candidate above. See the [portability follow-up](2026-10-31-portable-pi-ci-followup.md) for the HOME-path fix, rebuilt runtime inputs, typecheck restoration and private Actions workflow.
+
 The destination HOME is the empty synthetic `/home/pi-ci`. The current Zerobox lease layout requires a worst-case AF_UNIX pathname shorter than 108 UTF-8 bytes; this HOME produces 106 bytes. With this layout, HOME itself may occupy at most 12 UTF-8 bytes. Longer homes remain unsupported by the bundled sandbox; relocating only the setup root does not change that limit.
 
 The global local typecheck still reports four pre-existing errors outside the portability files, listed in the [implementation verification](2026-10-31-portable-pi-setup.md). These jobs qualify the explicit portability contract, not a clean global typecheck or the complete repository test suite.

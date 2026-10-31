@@ -8,7 +8,7 @@ The distribution repository must be private, have an initialized default branch 
 
 Supply a candidate through the private release UI: create a draft, attach the `setup.tgz` and `release.json` produced by `pi-setup pack`, then publish it as an immutable release. Review the separate inventory before uploading. The candidate contains the actual portable profile and its pinned runtimes, but no authentication, sessions or memory. This initial candidate is an input, not qualification evidence. No workflow reads this workstation to create it. A changed setup implementation requires a new candidate built from that implementation; evidence records both the qualification-source commit and bundle-source commit.
 
-The repository token reads and optionally publishes releases in this private repository. Access to private package forks must be configured separately through the package Git credential channel if the profile requires them; the repository token does not grant access to unrelated private repositories.
+The standard repository token reads releases. Publication requires the `PI_DISTRIBUTION_TOKEN` Actions secret: a fine-grained token restricted to this repository with Contents read/write and Administration read. The administration permission is needed to verify the immutable-release setting; the standard Actions token was rejected by that endpoint in a runner check. Access to private package forks must be configured separately through the package Git credential channel if the profile requires them; the repository token does not grant access to unrelated private repositories.
 
 ## Dispatch
 
@@ -30,6 +30,7 @@ Configure secrets in **Settings → Secrets and variables → Actions** in the p
 
 | Name | Kind | Content |
 | --- | --- | --- |
+| `PI_DISTRIBUTION_TOKEN` | Secret | Fine-grained token for this repository only, Contents read/write and Administration read. Required only when publishing. |
 | `PI_QUALIFICATION_AUTH_JSON` | Secret | Pi `auth.json` JSON for the explicitly selected authentication modes, when needed. |
 | `PI_QUALIFICATION_PROVIDER_SECRETS_JSON` | Secret | The installed AI-provider extension's `config/ai-providers.secrets.json` JSON, when needed. |
 | `PI_QUALIFICATION_PROVIDER_CASES` | Variable | A JSON array of 1–8 objects with `provider`, `model`, and `authMode` (`api-key`, `oauth`, or `subscription`). No credentials. |

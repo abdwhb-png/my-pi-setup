@@ -41,15 +41,23 @@ jobs:
     steps:
       - name: Require a private repository and immutable releases
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PI_DISTRIBUTION_TOKEN || github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
+          DISTRIBUTION_TOKEN_PRESENT: ${{ secrets.PI_DISTRIBUTION_TOKEN != '' }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
-          test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled)" = true
+          if test -n "$PUBLISH_TAG"; then
+            if test "$DISTRIBUTION_TOKEN_PRESENT" != true; then
+              echo 'Publication requires PI_DISTRIBUTION_TOKEN with Contents write and Administration read on this repository.'
+              exit 1
+            fi
+            test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled)" = true
+          fi
           gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -64,7 +72,7 @@ jobs:
           bun-version: '1.3.14'
       - name: Qualify private distribution on a disposable runner
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PI_DISTRIBUTION_TOKEN || github.token }}
           QUALIFICATION_PLATFORM: ubuntu
           QUALIFICATION_MODE: private
           QUALIFICATION_SOURCE_SHA: ${{ inputs.source_sha }}

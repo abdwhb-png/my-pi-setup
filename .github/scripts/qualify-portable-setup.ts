@@ -141,6 +141,8 @@ if (privateProfile) {
         );
     }
     passed('verified private profile release downloaded');
+    delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;
+    delete process.env.GH_TOKEN;
 } else {
     // Only disposable checkout state is replaced; no personal profile enters CI.
     for (const entry of readdirSync(join(source, 'agent/config'))) {
