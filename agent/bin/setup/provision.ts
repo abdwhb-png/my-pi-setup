@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
@@ -15,6 +15,7 @@ export async function provision(root: string, bundle: string): Promise<void> {
         runtimeRoot: join(root, 'runtime/pi-core'),
         agentDir,
     });
+    await restoreBundledExtensionDependencies(root, manifest.files);
     const settingsPath = join(agentDir, 'settings.json');
     const settings = prepareInstalledProfile(
         root,
@@ -35,23 +36,7 @@ export async function provision(root: string, bundle: string): Promise<void> {
             const separator = source.lastIndexOf('@');
             const name = source.slice(4, separator),
                 version = source.slice(separator + 1);
-            const response = await fetch(
-                `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
-                { signal: AbortSignal.timeout(30000) },
-            );
-            if (!response.ok)
-                throw new Error(
-                    `Official registry lookup failed for ${name}@${version}`,
-                );
-            const metadata = object(await response.json());
-            if (
-                metadata.name !== name ||
-                metadata.version !== version ||
-                typeof object(metadata.dist).integrity !== 'string'
-            )
-                throw new Error(
-                    'Registry metadata does not match the requested package',
-                );
+            await verifyRegistryVersion(name, version);
         }
         run(
             process.execPath,
@@ -111,6 +96,76 @@ export async function provision(root: string, bundle: string): Promise<void> {
     const coherence = verifyRuntimeCoherence(runtime, agentDir);
     if (!coherence.ok) throw new Error(coherence.errors.join('\n'));
     await verifyPackages(root, manifest.packages);
+}
+
+async function verifyRegistryVersion(
+    name: string,
+    version: string,
+): Promise<void> {
+    const response = await fetch(
+        `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+        { signal: AbortSignal.timeout(30000) },
+    );
+    if (!response.ok)
+        throw new Error(
+            `Official registry lookup failed for ${name}@${version}`,
+        );
+    const metadata = object(await response.json());
+    if (
+        metadata.name !== name ||
+        metadata.version !== version ||
+        typeof object(metadata.dist).integrity !== 'string'
+    )
+        throw new Error(
+            'Registry metadata does not match the requested package',
+        );
+}
+
+export async function restoreBundledExtensionDependencies(
+    root: string,
+    files: Record<string, string>,
+): Promise<void> {
+    for (const path of Object.keys(files).toSorted()) {
+        if (!/^setup\/agent\/extensions\/[^/]+\/package\.json$/.test(path))
+            continue;
+        const packagePath = join(root, path.slice(6));
+        const pkg = json(packagePath);
+        const dependencies = {
+            ...object(pkg.dependencies ?? {}),
+            ...object(pkg.devDependencies ?? {}),
+            ...object(pkg.optionalDependencies ?? {}),
+        };
+        if (Object.keys(dependencies).length === 0) continue;
+        const lockPath = path.replace(/package\.json$/, 'bun.lock');
+        if (!files[lockPath])
+            throw new Error(`Missing bundled Bun lockfile: ${lockPath}`);
+        const lock = object(
+            Bun.JSONC.parse(
+                readFileSync(join(root, lockPath.slice(6)), 'utf8'),
+            ),
+        );
+        const packages = object(lock.packages);
+        for (const name of Object.keys(dependencies)) {
+            const entry = packages[name];
+            if (!Array.isArray(entry) || typeof entry[0] !== 'string')
+                throw new Error(`Missing locked dependency: ${name}`);
+            const separator = entry[0].lastIndexOf('@');
+            const resolvedName = entry[0].slice(0, separator);
+            const version = entry[0].slice(separator + 1);
+            if (
+                !/^(@[\w.-]+\/)?[\w.-]+$/.test(resolvedName) ||
+                !/^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/.test(version)
+            )
+                throw new Error(`Unsupported locked dependency: ${name}`);
+            await verifyRegistryVersion(resolvedName, version);
+        }
+        run('sfw', ['--version']);
+        run(
+            'sfw',
+            ['bun', 'install', '--frozen-lockfile', '--ignore-scripts'],
+            dirname(packagePath),
+        );
+    }
 }
 
 export function prepareInstalledProfile(
