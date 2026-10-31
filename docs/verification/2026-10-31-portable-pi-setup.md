@@ -16,8 +16,9 @@ Commands were run from `~/.pi/agent` unless stated otherwise.
 
 | Check | Result |
 | --- | --- |
-| `bun test --isolate bin/setup bin/pi-fork-cli.test.ts bin/pi-fork-release.test.ts extensions/_shared/redaction.test.ts` | 55 passed, 0 failed; 224 assertions |
-| `bun test --isolate bin/pi-runtime-store.test.ts bin/pi-wrapper-lib.test.ts` | 25 passed, 0 failed; 57 assertions |
+| `bun test --isolate bin/setup bin/pi-fork-cli.test.ts bin/pi-fork-release.test.ts bin/pi-runtime-store.test.ts bin/pi-wrapper-lib.test.ts extensions/_shared/redaction.test.ts` | 82 passed, 0 failed; 284 assertions |
+| Focused packaging, transaction, diagnostic and profile tests under Bun 1.3.14 | 13 passed, 0 failed; subsequent fresh-process/transitive-resolution regression also passed on Bun 1.3.14 |
+| Pi release regression suite repeated under Bun 1.3.14 | 10 consecutive local executions passed; intermittent CI timeouts remain recorded separately |
 | `bun run lint` | Exit 0, with warnings; includes extension boundary and storage checks |
 | `bun run typecheck` | Exit 1; the same four pre-existing diagnostics listed below, none in the setup implementation |
 | Formatting for changed setup TypeScript files | Passed with the repository formatter and repository options; ignored `bin` files were explicitly selected |
@@ -31,8 +32,8 @@ Verified regression cycles include mutable package-source rejection, legacy Herm
 
 ## Release boundaries and remaining qualification
 
-No dependency was installed into the live setup, no live credentials or memories were exported, and no private repository or release was created. The current source checkout was not adopted as a managed installation. The implementation remains uncommitted and unpublished; `pack` deliberately rejects this state. Review and commit the intended source changes before producing a real candidate.
+No dependency was installed into the live setup, no live credentials or memories were exported, and no private repository or release was created. The current source checkout was not adopted as a managed installation. The implementation is committed on the dedicated CI candidate branch `codex/portable-setup-ci-20261031`; the live source checkout retains its uncommitted changes, which `pack` deliberately rejects. No distribution release has been published. The isolated candidate excludes unrelated local changes and history.
 
 The installer uses the existing sandbox development setup implementation and example profile already present as separate workspace changes. A release must include reviewed versions of `agent/scripts/configure-sandbox.ts`, its sandbox capability dependencies and `agent/config/sandbox.development.example.json`; this work did not rewrite those changes.
 
-The full network provisioning path has not been executed on a second host. Native Ubuntu 24.04 and WSL2 qualification, native Zerobox execution qualification, real GitHub immutable-release verification and provider connectivity remain unrun. The complete repository test suite was not run because validation was scoped to the changed runtime and operator surfaces. Filesystem transaction tests establish ordinary failure and process-interruption recovery, not power-loss durability. These limits must remain visible when admitting an actual release.
+Actual Ubuntu 24.04 and WSL2 execution is tracked in the [CI qualification report](2026-10-31-portable-pi-ci.md), including failed runs and the final admission status. Real GitHub immutable-release publication/download and provider connectivity remain unrun. The complete repository test suite was not run because validation was scoped to the changed runtime and operator surfaces. Filesystem transaction tests establish ordinary failure and process-interruption recovery, not power-loss durability. These limits must remain visible when admitting an actual release.
