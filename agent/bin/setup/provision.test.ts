@@ -28,7 +28,25 @@ test('package verification loads the destination runtime installed after the ope
         });
         writeFileSync(
             join(moduleRoot, 'index.js'),
-            'export class SettingsManager { static create() { throw new Error("Destination runtime loaded"); } } export class DefaultPackageManager {}',
+            'import { marker } from "fixture-runtime-dependency"; export class SettingsManager { static create() { throw new Error(marker); } } export class DefaultPackageManager {}',
+        );
+        writeJson(
+            join(
+                root,
+                'agent/node_modules/fixture-runtime-dependency/package.json',
+            ),
+            {
+                name: 'fixture-runtime-dependency',
+                type: 'module',
+                main: './index.js',
+            },
+        );
+        writeFileSync(
+            join(
+                root,
+                'agent/node_modules/fixture-runtime-dependency/index.js',
+            ),
+            'export const marker = "Destination runtime loaded";',
         );
         await expect(verifyPackages(root, [])).rejects.toThrow(
             'Destination runtime loaded',

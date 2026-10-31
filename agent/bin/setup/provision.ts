@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
 import { validateBundle } from './distribution.ts';
-import { child, json, object, run, writeJson } from './files.ts';
+import { json, object, run, writeJson } from './files.ts';
 
 /** Runs only after the transaction has placed the candidate at its final path. */
 export async function provision(root: string, bundle: string): Promise<void> {
@@ -157,23 +157,32 @@ export async function verifyPackages(
     root: string,
     sources: string[],
 ): Promise<void> {
-    const agentDir = join(root, 'agent');
-    // Bun caches missing package lookups made before deployment. Read the new
-    // package's declared ESM entry from disk instead of reusing that resolver cache.
-    const packageRoot = join(
-        agentDir,
-        'node_modules/@earendil-works/pi-coding-agent',
+    // Deployment creates node_modules after Bun has cached absent directories.
+    // A fresh process must resolve the complete runtime graph, including transitives.
+    run(
+        process.execPath,
+        [import.meta.filename, '--verify-packages', root, ...sources],
+        root,
+        {
+            ...process.env,
+            PI_CODING_AGENT_DIR: join(root, 'agent'),
+        },
     );
-    const metadata = json(join(packageRoot, 'package.json'));
-    const entry = object(object(metadata.exports)['.']).import;
-    if (typeof entry !== 'string' || !entry.startsWith('./'))
-        throw new Error('Installed Pi package has no relative ESM entry');
+}
+
+async function verifyPackagesInProcess(
+    root: string,
+    sources: string[],
+): Promise<void> {
+    const agentDir = join(root, 'agent');
+    const entry = import.meta.resolve(
+        '@earendil-works/pi-coding-agent',
+        pathToFileURL(join(agentDir, 'package.json')).href,
+    );
     const {
         DefaultPackageManager,
         SettingsManager,
-    }: typeof import('@earendil-works/pi-coding-agent') = await import(
-        pathToFileURL(child(packageRoot, entry.slice(2))).href
-    );
+    }: typeof import('@earendil-works/pi-coding-agent') = await import(entry);
     const manager = new DefaultPackageManager({
         cwd: root,
         agentDir,
@@ -201,7 +210,16 @@ export async function verifyPackages(
 }
 if (import.meta.main) {
     try {
-        await provision(resolve(process.argv[2]!), resolve(process.argv[3]!));
+        if (process.argv[2] === '--verify-packages')
+            await verifyPackagesInProcess(
+                resolve(process.argv[3]!),
+                process.argv.slice(4),
+            );
+        else
+            await provision(
+                resolve(process.argv[2]!),
+                resolve(process.argv[3]!),
+            );
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
