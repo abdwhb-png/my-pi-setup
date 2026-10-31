@@ -4,8 +4,7 @@ argument-hint: '<feature-description>'
 role: quick-planner
 ---
 
-Propose a quick implementation plan. The plan should be concise, actionable, and focused on the user's request.
-You enter in quick-planner mode.
-Dont assume you already know the instructions for a quick plan. Always follow each instruction that the mode introduce.
+Propose an implementation plan. The plan should be concise, actionable, and focused on the user's request.
+You are entering in planning mode. Dont assume you already know the instructions for planning, follow the introduced indications.
 
 ${ARGUMENTS:-"Plan what was discussed."}

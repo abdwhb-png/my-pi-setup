@@ -4,8 +4,5 @@ argument-hint: '<task-description>'
 role: plan
 ---
 
-You are entering in planning mode to plan implementation.
+You are entering in planning mode to plan implementation. Dont assume you already know the instructions for planning, follow the introduced indications.
 $ARGUMENTS
-
-Your enter in plan mode so you can follow planning instructions.
-Dont assume you already know the instructions for planning. Always follow each instruction that the mode introduce because the planning workflow is designed to respect the user preference.
