@@ -220,9 +220,10 @@ async function transact(
                 const entries = Object.keys(baseline).filter((name) =>
                     name.startsWith(`${path}/`),
                 );
-                if (entries.some((name) => !old.managed[name]))
+                const unmanaged = entries.filter((name) => !old.managed[name]);
+                if (unmanaged.length)
                     throw new Error(
-                        `Unmanaged files in generated installation: ${path}`,
+                        `Unmanaged files in generated installation: ${path}: ${unmanaged.slice(0, 20).join(', ')}${unmanaged.length > 20 ? ` (${unmanaged.length} total)` : ''}`,
                     );
                 rmSync(join(candidate, path), { recursive: true, force: true });
             }
