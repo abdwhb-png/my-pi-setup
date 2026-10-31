@@ -42,6 +42,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+      attestations: read
     steps:
       - name: Require a private repository and immutable releases
         env:
@@ -58,7 +59,7 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
           if test -n "$PUBLISH_TAG" || test "$PUBLISH_CANDIDATE" = true; then
             if test "$DISTRIBUTION_TOKEN_PRESENT" != true; then
-              echo 'Publication requires PI_DISTRIBUTION_TOKEN with Contents write and Administration read on this repository.'
+              echo 'Publication requires PI_DISTRIBUTION_TOKEN with Contents write, Administration read and Attestations read on this repository.'
               exit 1
             fi
             test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled)" = true
@@ -69,6 +70,7 @@ jobs:
             gh release edit "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
           if ! gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"; then
+            echo 'Release verification failed. Fine-grained PI_DISTRIBUTION_TOKEN requires Attestations read on this repository; inspect the API result below.'
             gh --version
             release_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_RELEASE" --jq .object.sha)
             gh api --method GET "/repos/$GITHUB_REPOSITORY/attestations/sha1:$release_sha" -f predicate_type=release --jq '{attestationCount: (.attestations | length)}'
