@@ -112,12 +112,16 @@ test('installation relocates every bundled profile and seeds the runtime changel
 test('bundled extension dependencies are restored through frozen firewall installs', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-extension-restore-'));
     const originalPath = process.env.PATH;
-    const registry = spyOn(globalThis, 'fetch').mockImplementation(async () =>
-        Response.json({
-            name: 'fixture-dependency',
-            version: '1.2.3',
-            dist: { integrity: 'sha512-fixture' },
-        }),
+    const registry = spyOn(globalThis, 'fetch').mockImplementation(
+        Object.assign(
+            async () =>
+                Response.json({
+                    name: 'fixture-dependency',
+                    version: '1.2.3',
+                    dist: { integrity: 'sha512-fixture' },
+                }),
+            { preconnect: globalThis.fetch.preconnect },
+        ),
     );
     try {
         const extension = join(root, 'agent/extensions/fixture');

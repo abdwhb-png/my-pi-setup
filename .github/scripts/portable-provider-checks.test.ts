@@ -296,3 +296,29 @@ test('zero-budget qualification refuses a positive cache price before generation
     );
     expect(fixture.calls).toBe(0);
 });
+
+test('request diagnostics expose only fixed parameter and rejection labels', async () => {
+    const events: unknown[] = [];
+    await expect(
+        qualifyProviders(
+            {
+                ...runtime(),
+                completeSimple: async () => ({
+                    ...response,
+                    stopReason: 'error' as const,
+                    content: [],
+                    errorMessage:
+                        '400 Unsupported parameter max_tokens; sk-PRIVATE_SECRET_CANARY',
+                }),
+            },
+            cases,
+            1,
+            (event) => events.push(event),
+        ),
+    ).rejects.toThrow('Provider request failed');
+    expect(events.at(-1)).toMatchObject({
+        failure: 'invalid-request',
+        requestError: { parameters: ['max_tokens'], reasons: ['unsupported'] },
+    });
+    expect(JSON.stringify(events)).not.toContain('PRIVATE_SECRET_CANARY');
+});

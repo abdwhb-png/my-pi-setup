@@ -79,6 +79,7 @@ export interface ProviderCheckEvent {
     hasText?: boolean;
     hasThinking?: boolean;
     failure?: string;
+    requestError?: { parameters: string[]; reasons: string[] };
 }
 
 function providerFailure(message = ''): string {
@@ -229,7 +230,52 @@ export async function qualifyProviders(
             reportedCostUSD: response.usage.cost.total,
             stopReason: response.stopReason,
             ...(response.stopReason === 'error'
-                ? { failure: providerFailure(response.errorMessage) }
+                ? {
+                      failure: providerFailure(response.errorMessage),
+                      requestError: {
+                          parameters: [
+                              'max_tokens',
+                              'max_completion_tokens',
+                              'reasoning_effort',
+                              'temperature',
+                              'top_p',
+                              'stream',
+                              'stream_options',
+                              'messages',
+                              'system',
+                              'tools',
+                              'tool_choice',
+                              'thinking',
+                              'model',
+                              'user',
+                              'store',
+                          ].filter((parameter) =>
+                              new RegExp(`\\b${parameter}\\b`, 'i').test(
+                                  response.errorMessage ?? '',
+                              ),
+                          ),
+                          reasons: [
+                              'unsupported',
+                              'not supported',
+                              'required',
+                              'minimum',
+                              'maximum',
+                              'greater than',
+                              'less than',
+                              'must be',
+                              'invalid',
+                              'missing',
+                              'disabled',
+                              'not allowed',
+                              'not available',
+                              'not found',
+                          ].filter((reason) =>
+                              (response.errorMessage ?? '')
+                                  .toLowerCase()
+                                  .includes(reason),
+                          ),
+                      },
+                  }
                 : {}),
             hasText: response.content.some(
                 (part) => part.type === 'text' && part.text.trim().length > 0,
