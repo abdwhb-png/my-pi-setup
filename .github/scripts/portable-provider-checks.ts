@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import type { ModelRuntime } from '../../agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js';
 
 export interface ProviderCase {
@@ -218,6 +219,7 @@ export async function qualifyProviders(
                 ],
             },
             {
+                sessionId: randomUUID(),
                 maxTokens: 16,
                 maxRetries: 0,
                 timeoutMs: 30_000,
@@ -234,6 +236,7 @@ export async function qualifyProviders(
                       failure: providerFailure(response.errorMessage),
                       requestError: {
                           parameters: [
+                              'x-opencode-session',
                               'max_tokens',
                               'max_completion_tokens',
                               'reasoning_effort',

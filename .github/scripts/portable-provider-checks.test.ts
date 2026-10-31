@@ -138,6 +138,7 @@ test('a successful check bounds the request and records no response content', as
                     maxRetries: 0,
                     timeoutMs: 30_000,
                 });
+                expect(options?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
                 expect(options?.signal).toBeInstanceOf(AbortSignal);
                 return response;
             },
