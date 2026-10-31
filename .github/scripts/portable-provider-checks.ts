@@ -166,6 +166,7 @@ export async function inspectProviderCases(
                 model.maxTokens >= 16,
             'Invalid configured model token limits',
         );
+        const maxTokens = Math.min(2048, model.maxTokens);
         const reservation =
             (model.contextWindow *
                 Math.max(
@@ -175,13 +176,13 @@ export async function inspectProviderCases(
                         rate.cacheWrite,
                     ]),
                 ) +
-                16 * Math.max(...rates.map((rate) => rate.output))) /
+                maxTokens * Math.max(...rates.map((rate) => rate.output))) /
             1_000_000;
         assert(
             Number.isFinite(reservation) && reservation >= 0,
             'Invalid configured model prices',
         );
-        return { item, model, reservation };
+        return { item, model, reservation, maxTokens };
     });
     assert(
         prepared.reduce((sum, entry) => sum + entry.reservation, 0) <= budget,
@@ -199,7 +200,7 @@ export async function qualifyProviders(
     const prepared = await inspectProviderCases(runtime, input, budget);
     let spent = 0;
     const results = [];
-    for (const { item, model, reservation } of prepared) {
+    for (const { item, model, reservation, maxTokens } of prepared) {
         const identity = { provider: item.provider, model: item.model };
         onProgress?.({
             ...identity,
@@ -220,7 +221,7 @@ export async function qualifyProviders(
             },
             {
                 sessionId: randomUUID(),
-                maxTokens: 16,
+                maxTokens,
                 maxRetries: 0,
                 timeoutMs: 30_000,
                 signal: AbortSignal.timeout(35_000),

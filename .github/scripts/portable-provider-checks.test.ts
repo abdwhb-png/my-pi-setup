@@ -323,3 +323,26 @@ test('request diagnostics expose only fixed parameter and rejection labels', asy
     });
     expect(JSON.stringify(events)).not.toContain('PRIVATE_SECRET_CANARY');
 });
+
+test('reasoning models receive bounded output room included in the cost reservation', async () => {
+    const selected = {
+        ...model,
+        reasoning: true,
+        contextWindow: 8192,
+        maxTokens: 4096,
+    };
+    const fixture = runtime(selected);
+    const prepared = await inspectProviderCases(fixture, cases, 1);
+    expect(prepared[0].reservation).toBe(0.01024);
+    await qualifyProviders(
+        {
+            ...fixture,
+            completeSimple: async (_model, _context, options) => {
+                expect(options?.maxTokens).toBe(2048);
+                return response;
+            },
+        },
+        cases,
+        1,
+    );
+});
