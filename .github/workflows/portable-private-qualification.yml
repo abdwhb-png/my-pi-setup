@@ -11,6 +11,10 @@ on:
         description: Immutable private release containing setup.tgz and release.json
         type: string
         required: true
+      publish_candidate:
+        description: Publish the uploaded draft candidate before qualification
+        type: boolean
+        default: false
       publish_tag:
         description: Optional NEW immutable release tag (authorizes publication)
         type: string
@@ -45,18 +49,24 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
           PUBLISH_TAG: ${{ inputs.publish_tag }}
+          PUBLISH_CANDIDATE: ${{ inputs.publish_candidate }}
           DISTRIBUTION_TOKEN_PRESENT: ${{ secrets.PI_DISTRIBUTION_TOKEN != '' }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
-          if test -n "$PUBLISH_TAG"; then
+          if test -n "$PUBLISH_TAG" || test "$PUBLISH_CANDIDATE" = true; then
             if test "$DISTRIBUTION_TOKEN_PRESENT" != true; then
               echo 'Publication requires PI_DISTRIBUTION_TOKEN with Contents write and Administration read on this repository.'
               exit 1
             fi
             test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled)" = true
+          fi
+          if test "$PUBLISH_CANDIDATE" = true; then
+            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | select((.name == "setup.tgz" or .name == "release.json") and .size > 0)] | length')" = 2
+            gh release edit "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
           gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
