@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { inventory, json, writeJson } from './files.ts';
 import { prepareInstalledProfile, verifyPackages } from './provision.ts';
@@ -9,6 +10,12 @@ import { prepareInstalledProfile, verifyPackages } from './provision.ts';
 test('package verification loads the destination runtime installed after the operator module', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-late-runtime-'));
     try {
+        expect(() =>
+            import.meta.resolve(
+                '@earendil-works/pi-coding-agent',
+                pathToFileURL(join(root, 'agent/package.json')).href,
+            ),
+        ).toThrow();
         const moduleRoot = join(
             root,
             'agent/node_modules/@earendil-works/pi-coding-agent',
