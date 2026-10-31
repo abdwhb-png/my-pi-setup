@@ -2,10 +2,12 @@ import { expect, test } from 'bun:test';
 import type {
     Model,
     Api,
+    AssistantMessage,
 } from '../../agent/node_modules/@earendil-works/pi-ai/dist/index.js';
 import {
     parseProviderCases,
     qualifyProviders,
+    inspectProviderCases,
 } from './portable-provider-checks.ts';
 
 const cases = JSON.stringify([
@@ -23,6 +25,30 @@ const model: Model<Api> = {
     maxTokens: 16,
     cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 };
+const response: AssistantMessage = {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'PRIVATE RESPONSE CANARY' }],
+    api: model.api,
+    model: model.id,
+    provider: model.provider,
+    stopReason: 'stop',
+    timestamp: 1,
+    usage: {
+        input: 4,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5,
+        cost: {
+            input: 0.000004,
+            output: 0.000001,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0.000005,
+        },
+    },
+};
+
 function runtime(selected = model) {
     let calls = 0;
     let refreshCalls = 0;
@@ -113,31 +139,7 @@ test('a successful check bounds the request and records no response content', as
                     timeoutMs: 30_000,
                 });
                 expect(options?.signal).toBeInstanceOf(AbortSignal);
-                return {
-                    role: 'assistant',
-                    content: [
-                        { type: 'text', text: 'PRIVATE RESPONSE CANARY' },
-                    ],
-                    api: model.api,
-                    model: model.id,
-                    provider: model.provider,
-                    stopReason: 'stop',
-                    timestamp: 1,
-                    usage: {
-                        input: 4,
-                        output: 1,
-                        cacheRead: 0,
-                        cacheWrite: 0,
-                        totalTokens: 5,
-                        cost: {
-                            input: 0.000004,
-                            output: 0.000001,
-                            cacheRead: 0,
-                            cacheWrite: 0,
-                            total: 0.000005,
-                        },
-                    },
-                };
+                return response;
             },
         },
         cases,
@@ -197,4 +199,55 @@ test('catalog failures and cancellation prevent completion requests', async () =
         ).rejects.toThrow('Provider catalog refresh failed');
         expect(fixture.calls).toBe(0);
     }
+});
+
+test('request reservations survive a provider failure without response text', async () => {
+    const events: unknown[] = [];
+    const fixture = runtime();
+    await expect(
+        qualifyProviders(fixture, cases, 1, (event) => events.push(event)),
+    ).rejects.toThrow('fixture provider failure');
+    expect(events).toEqual([
+        {
+            provider: 'fixture',
+            model: 'tiny',
+            event: 'reserved',
+            maximumCostUSD: 0.001016,
+        },
+        { provider: 'fixture', model: 'tiny', event: 'request-started' },
+    ]);
+});
+
+test('failed responses preserve accounting without raw provider errors', async () => {
+    const events: unknown[] = [];
+    await expect(
+        qualifyProviders(
+            {
+                ...runtime(),
+                completeSimple: async () => ({
+                    ...response,
+                    stopReason: 'error' as const,
+                    content: [],
+                    errorMessage: 'PRIVATE ERROR CANARY',
+                }),
+            },
+            cases,
+            1,
+            (event) => events.push(event),
+        ),
+    ).rejects.toThrow('Provider request failed');
+    expect(events.at(-1)).toMatchObject({
+        event: 'response-received',
+        reportedCostUSD: 0.000005,
+        stopReason: 'error',
+        hasText: false,
+    });
+    expect(JSON.stringify(events)).not.toContain('PRIVATE ERROR CANARY');
+});
+
+test('catalog inspection reports the reservation without requesting a completion', async () => {
+    const fixture = runtime();
+    const prepared = await inspectProviderCases(fixture, cases, 1);
+    expect(prepared[0].reservation).toBe(0.001016);
+    expect(fixture.calls).toBe(0);
 });

@@ -23,6 +23,10 @@ on:
         description: Authorize the configured provider calls (may incur charges)
         type: boolean
         default: false
+      catalog_only:
+        description: Inspect selected provider auth and catalog prices without generation
+        type: boolean
+        default: false
       provider_budget_usd:
         description: Approved budget in USD, using configured model prices (0 disables calls)
         type: string
@@ -48,12 +52,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PI_DISTRIBUTION_TOKEN || github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          PROVIDERS: ${{ inputs.providers }}
+          CATALOG_ONLY: ${{ inputs.catalog_only }}
           CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
           PUBLISH_TAG: ${{ inputs.publish_tag }}
           PUBLISH_CANDIDATE: ${{ inputs.publish_candidate }}
           DISTRIBUTION_TOKEN_PRESENT: ${{ secrets.PI_DISTRIBUTION_TOKEN != '' }}
         run: |
           set -euo pipefail
+          if test "$PROVIDERS" = true && test "$CATALOG_ONLY" = true; then
+            echo 'Choose either catalog inspection or generation.'
+            exit 1
+          fi
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
@@ -105,6 +115,7 @@ jobs:
           PI_QUALIFICATION_PROVIDER_SECRETS_JSON: ${{ secrets.PI_QUALIFICATION_PROVIDER_SECRETS_JSON }}
           PI_QUALIFICATION_PROVIDER_CASES: ${{ vars.PI_QUALIFICATION_PROVIDER_CASES }}
           QUALIFICATION_PROVIDERS: ${{ inputs.providers }}
+          QUALIFICATION_CATALOG_ONLY: ${{ inputs.catalog_only }}
           QUALIFICATION_PROVIDER_BUDGET: ${{ inputs.provider_budget_usd }}
         run: |
           set -euo pipefail

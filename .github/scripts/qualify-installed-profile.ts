@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { qualifyProviders } from './portable-provider-checks.ts';
+import {
+    qualifyProviders,
+    inspectProviderCases,
+    type ProviderCheckEvent,
+} from './portable-provider-checks.ts';
 
 function failureCode(error: unknown): string {
     const message =
@@ -30,6 +34,18 @@ function failureCode(error: unknown): string {
         return 'provider-budget-exceeded';
     if (/Provider catalog refresh failed/.test(message))
         return 'provider-catalog-unavailable';
+    if (/Provider request failed/.test(message))
+        return 'provider-request-failed';
+    if (/Provider returned no text/.test(message))
+        return 'provider-empty-response';
+    if (/Invalid configured model prices/.test(message))
+        return 'provider-invalid-prices';
+    if (/Invalid configured model token limits/.test(message))
+        return 'provider-invalid-token-limits';
+    if (/Provider returned invalid cost accounting/.test(message))
+        return 'provider-invalid-cost';
+    if (/Explicit provider budget/.test(message))
+        return 'provider-invalid-budget';
     return 'unclassified';
 }
 
@@ -48,6 +64,7 @@ let session:
     | import('../../agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js').AgentSession
     | undefined;
 let stage = 'credentials';
+const providerEvents: ProviderCheckEvent[] = [];
 let extensionErrors: Array<{ path: string; failure: string }> = [];
 try {
     for (const [key, path] of credentials) {
@@ -110,6 +127,27 @@ try {
             'Installed profile has resource diagnostics',
         );
     }
+    assert(
+        !(
+            process.env.QUALIFICATION_CATALOG_ONLY === 'true' &&
+            process.env.QUALIFICATION_PROVIDERS === 'true'
+        ),
+        'Catalog-only inspection cannot request completions',
+    );
+    stage = 'provider-catalog';
+    const providerCatalog =
+        process.env.QUALIFICATION_CATALOG_ONLY === 'true'
+            ? (
+                  await inspectProviderCases(
+                      session.modelRuntime,
+                      process.env.PI_QUALIFICATION_PROVIDER_CASES ?? '',
+                      Number(process.env.QUALIFICATION_PROVIDER_BUDGET),
+                  )
+              ).map(({ item, reservation }) => ({
+                  ...item,
+                  maximumCostUSD: reservation,
+              }))
+            : [];
     stage = 'provider-checks';
     const providers =
         process.env.QUALIFICATION_PROVIDERS === 'true'
@@ -117,6 +155,18 @@ try {
                   session.modelRuntime,
                   process.env.PI_QUALIFICATION_PROVIDER_CASES ?? '',
                   Number(process.env.QUALIFICATION_PROVIDER_BUDGET),
+                  (event) => {
+                      providerEvents.push(event);
+                      writeFileSync(
+                          process.argv[3],
+                          JSON.stringify({
+                              status: 'running',
+                              stage,
+                              providerEvents,
+                          }),
+                          { mode: 0o600 },
+                      );
+                  },
               )
             : [];
     stage = 'shutdown';
@@ -136,6 +186,8 @@ try {
                 themes: resources.getThemes().themes.length,
                 tools: session.getAllTools().map((tool) => tool.name),
                 providers,
+                providerCatalog,
+                providerEvents,
                 providerConnectivity: providers.length
                     ? 'passed'
                     : 'not requested',
@@ -153,6 +205,7 @@ try {
             stage,
             failure: failureCode(error),
             extensionErrors,
+            providerEvents,
         }),
         { mode: 0o600 },
     );

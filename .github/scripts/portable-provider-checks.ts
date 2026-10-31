@@ -59,16 +59,29 @@ export function parseProviderCases(
     });
 }
 
-export async function qualifyProviders(
-    runtime: Pick<
-        ModelRuntime,
-        | 'refresh'
-        | 'getModel'
-        | 'isUsingOAuth'
-        | 'isUsingSubscription'
-        | 'hasConfiguredAuth'
-        | 'completeSimple'
-    >,
+type QualificationRuntime = Pick<
+    ModelRuntime,
+    | 'refresh'
+    | 'getModel'
+    | 'isUsingOAuth'
+    | 'isUsingSubscription'
+    | 'hasConfiguredAuth'
+    | 'completeSimple'
+>;
+
+export interface ProviderCheckEvent {
+    provider: string;
+    model: string;
+    event: 'reserved' | 'request-started' | 'response-received';
+    maximumCostUSD?: number;
+    reportedCostUSD?: number;
+    stopReason?: string;
+    hasText?: boolean;
+    hasThinking?: boolean;
+}
+
+export async function inspectProviderCases(
+    runtime: QualificationRuntime,
     input: string,
     budget: number,
 ) {
@@ -132,9 +145,26 @@ export async function qualifyProviders(
         prepared.reduce((sum, entry) => sum + entry.reservation, 0) <= budget,
         'Configured worst-case token cost exceeds the approved budget',
     );
+    return prepared;
+}
+
+export async function qualifyProviders(
+    runtime: QualificationRuntime,
+    input: string,
+    budget: number,
+    onProgress?: (event: ProviderCheckEvent) => void,
+) {
+    const prepared = await inspectProviderCases(runtime, input, budget);
     let spent = 0;
     const results = [];
-    for (const { item, model } of prepared) {
+    for (const { item, model, reservation } of prepared) {
+        const identity = { provider: item.provider, model: item.model };
+        onProgress?.({
+            ...identity,
+            event: 'reserved',
+            maximumCostUSD: reservation,
+        });
+        onProgress?.({ ...identity, event: 'request-started' });
         const response = await runtime.completeSimple(
             model,
             {
@@ -153,6 +183,18 @@ export async function qualifyProviders(
                 signal: AbortSignal.timeout(35_000),
             },
         );
+        onProgress?.({
+            ...identity,
+            event: 'response-received',
+            reportedCostUSD: response.usage.cost.total,
+            stopReason: response.stopReason,
+            hasText: response.content.some(
+                (part) => part.type === 'text' && part.text.trim().length > 0,
+            ),
+            hasThinking: response.content.some(
+                (part) => part.type === 'thinking',
+            ),
+        });
         assert(
             ['stop', 'length'].includes(response.stopReason),
             'Provider request failed',
