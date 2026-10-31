@@ -1,8 +1,35 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { qualifyProviders } from './portable-provider-checks.ts';
+
+function failureCode(error: unknown): string {
+    const message =
+        error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+              ? error
+              : '';
+    if (/Cannot find (module|package)|ModuleNotFound|ENOENT/i.test(message))
+        return 'module-not-found';
+    if (/not exported|does not provide an export/i.test(message))
+        return 'missing-export';
+    if (/is not a function/i.test(message)) return 'api-unavailable';
+    if (/syntax|unexpected token/i.test(message)) return 'syntax-error';
+    if (/extension loading errors/i.test(message))
+        return 'extension-load-errors';
+    if (/resource diagnostics/i.test(message)) return 'resource-diagnostics';
+    if (/Selected provider model is unavailable/.test(message))
+        return 'provider-model-unavailable';
+    if (/no configured authentication/.test(message))
+        return 'provider-auth-unavailable';
+    if (/authentication mode differs/.test(message))
+        return 'provider-auth-mode-mismatch';
+    if (/exceeds the approved budget/.test(message))
+        return 'provider-budget-exceeded';
+    return 'unclassified';
+}
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
 assert.equal(process.env.GITHUB_REPOSITORY, 'abdwhb-png/my-pi-distribution');
@@ -19,6 +46,7 @@ let session:
     | import('../../agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js').AgentSession
     | undefined;
 let stage = 'credentials';
+let extensionErrors: Array<{ path: string; failure: string }> = [];
 try {
     for (const [key, path] of credentials) {
         const value = process.env[key];
@@ -33,7 +61,7 @@ try {
             writeFileSync(path, JSON.stringify(parsed), { mode: 0o600 });
         }
     }
-    stage = 'load-resources';
+    stage = 'sdk-import';
     const sdk: typeof import('../../agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js') =
         await import(
             import.meta.resolve(
@@ -41,12 +69,20 @@ try {
                 pathToFileURL(join(agentDir, 'package.json')).href,
             )
         );
+    stage = 'session-create';
     const created = await sdk.createAgentSession({
         cwd: process.env.HOME!,
         agentDir,
         sessionManager: sdk.SessionManager.inMemory(process.env.HOME!),
     });
     session = created.session;
+    stage = 'extension-load';
+    extensionErrors = created.extensionsResult.errors.map(
+        ({ path, error }) => ({
+            path: relative(agentDir, path),
+            failure: failureCode(error),
+        }),
+    );
     assert.equal(
         created.extensionsResult.errors.length,
         0,
@@ -107,10 +143,15 @@ try {
         ),
         { mode: 0o600 },
     );
-} catch {
+} catch (error) {
     writeFileSync(
         process.argv[3],
-        JSON.stringify({ status: 'failed', stage }),
+        JSON.stringify({
+            status: 'failed',
+            stage,
+            failure: failureCode(error),
+            extensionErrors,
+        }),
         { mode: 0o600 },
     );
     process.exitCode = 1;
