@@ -28,6 +28,8 @@ function failureCode(error: unknown): string {
         return 'provider-auth-mode-mismatch';
     if (/exceeds the approved budget/.test(message))
         return 'provider-budget-exceeded';
+    if (/Provider catalog refresh failed/.test(message))
+        return 'provider-catalog-unavailable';
     return 'unclassified';
 }
 

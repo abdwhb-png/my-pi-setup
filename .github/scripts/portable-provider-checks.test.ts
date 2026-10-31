@@ -25,9 +25,17 @@ const model: Model<Api> = {
 };
 function runtime(selected = model) {
     let calls = 0;
+    let refreshCalls = 0;
     return {
         get calls() {
             return calls;
+        },
+        get refreshCalls() {
+            return refreshCalls;
+        },
+        refresh: async () => {
+            refreshCalls++;
+            return { aborted: false, errors: new Map<string, Error>() };
         },
         getModel: () => selected,
         isUsingOAuth: () => false,
@@ -47,6 +55,7 @@ test('invalid or absent authorization prevents all provider calls', async () => 
             qualifyProviders(fixture, cases, budget),
         ).rejects.toThrow();
         expect(fixture.calls).toBe(0);
+        expect(fixture.refreshCalls).toBe(0);
     }
     expect(() => parseProviderCases('[]', 1)).toThrow();
     expect(() =>
@@ -65,6 +74,7 @@ test('wrong auth mode and insufficient budget prevent all provider calls', async
     await expect(
         qualifyProviders(fixture, cases.replace('api-key', 'oauth'), 1),
     ).rejects.toThrow();
+    expect(fixture.refreshCalls).toBe(0);
     await expect(qualifyProviders(fixture, cases, 0.0001)).rejects.toThrow();
     expect(fixture.calls).toBe(0);
 });
@@ -143,4 +153,48 @@ test('a successful check bounds the request and records no response content', as
         },
     ]);
     expect(JSON.stringify(result)).not.toContain('PRIVATE RESPONSE CANARY');
+});
+
+test('a fresh installation refreshes only selected catalogs before resolving models', async () => {
+    const fixture = runtime();
+    let refreshed = false;
+    await expect(
+        qualifyProviders(
+            {
+                ...fixture,
+                getModel: () => (refreshed ? model : undefined),
+                refresh: async (options) => {
+                    expect(options?.providers).toEqual(['fixture']);
+                    expect(options?.allowNetwork).toBe(true);
+                    expect(options?.signal).toBeInstanceOf(AbortSignal);
+                    refreshed = true;
+                    return { aborted: false, errors: new Map<string, Error>() };
+                },
+            },
+            cases,
+            1,
+        ),
+    ).rejects.toThrow('fixture provider failure');
+    expect(refreshed).toBe(true);
+    expect(fixture.calls).toBe(1);
+});
+
+test('catalog failures and cancellation prevent completion requests', async () => {
+    for (const result of [
+        { aborted: true, errors: new Map<string, Error>() },
+        {
+            aborted: false,
+            errors: new Map([['fixture', new Error('PRIVATE CATALOG ERROR')]]),
+        },
+    ]) {
+        const fixture = runtime();
+        await expect(
+            qualifyProviders(
+                { ...fixture, refresh: async () => result },
+                cases,
+                1,
+            ),
+        ).rejects.toThrow('Provider catalog refresh failed');
+        expect(fixture.calls).toBe(0);
+    }
 });

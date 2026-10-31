@@ -62,6 +62,7 @@ export function parseProviderCases(
 export async function qualifyProviders(
     runtime: Pick<
         ModelRuntime,
+        | 'refresh'
         | 'getModel'
         | 'isUsingOAuth'
         | 'isUsingSubscription'
@@ -72,10 +73,7 @@ export async function qualifyProviders(
     budget: number,
 ) {
     const cases = parseProviderCases(input, budget);
-    // Reserve a whole context window per request, using this profile's configured prices.
-    const prepared = cases.map((item) => {
-        const model = runtime.getModel(item.provider, item.model);
-        assert(model, 'Selected provider model is unavailable');
+    for (const item of cases) {
         const actualMode = runtime.isUsingOAuth(item.provider)
             ? 'oauth'
             : runtime.isUsingSubscription(item.provider)
@@ -90,6 +88,20 @@ export async function qualifyProviders(
             runtime.hasConfiguredAuth(item.provider),
             'Selected provider has no configured authentication',
         );
+    }
+    const refreshed = await runtime.refresh({
+        providers: [...new Set(cases.map((item) => item.provider))],
+        allowNetwork: true,
+        signal: AbortSignal.timeout(30_000),
+    });
+    assert(
+        !refreshed.aborted && refreshed.errors.size === 0,
+        'Provider catalog refresh failed',
+    );
+    // Reserve a whole context window per request, using the refreshed model prices.
+    const prepared = cases.map((item) => {
+        const model = runtime.getModel(item.provider, item.model);
+        assert(model, 'Selected provider model is unavailable');
         const rates = [model.cost, ...(model.cost.tiers ?? [])];
         assert(
             rates.every((rate) =>
