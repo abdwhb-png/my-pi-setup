@@ -24,6 +24,13 @@ import {
 } from './files.ts';
 
 const STATE = '.pi-setup-state.json';
+const GENERATED_DIRECTORIES = [
+    'runtime',
+    'runtimes',
+    'agent/node_modules',
+    'agent/npm',
+    'agent/git',
+];
 interface InstallationState {
     schemaVersion: 1;
     release: string;
@@ -118,6 +125,11 @@ export async function installBundle(
 }
 
 function localState(path: string): boolean {
+    if (
+        path.endsWith('/.env.example') &&
+        GENERATED_DIRECTORIES.some((root) => path.startsWith(`${root}/`))
+    )
+        return false;
     return (
         path === STATE ||
         /(^|\/)(auth\.json|trust\.json|.*\.secrets\.json|\.env[^/]*)$/.test(
@@ -210,13 +222,7 @@ async function transact(
                 rmSync(child(candidate, path), { force: true });
             }
             // These roots are generated installations, never personal resource owners.
-            for (const path of [
-                'runtime',
-                'runtimes',
-                'agent/node_modules',
-                'agent/npm',
-                'agent/git',
-            ]) {
+            for (const path of GENERATED_DIRECTORIES) {
                 const entries = Object.keys(baseline).filter((name) =>
                     name.startsWith(`${path}/`),
                 );

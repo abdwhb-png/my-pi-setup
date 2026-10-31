@@ -15,6 +15,7 @@ import {
     installBundle,
     rollbackInstallation,
     recoverInstallation,
+    readInstallation,
 } from './installation.ts';
 
 function bundle(root: string, version: string) {
@@ -41,6 +42,49 @@ function bundle(root: string, version: string) {
     });
     return dir;
 }
+
+test('dependency environment templates are managed while local environment files block replacement', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-setup-template-'));
+    const root = join(home, '.pi');
+    const template = 'agent/node_modules/fixture/.env.example';
+    const provision = async (target: string) => {
+        mkdirSync(join(target, 'agent/node_modules/fixture'), {
+            recursive: true,
+        });
+        writeFileSync(join(target, template), 'PACKAGE_TEMPLATE=true');
+    };
+    try {
+        const first = bundle(home, 'one');
+        const second = bundle(home, 'two');
+        await installBundle({ root, bundle: first, release: 'one', provision });
+        expect(readInstallation(root).managed[template]).toBeDefined();
+        await installBundle({
+            root,
+            bundle: second,
+            release: 'two',
+            update: true,
+            provision,
+        });
+        writeFileSync(
+            join(root, 'agent/node_modules/fixture/.env'),
+            'LOCAL_FIXTURE=true',
+        );
+        await expect(
+            installBundle({
+                root,
+                bundle: first,
+                release: 'three',
+                update: true,
+                provision,
+            }),
+        ).rejects.toThrow('Unmanaged files in generated installation');
+        expect(
+            readFileSync(join(root, 'agent/node_modules/fixture/.env'), 'utf8'),
+        ).toBe('LOCAL_FIXTURE=true');
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
 
 test('installs, updates and restores the old setup when provisioning fails', async () => {
     const home = mkdtempSync(join(tmpdir(), 'pi-setup-install-'));
