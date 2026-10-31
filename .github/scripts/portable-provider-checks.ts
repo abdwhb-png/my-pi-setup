@@ -12,7 +12,7 @@ export function parseProviderCases(
     budget: number,
 ): ProviderCase[] {
     assert(
-        Number.isFinite(budget) && budget > 0 && budget <= 10,
+        Number.isFinite(budget) && budget >= 0 && budget <= 10,
         'Explicit provider budget must be between zero and 10 USD',
     );
     const cases: unknown = JSON.parse(input);
@@ -118,9 +118,12 @@ export async function inspectProviderCases(
         const rates = [model.cost, ...(model.cost.tiers ?? [])];
         assert(
             rates.every((rate) =>
-                [rate.input, rate.output].every(
-                    (price) => Number.isFinite(price) && price >= 0,
-                ),
+                [
+                    rate.input,
+                    rate.output,
+                    rate.cacheRead,
+                    rate.cacheWrite,
+                ].every((price) => Number.isFinite(price) && price >= 0),
             ),
             'Invalid configured model prices',
         );
@@ -132,7 +135,13 @@ export async function inspectProviderCases(
         );
         const reservation =
             (model.contextWindow *
-                Math.max(...rates.map((rate) => rate.input)) +
+                Math.max(
+                    ...rates.flatMap((rate) => [
+                        rate.input,
+                        rate.cacheRead,
+                        rate.cacheWrite,
+                    ]),
+                ) +
                 16 * Math.max(...rates.map((rate) => rate.output))) /
             1_000_000;
         assert(

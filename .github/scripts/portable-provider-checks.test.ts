@@ -75,7 +75,7 @@ function runtime(selected = model) {
 }
 
 test('invalid or absent authorization prevents all provider calls', async () => {
-    for (const budget of [0, -1, NaN, Infinity, 11]) {
+    for (const budget of [-1, NaN, Infinity, 11]) {
         const fixture = runtime();
         await expect(
             qualifyProviders(fixture, cases, budget),
@@ -249,5 +249,49 @@ test('catalog inspection reports the reservation without requesting a completion
     const fixture = runtime();
     const prepared = await inspectProviderCases(fixture, cases, 1);
     expect(prepared[0].reservation).toBe(0.001016);
+    expect(fixture.calls).toBe(0);
+});
+
+test('an explicit zero budget permits only zero-priced completions', async () => {
+    const fixture = runtime({
+        ...model,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+    const results = await qualifyProviders(
+        {
+            ...fixture,
+            completeSimple: async () => ({
+                ...response,
+                usage: {
+                    ...response.usage,
+                    cost: {
+                        input: 0,
+                        output: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        total: 0,
+                    },
+                },
+            }),
+        },
+        cases,
+        0,
+    );
+    expect(results[0].reportedCostUSD).toBe(0);
+    const paid = runtime();
+    await expect(qualifyProviders(paid, cases, 0)).rejects.toThrow(
+        'Configured worst-case token cost exceeds the approved budget',
+    );
+    expect(paid.calls).toBe(0);
+});
+
+test('zero-budget qualification refuses a positive cache price before generation', async () => {
+    const fixture = runtime({
+        ...model,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 1 },
+    });
+    await expect(qualifyProviders(fixture, cases, 0)).rejects.toThrow(
+        'Configured worst-case token cost exceeds the approved budget',
+    );
     expect(fixture.calls).toBe(0);
 });

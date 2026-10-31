@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
       provider_budget_usd:
-        description: Approved budget in USD, using configured model prices (0 disables calls)
+        description: Approved maximum USD using model prices (0 permits zero-priced models only)
         type: string
         default: '0'
 
