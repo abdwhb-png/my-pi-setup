@@ -4,6 +4,7 @@ on:
   push:
     branches: ["codex/private-runtime-validation-*"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -31,6 +32,11 @@ jobs:
           repository: abdwhb-png/pi-mcp-adapter
           ref: 53733d3d7b052618896d691fe5bfb4b917f979da
           path: engineering/pi-integrations/pi-mcp-adapter
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/pi-subagents
+          ref: cf4b3ede3294f55420c0d6cf39bf6d110833c034
+          path: engineering/pi-integrations/pi-subagents
       - uses: actions/setup-node@v4
         with:
           node-version: "24.18.0"
@@ -92,8 +98,13 @@ jobs:
           sfw npm ci --ignore-scripts --no-audit --no-fund
           cd ../pi-mcp-adapter
           sfw npm ci --ignore-scripts --no-audit --no-fund
+          cd ../pi-subagents
+          sfw npm ci --ignore-scripts --no-audit --no-fund
           cd ../../../.pi/agent
           sfw bun install --frozen-lockfile --ignore-scripts
+          sfw bun install --cwd extensions/markdown-links --frozen-lockfile --ignore-scripts
+          sfw bun install --cwd extensions/session-cron --frozen-lockfile --ignore-scripts
+          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-subagents" node_modules/pi-subagents
           cd extensions/sandbox
           sfw bun install --frozen-lockfile --ignore-scripts
           sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
@@ -115,6 +126,12 @@ jobs:
         run: |
           python3 extensions/sandbox/runtime/distribution/build.py verify-analysis-inputs \
             --lock extensions/sandbox/runtime/distribution/input-lock.json --agent-root .
+      - name: Check repository types
+        working-directory: .pi/agent
+        run: |
+          bun run typecheck
+          ./node_modules/.bin/tsc --noEmit -p ../.github/scripts/tsconfig.portability.json
+          bun test --isolate ../.github/scripts/portable-provider-checks.test.ts ../.github/scripts/qualify-installed-profile.test.ts
       - name: Run Pi boundary regression suites
         working-directory: .pi/agent
         run: |

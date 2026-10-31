@@ -1,0 +1,15 @@
+{
+  "extends": "../../agent/tsconfig.typecheck.json",
+  "compilerOptions": {
+    "typeRoots": [
+      "../../agent/node_modules/@types"
+    ]
+  },
+  "include": [
+    "qualify-portable-setup.ts",
+    "qualify-installed-profile.ts",
+    "portable-provider-checks.ts",
+    "portable-provider-checks.test.ts",
+    "qualify-installed-profile.test.ts"
+  ]
+}

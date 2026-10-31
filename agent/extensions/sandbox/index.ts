@@ -1,3 +1,7 @@
+export {
+    prepareDevelopmentSetup,
+    applyDevelopmentSetup,
+} from "./capabilities/development-setup.ts";
 import { randomUUID } from "node:crypto";
 import { ExecutionDeadline } from "../_shared/command-execution/deadline.ts";
 import {

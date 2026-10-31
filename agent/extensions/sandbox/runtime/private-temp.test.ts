@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
     chmod,
     lstat,
@@ -9,27 +10,81 @@ import {
     rm,
     symlink,
     writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 
-import { SandboxExecutionError } from "./contracts.ts";
+import { SandboxExecutionError } from './contracts.ts';
 import {
     LEASE_MARKER_FILENAME,
     createPrivateTempLease,
     recoverStalePrivateTempLeases,
     withPrivateTempLease,
     worstCaseProxySocketPath,
-} from "./private-temp.ts";
+} from './private-temp.ts';
 
 function permissions(mode: number): number {
     return mode & 0o777;
 }
 
-describe("private Zerobox temp leases", () => {
-    it("creates unique bounded owner-only trees and an exact marker", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+describe('private Zerobox temp leases', () => {
+    it('allocates default leases with a long Unicode home without using that home', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'pi home é-'));
+        try {
+            const result = spawnSync(
+                process.execPath,
+                [
+                    '-e',
+                    `
+                const { createPrivateTempLease, worstCaseProxySocketPath } = await import(${JSON.stringify(import.meta.dir + '/private-temp.ts')});
+                const leases = await Promise.all(Array.from({ length: 8 }, () => createPrivateTempLease()));
+                try {
+                    for (const lease of leases) {
+                        if (lease.root.startsWith(process.env.HOME)) throw new Error("Home-dependent lease");
+                        if (Buffer.byteLength(worstCaseProxySocketPath(lease.zeroboxHome)) >= 108) throw new Error("Socket budget exceeded");
+                    }
+                } finally { await Promise.all(leases.map(lease => lease.dispose())); }
+            `,
+                ],
+                { env: { ...process.env, HOME: home }, encoding: 'utf8' },
+            );
+            expect(result.stderr).toBe('');
+            expect(result.status).toBe(0);
+            expect(await lstat(join(home, '.pi')).catch(() => null)).toBeNull();
+        } finally {
+            await rm(home, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a directory owned by another uid before changing its permissions', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'z-'));
+        await chmod(rootDir, 0o750);
+        try {
+            const result = spawnSync(
+                process.execPath,
+                [
+                    '-e',
+                    `
+                const { assertPrivateRootDirectory } = await import(${JSON.stringify(import.meta.dir + '/private-temp.ts')});
+                const uid = process.getuid();
+                process.getuid = () => uid + 1;
+                try { await assertPrivateRootDirectory(${JSON.stringify(rootDir)}); process.exitCode = 1; }
+                catch (error) { if (error.code !== "invalid-policy") throw error; }
+            `,
+                ],
+                { encoding: 'utf8' },
+            );
+            expect(result.stderr).toBe('');
+            expect(result.status).toBe(0);
+            expect(permissions((await lstat(rootDir)).mode)).toBe(0o750);
+        } finally {
+            await rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    it('creates unique bounded owner-only trees and an exact marker', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         try {
             const leases = await Promise.all(
                 Array.from({ length: 8 }, () =>
@@ -42,7 +97,11 @@ describe("private Zerobox temp leases", () => {
                 const id = lease.root.slice(rootDir.length + 1);
                 expect(id).toMatch(/^l-[a-f0-9]{6}$/);
                 expect(id.length).toBeLessThanOrEqual(8);
-                expect(Buffer.byteLength(worstCaseProxySocketPath(lease.zeroboxHome))).toBeLessThan(108);
+                expect(
+                    Buffer.byteLength(
+                        worstCaseProxySocketPath(lease.zeroboxHome),
+                    ),
+                ).toBeLessThan(108);
                 expect(permissions((await lstat(rootDir)).mode)).toBe(0o700);
                 for (const directory of [
                     lease.root,
@@ -52,10 +111,16 @@ describe("private Zerobox temp leases", () => {
                     lease.proxyRunsDir,
                     lease.profilesDir,
                 ]) {
-                    expect(permissions((await lstat(directory)).mode)).toBe(0o700);
+                    expect(permissions((await lstat(directory)).mode)).toBe(
+                        0o700,
+                    );
                 }
-                expect(permissions((await lstat(lease.markerPath)).mode)).toBe(0o600);
-                expect(JSON.parse(await readFile(lease.markerPath, "utf8"))).toEqual({
+                expect(permissions((await lstat(lease.markerPath)).mode)).toBe(
+                    0o600,
+                );
+                expect(
+                    JSON.parse(await readFile(lease.markerPath, 'utf8')),
+                ).toEqual({
                     version: 1,
                     leaseId: id,
                     ownerPid: process.pid,
@@ -69,17 +134,17 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("never removes an active lease when an explicit id collides", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+    it('never removes an active lease when an explicit id collides', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         const first = await createPrivateTempLease({
             rootDir,
-            randomId: "abcdef",
+            randomId: 'abcdef',
         });
         try {
             await expect(
-                createPrivateTempLease({ rootDir, randomId: "abcdef" }),
-            ).rejects.toMatchObject({ code: "setup-failed" });
+                createPrivateTempLease({ rootDir, randomId: 'abcdef' }),
+            ).rejects.toMatchObject({ code: 'setup-failed' });
             expect(await lstat(first.root)).toBeDefined();
             expect(await lstat(first.markerPath)).toBeDefined();
         } finally {
@@ -88,9 +153,9 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("cleans after success, failure, and abort without replacing the primary error", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+    it('cleans after success, failure, and abort without replacing the primary error', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         try {
             const value = await withPrivateTempLease(
                 async (lease) => {
@@ -101,7 +166,7 @@ describe("private Zerobox temp leases", () => {
             );
             expect(value).toBe(42);
 
-            const primary = new SandboxExecutionError("aborted");
+            const primary = new SandboxExecutionError('aborted');
             await expect(
                 withPrivateTempLease(
                     async () => {
@@ -111,24 +176,26 @@ describe("private Zerobox temp leases", () => {
                 ),
             ).rejects.toBe(primary);
 
-            const cleanupFailure = new Error("private cleanup detail");
+            const cleanupFailure = new Error('private cleanup detail');
             await expect(
-                withPrivateTempLease(async () => "done", {
-                    rootDir: join(parent, "c"),
+                withPrivateTempLease(async () => 'done', {
+                    rootDir: join(parent, 'c'),
                     removeTree: async () => {
                         throw cleanupFailure;
                     },
                 }),
-            ).rejects.toMatchObject({ code: "cleanup-failed" });
+            ).rejects.toMatchObject({ code: 'cleanup-failed' });
 
-            const primaryWithCleanup = new SandboxExecutionError("setup-failed");
+            const primaryWithCleanup = new SandboxExecutionError(
+                'setup-failed',
+            );
             await expect(
                 withPrivateTempLease(
                     async () => {
                         throw primaryWithCleanup;
                     },
                     {
-                        rootDir: join(parent, "p"),
+                        rootDir: join(parent, 'p'),
                         removeTree: async () => {
                             throw cleanupFailure;
                         },
@@ -141,25 +208,27 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("detaches a lease before recursive removal", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+    it('detaches a lease before recursive removal', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         let removedPath: string | undefined;
         try {
             const lease = await createPrivateTempLease({
                 rootDir,
-                randomId: "abc123",
+                randomId: 'abc123',
                 removeTree: async (path) => {
                     removedPath = path;
                     expect(path).not.toBe(lease.root);
-                    expect(await lstat(lease.root).catch(() => null)).toBeNull();
+                    expect(
+                        await lstat(lease.root).catch(() => null),
+                    ).toBeNull();
                     await rm(path, { recursive: true, force: false });
                 },
             });
 
             await lease.dispose();
 
-            expect(basename(removedPath ?? "")).toMatch(
+            expect(basename(removedPath ?? '')).toMatch(
                 /^\.gc-l-abc123-[a-f0-9]{12}$/,
             );
             expect(await lstat(lease.root).catch(() => null)).toBeNull();
@@ -168,17 +237,17 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("retries a detached lease removal once without leaving gc data", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+    it('retries a detached lease removal once without leaving gc data', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         let attempts = 0;
         try {
             const lease = await createPrivateTempLease({
                 rootDir,
-                randomId: "abc123",
+                randomId: 'abc123',
                 removeTree: async (path) => {
                     attempts += 1;
-                    if (attempts === 1) throw new Error("transient busy");
+                    if (attempts === 1) throw new Error('transient busy');
                     await rm(path, { recursive: true, force: false });
                 },
             });
@@ -188,7 +257,7 @@ describe("private Zerobox temp leases", () => {
             expect(attempts).toBe(2);
             expect(
                 (await readdir(rootDir)).filter((name) =>
-                    name.startsWith(".gc-"),
+                    name.startsWith('.gc-'),
                 ),
             ).toEqual([]);
         } finally {
@@ -196,46 +265,48 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("never follows a replaced lease symlink during cleanup", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
-        const protectedDirectory = join(parent, "p");
+    it('never follows a replaced lease symlink during cleanup', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
+        const protectedDirectory = join(parent, 'p');
         await mkdir(protectedDirectory);
-        await writeFile(join(protectedDirectory, "keep"), "kept");
+        await writeFile(join(protectedDirectory, 'keep'), 'kept');
         try {
             const lease = await createPrivateTempLease({ rootDir });
             await rm(lease.root, { recursive: true, force: true });
             await symlink(protectedDirectory, lease.root);
 
             await expect(lease.dispose()).rejects.toMatchObject({
-                code: "cleanup-failed",
+                code: 'cleanup-failed',
             });
-            expect(await readFile(join(protectedDirectory, "keep"), "utf8")).toBe("kept");
+            expect(
+                await readFile(join(protectedDirectory, 'keep'), 'utf8'),
+            ).toBe('kept');
         } finally {
             await rm(parent, { recursive: true, force: true });
         }
     });
 
-    it("recovers only valid marked leases owned by dead processes", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "r");
+    it('recovers only valid marked leases owned by dead processes', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'r');
         try {
             const stale = await createPrivateTempLease({
                 rootDir,
                 ownerPid: 101,
-                randomId: "deadbe",
+                randomId: 'deadbe',
             });
             const live = await createPrivateTempLease({
                 rootDir,
                 ownerPid: 202,
-                randomId: "feedfa",
+                randomId: 'feedfa',
             });
-            const invalid = join(rootDir, "l-badbad");
-            const unknown = join(rootDir, "unknown");
-            const symlinkTarget = join(parent, "symlink-target");
-            const linked = join(rootDir, "l-cafeba");
+            const invalid = join(rootDir, 'l-badbad');
+            const unknown = join(rootDir, 'unknown');
+            const symlinkTarget = join(parent, 'symlink-target');
+            const linked = join(rootDir, 'l-cafeba');
             await mkdir(invalid, { mode: 0o700 });
-            await writeFile(join(invalid, LEASE_MARKER_FILENAME), "not json");
+            await writeFile(join(invalid, LEASE_MARKER_FILENAME), 'not json');
             await mkdir(unknown);
             await mkdir(symlinkTarget);
             await symlink(symlinkTarget, linked);
@@ -256,31 +327,33 @@ describe("private Zerobox temp leases", () => {
         }
     });
 
-    it("rejects a recovery root symlink without touching its target", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const protectedDirectory = join(parent, "protected");
-        const rootDir = join(parent, "r");
+    it('rejects a recovery root symlink without touching its target', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const protectedDirectory = join(parent, 'protected');
+        const rootDir = join(parent, 'r');
         await mkdir(protectedDirectory, { mode: 0o700 });
-        await writeFile(join(protectedDirectory, "keep"), "kept");
+        await writeFile(join(protectedDirectory, 'keep'), 'kept');
         await symlink(protectedDirectory, rootDir);
         try {
             await expect(
                 recoverStalePrivateTempLeases({ rootDir }),
-            ).rejects.toMatchObject({ code: "invalid-policy" });
-            expect(await readFile(join(protectedDirectory, "keep"), "utf8")).toBe(
-                "kept",
-            );
+            ).rejects.toMatchObject({ code: 'invalid-policy' });
+            expect(
+                await readFile(join(protectedDirectory, 'keep'), 'utf8'),
+            ).toBe('kept');
         } finally {
             await rm(parent, { recursive: true, force: true });
         }
     });
 
-    it("rejects a root whose real fork socket path cannot fit AF_UNIX", async () => {
-        const parent = await mkdtemp(join(tmpdir(), "z-"));
-        const rootDir = join(parent, "x".repeat(90));
+    it('rejects a root whose real fork socket path cannot fit AF_UNIX', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'z-'));
+        const rootDir = join(parent, 'x'.repeat(90));
         try {
-            await expect(createPrivateTempLease({ rootDir })).rejects.toMatchObject({
-                code: "invalid-policy",
+            await expect(
+                createPrivateTempLease({ rootDir }),
+            ).rejects.toMatchObject({
+                code: 'invalid-policy',
             });
         } finally {
             await rm(parent, { recursive: true, force: true });

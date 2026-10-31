@@ -11,7 +11,7 @@ ADR-022 replaces recursive linked-content injection with source-aware destinatio
 
 ## Context
 
-Pi loads `AGENTS.md`/`CLAUDE.md` into `systemPromptOptions.contextFiles`. It discovers `SYSTEM.md` and `APPEND_SYSTEM.md` separately. Pi concatenates these resources into the system prompt but does not resolve Markdown links inside them. A link such as `[ABOUT-PI.md](../docs/ABOUT-PI.md)` therefore remains text and does not load the referenced file.
+Pi loads `AGENTS.md`/`CLAUDE.md` into `systemPromptOptions.contextFiles`. It discovers `SYSTEM.md` and `APPEND_SYSTEM.md` separately. Pi concatenates these resources into the system prompt but does not resolve Markdown links inside them. A link such as `[ABOUT-MY-PI.md](../ABOUT-MY-PI.md)` therefore remains text and does not load the referenced file.
 
 The extension must resolve local Markdown links without changing Pi core, fetching network resources, scanning every Markdown file in a repository, or silently weakening path security.
 

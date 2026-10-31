@@ -153,7 +153,9 @@ test.skipIf(!enabled)(
                 mocked: false,
                 isError: false,
             });
-            const path = capture?.details?.fullOutputPath;
+            const details = capture?.details;
+            const path = details && typeof details === 'object' && 'fullOutputPath' in details
+                ? details.fullOutputPath : undefined;
             expect(typeof path).toBe('string');
             if (typeof path !== 'string')
                 throw new Error(

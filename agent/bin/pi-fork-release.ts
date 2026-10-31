@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -41,6 +43,7 @@ interface PackedReleaseManifest {
 }
 
 export interface DeployForkOptions {
+  packedRoot?: string;
   sourceRoot?: string;
   runtimeRoot?: string;
   agentDir?: string;
@@ -60,6 +63,7 @@ export interface RollbackForkOptions {
 }
 
 interface DeploymentContext {
+  packedRoot?: string;
   sourceRoot: string;
   runtimeRoot: string;
   agentDir: string;
@@ -75,7 +79,7 @@ interface AgentFilesBackup {
 
 export async function deployFork(options: DeployForkOptions = {}): Promise<ActivePiRuntime> {
   const context = resolveDeploymentContext(options);
-  verifySourceRoot(context.sourceRoot);
+  if (!context.packedRoot) verifySourceRoot(context.sourceRoot);
   runCommand(context.sfwExecutable, ["--version"]);
   const runtime = await buildImmutableRelease(context);
   const agentBackup = captureAgentFiles(context.agentDir);
@@ -121,6 +125,7 @@ export async function rollbackFork(
 
 function resolveDeploymentContext(options: DeployForkOptions): DeploymentContext {
   return {
+    packedRoot: options.packedRoot ? resolve(options.packedRoot) : undefined,
     sourceRoot: resolve(
       options.sourceRoot ?? resolvePiInstallationPaths(join(homedir(), ".pi")).sourceRoot,
     ),
@@ -138,7 +143,9 @@ async function buildImmutableRelease(context: DeploymentContext): Promise<Active
   mkdirSync(join(context.runtimeRoot, "releases"), { recursive: true });
 
   try {
-    const packedManifest = buildPackedRelease(context, packedRoot);
+    const packedManifest = context.packedRoot
+      ? importPackedRelease(context.packedRoot, packedRoot)
+      : buildPackedRelease(context, packedRoot);
     const releaseId = createReleaseId(packedManifest);
     const finalRoot = join(context.runtimeRoot, "releases", releaseId);
     if (existsSync(finalRoot)) throw new Error(`Pi runtime release already exists: ${finalRoot}`);
@@ -162,6 +169,20 @@ async function buildImmutableRelease(context: DeploymentContext): Promise<Active
   }
 }
 
+function importPackedRelease(source: string, destination: string): PackedReleaseManifest {
+  const manifest = validatePackedReleaseDirectory(source);
+  mkdirSync(destination, { recursive: true });
+  for (const pkg of manifest.packages) {
+    const input = resolvePackedPath(source, pkg.tarball);
+    const output = resolvePackedPath(destination, pkg.tarball);
+    mkdirSync(dirname(output), { recursive: true });
+    copyFileSync(input, output);
+  }
+  writeFileSync(join(destination, RELEASE_MANIFEST), formatJson(manifest));
+  verifyPackedTarballs(manifest, destination);
+  return manifest;
+}
+
 function buildPackedRelease(
   context: DeploymentContext,
   packedRoot: string,
@@ -171,9 +192,7 @@ function buildPackedRelease(
     [join(context.sourceRoot, "scripts", "local-release.mjs"), "--out", packedRoot, "--skip-install", "--skip-test", "--skip-check"],
     context.sourceRoot,
   );
-  const manifest = readPackedReleaseManifest(join(packedRoot, RELEASE_MANIFEST));
-  verifyPackedTarballs(manifest, packedRoot);
-  return manifest;
+  return validatePackedReleaseDirectory(packedRoot);
 }
 
 function installPackedRelease(
@@ -536,6 +555,12 @@ function decodePackedPackage(value: JsonValue): PiRuntimePackage {
   };
 }
 
+export function validatePackedReleaseDirectory(packedRoot: string): PackedReleaseManifest {
+  const manifest = readPackedReleaseManifest(join(packedRoot, RELEASE_MANIFEST));
+  verifyPackedTarballs(manifest, packedRoot);
+  return manifest;
+}
+
 function verifyPackedTarballs(manifest: PackedReleaseManifest, packedRoot: string): void {
   const names = new Set<string>();
   for (const pkg of manifest.packages) {
@@ -543,6 +568,7 @@ function verifyPackedTarballs(manifest: PackedReleaseManifest, packedRoot: strin
     names.add(pkg.name);
     const tarball = resolvePackedPath(packedRoot, pkg.tarball);
     if (!existsSync(tarball)) throw new Error(`Missing release tarball: ${pkg.tarball}`);
+    if (!lstatSync(tarball).isFile() || !isWithin(realpathSync(packedRoot), realpathSync(tarball))) throw new Error(`Unsafe release tarball: ${pkg.tarball}`);
     const actualHash = createHash("sha256").update(readFileSync(tarball)).digest("hex");
     if (actualHash !== pkg.sha256) throw new Error(`Tarball hash mismatch: ${pkg.name}`);
   }
@@ -750,7 +776,7 @@ function requireBoolean(value: JsonValue | undefined): boolean {
   return value;
 }
 
-function formatJson(value: JsonObject | PiRuntimeManifest): string {
+function formatJson(value: JsonObject | PiRuntimeManifest | PackedReleaseManifest): string {
   return `${JSON.stringify(value, undefined, 2)}\n`;
 }
 

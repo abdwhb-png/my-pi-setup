@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { normalizeAnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
-import { createPrivateTempLease, recoverStalePrivateTempLeases, worstCaseProxySocketPath } from "../runtime/private-temp.ts";
+import { createPrivateTempLease, recoverStalePrivateTempLeases } from "../runtime/private-temp.ts";
 import { createSandboxService } from "../runtime/service.ts";
 import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
 import { candidateBackendOptions, hasCandidateRuntime, stageCandidateRuntimeInHome } from "../runtime/integration-fixtures.ts";
@@ -243,21 +242,8 @@ test.skipIf(
 )(
     "the default Analysis client carries successes and worker errors through real host IPC in a fixture HOME",
     async () => {
-        // Default leases add .pi/zbx below HOME. Three random characters leave
-        // the conservative AF_UNIX socket path at 107 bytes; mkdir is exclusive.
-        let home = "";
-        for (let attempt = 0; attempt < 32 && !home; attempt += 1) {
-            const candidate = join("/var/tmp", randomBytes(2).toString("base64url"));
-            try {
-                await mkdir(candidate, { mode: 0o700 });
-                home = candidate;
-            } catch (error) {
-                if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-            }
-        }
-        if (!home) throw new Error("Could not allocate an exclusive short fixture HOME");
+        const home = await mkdtemp(join("/var/tmp", "pi analysis home é-"));
         try {
-            expect(Buffer.byteLength(worstCaseProxySocketPath(join(home, ".pi/zbx/l-123456/zerobox-home")))).toBeLessThan(108);
             // Stage the full candidate through the managed-entry publication
             // path. The child below uses production defaults unchanged.
             await stageCandidateRuntimeInHome(home);

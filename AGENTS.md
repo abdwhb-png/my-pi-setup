@@ -1,6 +1,6 @@
 # .pi/AGENTS.md
 
-Apply these instructions only when working in the local Pi harness repository. Frenquently read [docs/ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
+Apply these instructions only when working in the local Pi harness repository. Read [docs/ABOUT-MY-PI.md](./docs/ABOUT-MY-PI.md) when a task requires an overview of this personal setup and the distinction between upstream Pi capabilities and local customizations.
 
 ## Repository language
 

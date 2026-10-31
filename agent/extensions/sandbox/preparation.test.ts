@@ -1,5 +1,7 @@
 import { expect, test, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
+import type { PathLike, ObjectEncodingOptions, OpenMode } from "node:fs";
+import type { Abortable } from "node:events";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +16,7 @@ import { getSandboxRuntime, getSandboxAnalysisPort } from "../_shared/sandbox-ru
 import { resolveShellPolicyForExecution } from "../_shared/shell-runtime/index.ts";
 
 const io: {
-    readFile: (...args: Parameters<typeof fs.readFile>) => ReturnType<typeof fs.readFile>;
+    readFile: (path: PathLike | fs.FileHandle, options?: (ObjectEncodingOptions & Abortable & { flag?: OpenMode }) | BufferEncoding | null) => Promise<string | Buffer>;
 } = fs;
 
 test.each(["same", "cancel", "supersede", "shutdown", "cleanup"])("replacement preserves admission across %s", async scenario => {

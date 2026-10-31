@@ -890,6 +890,12 @@ function createShellPolicy(
                         SHELL: PRIVATE_BASH,
                         TERM: "dumb",
                         LANG: "C.UTF-8",
+                        XDG_CACHE_HOME: resolve(SANDBOX_PRIVATE_HOME, ".cache"),
+                        BUN_INSTALL_CACHE_DIR: resolve(
+                            SANDBOX_PRIVATE_HOME,
+                            ".bun/install/cache",
+                        ),
+                        npm_config_cache: resolve(SANDBOX_PRIVATE_HOME, ".npm"),
                     }).filter(([key]) => !denied.has(key)),
                 ),
                 ...inheritedVariables,
@@ -897,12 +903,6 @@ function createShellPolicy(
                 PATH: buildBashPath(input.config.environment.path),
                 // Path expansion does not grant any additional filesystem access.
                 HOME: SANDBOX_PRIVATE_HOME,
-                XDG_CACHE_HOME: resolve(SANDBOX_PRIVATE_HOME, ".cache"),
-                BUN_INSTALL_CACHE_DIR: resolve(
-                    SANDBOX_PRIVATE_HOME,
-                    ".bun/install/cache",
-                ),
-                npm_config_cache: resolve(SANDBOX_PRIVATE_HOME, ".npm"),
                 // Do not load a host Docker context that could override the broker.
                 DOCKER_CONFIG: SANDBOX_PRIVATE_HOME,
                 TMPDIR: "/tmp",

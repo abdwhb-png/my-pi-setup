@@ -1,5 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
+import type { PathLike, ObjectEncodingOptions, OpenMode } from "node:fs";
+import type { Abortable } from "node:events";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, writeFile, rm, rename, symlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +11,7 @@ import type { PrivateRuntimeComponent } from "./runtime-bundle.ts";
 
 // Use the filesystem's union signatures so spies preserve both text and binary reads.
 const io: {
-    readFile: (...args: Parameters<typeof fs.readFile>) => ReturnType<typeof fs.readFile>;
+    readFile: (path: PathLike | fs.FileHandle, options?: (ObjectEncodingOptions & Abortable & { flag?: OpenMode }) | BufferEncoding | null) => Promise<string | Buffer>;
     realpath: (...args: Parameters<typeof fs.realpath>) => ReturnType<typeof fs.realpath>;
 } = fs;
 

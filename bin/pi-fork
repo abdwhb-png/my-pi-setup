@@ -5,8 +5,15 @@ import {
   runPiForkCli,
 } from "../agent/bin/pi-fork-cli.ts";
 import { resolvePiInstallationPaths } from "../agent/bin/pi-installation-paths.ts";
+import { assertSetupLaunchAllowed } from "../agent/bin/setup/gate.ts";
 
 const paths = resolvePiInstallationPaths(resolve(import.meta.dir, ".."));
+try {
+  assertSetupLaunchAllowed(paths.piRoot);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 const dependencies = createPiForkCliDependencies(paths);
 
 process.exit(await runPiForkCli(process.argv.slice(2), dependencies));

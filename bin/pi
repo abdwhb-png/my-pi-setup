@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePiInstallationPaths } from "../agent/bin/pi-installation-paths.ts";
+import { assertSetupLaunchAllowed } from "../agent/bin/setup/gate.ts";
 import {
   classifyUpdateCommand,
   isPackageMutationCommand,
@@ -13,6 +14,12 @@ import {
 } from "../agent/bin/pi-wrapper-lib.ts";
 
 const paths = resolvePiInstallationPaths(resolve(import.meta.dir, ".."));
+try {
+  assertSetupLaunchAllowed(paths.piRoot);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 const args = process.argv.slice(2);
 const cwd = process.cwd();
 const updatePolicy = classifyUpdateCommand(args);

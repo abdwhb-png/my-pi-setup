@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "sourceCommit": "c3229a52a33a04f81fbe4ea1030b89ba7945c4b6",
+  "platform": "ubuntu",
+  "kernel": "7.0.0-1017-azure",
+  "bundleSourceCommit": "c3229a52a33a04f81fbe4ea1030b89ba7945c4b6",
+  "bundleSha256": "0a0bafc8ff7ce22a2eae2bb336b2c97cd815d7ba7fca57d87a3e1b2fb7722887",
+  "milestones": [
+    "private immutable publication, download and corrupted asset refusal",
+    "verified private profile release downloaded",
+    "validate private profile inventory",
+    "clean target installation, runtime coherence and daily launcher",
+    "real bash and safe_bash through the installed native sandbox",
+    "real update, idempotency, rollback and post-rollback integrity",
+    "modified managed files refuse updates"
+  ],
+  "packageCount": 11,
+  "profile": {
+    "status": "failed",
+    "stage": "load-resources"
+  },
+  "providerRequests": 0
+}

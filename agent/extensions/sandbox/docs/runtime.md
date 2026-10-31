@@ -23,7 +23,7 @@ Global read grants are inherited by projects that do not narrow them. This choic
 
 ## Private state
 
-Bash and Think collection use separate leases below `~/.pi/zbx/`. Analysis uses a fresh lease per request. The physical lease control directory is masked, even when it is inside the project.
+Bash and Think collection use separate leases below an owner-only `/tmp/pi-z-<uid in base36>/` directory. Analysis uses a fresh lease per request. The physical lease control directory is masked, even when it is inside the project.
 
 Zerobox mounts the current lease's private HOME at `/home/sandbox`. Shell HOME, XDG/Bun/npm caches and Docker configuration use this logical location. Its caches are writable while sibling leases and control data stay hidden. The mount uses a pre-opened directory descriptor rather than reopening an inaccessible source through the sandbox view.
 
@@ -96,7 +96,7 @@ Install the matching engine and private bundle, then use `/reload` or a new Pi s
 
 The initial target is Linux x86_64, including WSL2 x86_64. Other platforms and architectures fail explicitly. Native Linux CI and WSL2 require separate qualification evidence.
 
-Private control paths must fit the Unix socket address budget. Preflight rejects a layout whose worst-case socket path is 108 bytes or longer. The current default lease layout permits a host HOME path of at most 12 bytes. Longer home paths block admission. The default Analysis IPC qualification uses a short fixture home and does not establish support for arbitrary home path lengths.
+Private control paths must fit the Unix socket address budget. Preflight rejects a layout whose worst-case socket path is 108 bytes or longer. The default lease root is independent of HOME and TMPDIR. Recovery also inspects `~/.pi/zbx` for stale legacy leases and preserves live owners. The default Analysis IPC qualification uses a long Unicode fixture home.
 
 The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Qualify the native kernel separately from WSL2. Neither platform's shell tests establish Windows interoperation or application-specific browser behavior.
 
