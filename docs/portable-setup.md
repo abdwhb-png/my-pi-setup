@@ -6,7 +6,7 @@ The setup operator installs an explicitly selected private release on Linux or W
 
 Install Git, Python 3, a C/C++ build toolchain (`build-essential` on Ubuntu, required when native package prebuilds are unavailable), Bun, Node.js, GitHub CLI and Socket Firewall using their official installation instructions before running the bootstrap. The operator verifies executable availability; it does not install host tools, modify system services, change kernel settings, or authorize networking. Use the versions qualified with the release. The repository records its Bun package-manager version in `agent/package.json`; the native runtime workflow records its builder toolchain.
 
-The current Zerobox lease layout uses `~/.pi/zbx` and must keep its worst-case Unix socket pathname below 108 UTF-8 bytes. With the bundled layout, `HOME` may occupy at most 12 UTF-8 bytes (for example `/home/runner`). CI uses `/home/pi-ci`; longer home paths are not qualified and sandbox startup refuses them. Moving the setup root alone does not change the lease home.
+Zerobox leases use a short per-user directory under `/tmp`, independent of `HOME` and `TMPDIR`. The root must be owned by the current Unix UID, must not be a symlink and is restricted to mode `0700`; `/tmp` must be root-owned and sticky when writable by other users. The worst-case socket pathname must still fit below 108 UTF-8 bytes. Stale legacy leases under `~/.pi/zbx` are recovered without removing leases belonging to live processes. Ubuntu and WSL2 qualification now exercise long home paths containing spaces and Unicode.
 
 Authenticate GitHub CLI through `gh auth login`, using its normal secure flow. Set up Git access to any private package forks through your existing Git credential channel. Provider credentials are configured separately after installation; never put them in the profile or a release.
 
@@ -109,3 +109,5 @@ The automated setup tests use temporary homes, real filesystem transactions, rea
 Related documents: [Pi architecture and runtime](ABOUT-PI.md), [sandbox configuration](../agent/extensions/sandbox/docs/configuration.md), [runtime distribution](../agent/extensions/sandbox/runtime/distribution/README.md), [implementation verification](verification/2026-10-31-portable-pi-setup.md), [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 
 The portable installation mechanism passed the [Ubuntu and WSL2 CI qualification](verification/2026-10-31-portable-pi-ci.md) at commit `2a03c42c164e2c76064bd0fe677a0f3d8c5e5dd7`, using a synthetic profile and the host constraints above. The report preserves both successful evidence and failures that led to fixes; this result does not qualify the complete personal profile or publish a distribution.
+
+Private profile, publication and provider qualification runs only in GitHub Actions; see [the private qualification runbook](portable-private-qualification.md).

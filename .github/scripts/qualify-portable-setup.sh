@@ -5,7 +5,8 @@ umask 022
 test "${GITHUB_ACTIONS:-}" = true
 test "$(uname -m)" = x86_64
 source_root=$(pwd -P)
-runtime_input=$(realpath "$1")
+runtime_input=$1
+if [[ "$runtime_input" != private ]]; then runtime_input=$(realpath "$runtime_input"); fi
 qualification_root=$2
 test ! -e "$qualification_root"
 mkdir -p "$qualification_root/evidence"
@@ -47,10 +48,12 @@ if ! command -v bun >/dev/null; then
 fi
 test "$(bun --version)" = 1.3.14
 sfw --version
+if [[ "$runtime_input" != private ]]; then
 mkdir "$qualification_root/zerobox"
 expected=$(cut -d ' ' -f1 "$runtime_input/qualified-native-runtime.sha256")
 echo "$expected  $runtime_input/qualified-native-runtime.tgz" | sha256sum --check
 tar -xzf "$runtime_input/qualified-native-runtime.tgz" -C "$qualification_root/zerobox"
+fi
 export QUALIFICATION_SOURCE_SHA=${QUALIFICATION_SOURCE_SHA:-${GITHUB_SHA:?}}
 # Exercise the real sandbox with a long home, spaces and multi-byte characters.
 export QUALIFICATION_HOME="$qualification_root/destination home é portable setup"

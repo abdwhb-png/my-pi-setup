@@ -16,6 +16,9 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import {
     packDistribution,
+    downloadDistribution,
+    publishDistribution,
+    DISTRIBUTION_REPOSITORY,
     validateBundle,
 } from '../../agent/bin/setup/distribution.ts';
 import {
@@ -97,99 +100,150 @@ function runTests(
     );
 }
 
-// Only disposable checkout state is replaced; no personal profile enters CI.
-for (const entry of readdirSync(join(source, 'agent/config'))) {
-    if (entry.endsWith('.json') && !entry.endsWith('.example.json'))
-        rmSync(join(source, 'agent/config', entry));
-}
-writeJson(join(source, 'agent/settings.json'), {
-    packages: sources,
-    npmCommand: ['sfw', '--', 'bun'],
-    extensions: [],
-    skills: [],
-    prompts: [],
-    themes: [],
-    enableSkillCommands: false,
-});
-for (const packageSource of sources) {
+const privateProfile = process.env.QUALIFICATION_MODE === 'private';
+let bundle: string;
+if (privateProfile) {
+    const downloaded = join(work, 'release-one');
+    bundle = downloadDistribution(
+        process.env.QUALIFICATION_RELEASE!,
+        downloaded,
+    );
+    const publishTag = process.env.QUALIFICATION_PUBLISH_TAG;
+    if (publishTag) {
+        publishDistribution(downloaded, publishTag);
+        bundle = downloadDistribution(
+            publishTag,
+            join(work, 'published-release'),
+        );
+        const corrupt = join(work, 'setup.tgz');
+        cpSync(join(downloaded, 'setup.tgz'), corrupt);
+        writeFileSync(corrupt, 'corruption canary', { flag: 'a' });
+        const verification = spawnSync(
+            'gh',
+            [
+                'release',
+                'verify-asset',
+                publishTag,
+                corrupt,
+                '--repo',
+                DISTRIBUTION_REPOSITORY,
+            ],
+            { stdio: 'ignore' },
+        );
+        assert.equal(verification.error, undefined);
+        assert.notEqual(
+            verification.status,
+            0,
+            'Corrupted release asset was accepted',
+        );
+        passed(
+            'private immutable publication, download and corrupted asset refusal',
+        );
+    }
+    passed('verified private profile release downloaded');
+} else {
+    // Only disposable checkout state is replaced; no personal profile enters CI.
+    for (const entry of readdirSync(join(source, 'agent/config'))) {
+        if (entry.endsWith('.json') && !entry.endsWith('.example.json'))
+            rmSync(join(source, 'agent/config', entry));
+    }
+    writeJson(join(source, 'agent/settings.json'), {
+        packages: sources,
+        npmCommand: ['sfw', '--', 'bun'],
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        enableSkillCommands: false,
+    });
+    for (const packageSource of sources) {
+        run(
+            process.execPath,
+            [join(source, 'bin/pi'), 'install', packageSource, '--no-approve'],
+            join(source, 'agent'),
+        );
+    }
+    delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;
     run(
         process.execPath,
-        [join(source, 'bin/pi'), 'install', packageSource, '--no-approve'],
+        [join(source, 'bin/pi'), 'list', '--no-approve'],
+        source,
+    );
+    await stageRuntimeRelease({
+        candidateRoot: zero,
+        runtimeBase: join(source, 'runtimes'),
+        managedBinary: join(source, 'bin/zerobox'),
+        provenanceSource: join(zero, 'provenance.json'),
+        expectedBinarySha256: String(
+            json(join(zero, 'provenance.json')).binarySha256,
+        ),
+    });
+    // The importer owns these generated manifests; record the disposable producer snapshot.
+    run(
+        'git',
+        [
+            '-c',
+            'user.name=Pi CI',
+            '-c',
+            'user.email=pi-ci@example.invalid',
+            'add',
+            'agent/package.json',
+            'agent/bun.lock',
+        ],
+        source,
+    );
+    run(
+        'git',
+        [
+            '-c',
+            'user.name=Pi CI',
+            '-c',
+            'user.email=pi-ci@example.invalid',
+            'commit',
+            '--allow-empty',
+            '-m',
+            'Record qualification producer dependency graph',
+        ],
+        source,
+    );
+    passed('producer imports the frozen Pi runtime and real package sources');
+
+    runTests(
+        'operator-regressions',
+        [
+            'bin/setup',
+            'bin/pi-fork-cli.test.ts',
+            'bin/pi-fork-release.test.ts',
+            'bin/pi-runtime-store.test.ts',
+            'bin/pi-wrapper-lib.test.ts',
+            'extensions/_shared/redaction.test.ts',
+            'extensions/sandbox/runtime/private-temp.test.ts',
+            'extensions/sandbox/runtime/runtime-bundle.test.ts',
+            'extensions/sandbox/preparation.test.ts',
+        ],
         join(source, 'agent'),
     );
+    passed('operator and launcher regression suites');
+
+    await packDistribution(source, join(work, 'release-one'));
+    archive(
+        'extract',
+        join(work, 'release-one/setup.tgz'),
+        join(work, 'bundle-one'),
+    );
+    bundle = join(work, 'bundle-one');
 }
-delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;
-run(process.execPath, [join(source, 'bin/pi'), 'list', '--no-approve'], source);
-await stageRuntimeRelease({
-    candidateRoot: zero,
-    runtimeBase: join(source, 'runtimes'),
-    managedBinary: join(source, 'bin/zerobox'),
-    provenanceSource: join(zero, 'provenance.json'),
-    expectedBinarySha256: String(
-        json(join(zero, 'provenance.json')).binarySha256,
-    ),
-});
-// The importer owns these generated manifests; record the disposable producer snapshot.
-run(
-    'git',
-    [
-        '-c',
-        'user.name=Pi CI',
-        '-c',
-        'user.email=pi-ci@example.invalid',
-        'add',
-        'agent/package.json',
-        'agent/bun.lock',
-    ],
-    source,
-);
-run(
-    'git',
-    [
-        '-c',
-        'user.name=Pi CI',
-        '-c',
-        'user.email=pi-ci@example.invalid',
-        'commit',
-        '--allow-empty',
-        '-m',
-        'Record qualification producer dependency graph',
-    ],
-    source,
-);
-passed('producer imports the frozen Pi runtime and real package sources');
-
-runTests(
-    'operator-regressions',
-    [
-        'bin/setup',
-        'bin/pi-fork-cli.test.ts',
-        'bin/pi-fork-release.test.ts',
-        'bin/pi-runtime-store.test.ts',
-        'bin/pi-wrapper-lib.test.ts',
-        'extensions/_shared/redaction.test.ts',
-        'extensions/sandbox/runtime/private-temp.test.ts',
-        'extensions/sandbox/runtime/runtime-bundle.test.ts',
-        'extensions/sandbox/preparation.test.ts',
-    ],
-    join(source, 'agent'),
-);
-passed('operator and launcher regression suites');
-
-await packDistribution(source, join(work, 'release-one'));
-archive(
-    'extract',
-    join(work, 'release-one/setup.tgz'),
-    join(work, 'bundle-one'),
-);
-const bundle = join(work, 'bundle-one');
 const manifest = validateBundle(bundle);
 assert(
     !Object.keys(manifest.files).some((path) =>
         /auth\.json|sessions\/|pi-hermes-memory\//.test(path),
     ),
 );
-passed('pack and extract a synthetic profile with real validated runtimes');
+passed(
+    privateProfile
+        ? 'validate private profile inventory'
+        : 'pack and extract a synthetic profile with real validated runtimes',
+);
 
 const home = resolve(process.env.QUALIFICATION_HOME!);
 assert.equal(readdirSync(home).length, 0, 'Destination home must be empty');
@@ -250,60 +304,67 @@ runTests(
 );
 passed('real bash and safe_bash through the installed native sandbox');
 
-const sourceMemory = join(source, 'agent/pi-hermes-memory');
-mkdirSync(sourceMemory, { recursive: true });
-writeFileSync(
-    join(sourceMemory, 'MEMORY.md'),
-    'CI global memory survives transfer',
-);
-writeFileSync(
-    join(sourceMemory, 'session.jsonl'),
-    'CI excluded source session',
-);
-const memoryArchive = join(work, 'global-memory.json');
-run(
-    process.execPath,
-    [
-        join(source, 'bin/pi-setup'),
-        'memory',
-        'export',
-        '--root',
-        source,
-        '--output',
-        memoryArchive,
-    ],
-    work,
-);
-assert(
-    !readFileSync(memoryArchive, 'utf8').includes('CI excluded source session'),
-);
-run(
-    process.execPath,
-    [
-        join(target, 'bin/pi-setup'),
-        'memory',
-        'import',
-        '--input',
-        memoryArchive,
-    ],
-    home,
-);
-const db = new Database(join(target, 'agent/pi-hermes-memory/sessions.db'), {
-    readonly: true,
-});
-assert.deepEqual(db.query('SELECT COUNT(*) AS n FROM messages').get(), {
-    n: 0,
-});
-assert.deepEqual(
-    db
-        .query(
-            "SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'survives'",
-        )
-        .get(),
-    { n: 1 },
-);
-db.close();
-passed('global memory transfer rebuilds search without session messages');
+if (!privateProfile) {
+    const sourceMemory = join(source, 'agent/pi-hermes-memory');
+    mkdirSync(sourceMemory, { recursive: true });
+    writeFileSync(
+        join(sourceMemory, 'MEMORY.md'),
+        'CI global memory survives transfer',
+    );
+    writeFileSync(
+        join(sourceMemory, 'session.jsonl'),
+        'CI excluded source session',
+    );
+    const memoryArchive = join(work, 'global-memory.json');
+    run(
+        process.execPath,
+        [
+            join(source, 'bin/pi-setup'),
+            'memory',
+            'export',
+            '--root',
+            source,
+            '--output',
+            memoryArchive,
+        ],
+        work,
+    );
+    assert(
+        !readFileSync(memoryArchive, 'utf8').includes(
+            'CI excluded source session',
+        ),
+    );
+    run(
+        process.execPath,
+        [
+            join(target, 'bin/pi-setup'),
+            'memory',
+            'import',
+            '--input',
+            memoryArchive,
+        ],
+        home,
+    );
+    const db = new Database(
+        join(target, 'agent/pi-hermes-memory/sessions.db'),
+        {
+            readonly: true,
+        },
+    );
+    assert.deepEqual(db.query('SELECT COUNT(*) AS n FROM messages').get(), {
+        n: 0,
+    });
+    assert.deepEqual(
+        db
+            .query(
+                "SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'survives'",
+            )
+            .get(),
+        { n: 1 },
+    );
+    db.close();
+    passed('global memory transfer rebuilds search without session messages');
+}
 
 writeJson(join(target, 'agent/auth.json'), {});
 mkdirSync(join(target, 'agent/sessions'), { recursive: true });
@@ -344,14 +405,16 @@ assert.equal(
     readFileSync(join(target, 'agent/sessions/ci-marker'), 'utf8'),
     'preserve local sessions',
 );
-assert(
-    readFileSync(
-        join(target, 'agent/pi-hermes-memory/MEMORY.md'),
-        'utf8',
-    ).includes('survives'),
-);
+if (!privateProfile)
+    assert(
+        readFileSync(
+            join(target, 'agent/pi-hermes-memory/MEMORY.md'),
+            'utf8',
+        ).includes('survives'),
+    );
 run(process.execPath, [join(target, 'bin/pi-setup'), 'check'], home);
 passed('real update, idempotency, rollback and post-rollback integrity');
+const originalLauncher = readFileSync(join(target, 'bin/pi'));
 writeFileSync(join(target, 'bin/pi'), '\n// local change\n', { flag: 'a' });
 await assert.rejects(
     installBundle({
@@ -363,18 +426,28 @@ await assert.rejects(
     }),
     /Local change/,
 );
+writeFileSync(join(target, 'bin/pi'), originalLauncher);
 passed('modified managed files refuse updates');
 writeJson(join(evidence, 'qualification.json'), {
     status: 'passed',
     sourceCommit: process.env.QUALIFICATION_SOURCE_SHA,
     platform: process.env.QUALIFICATION_PLATFORM,
     kernel: run('uname', ['-r']),
+    bundleSourceCommit: manifest.sourceCommit,
     bundleSha256: digest(readFileSync(join(work, 'release-one/setup.tgz'))),
     packages: manifest.packages,
     milestones,
-    exclusions: [
-        'personal profile',
-        'private GitHub publication and download',
-        'provider connectivity',
-    ],
+    exclusions: privateProfile
+        ? [
+              'personal memory transfer (optional memory mechanism is covered by synthetic qualification)',
+              ...(process.env.QUALIFICATION_PUBLISH_TAG
+                  ? []
+                  : ['private GitHub publication']),
+              'personal extension lifecycle and provider connectivity (separate profile.json evidence)',
+          ]
+        : [
+              'personal profile',
+              'private GitHub publication and download',
+              'provider connectivity',
+          ],
 });

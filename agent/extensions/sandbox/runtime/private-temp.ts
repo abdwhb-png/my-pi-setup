@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from 'node:crypto';
 import {
     chmod,
     lstat,
@@ -8,18 +8,18 @@ import {
     rename,
     rm,
     writeFile,
-} from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+} from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { SandboxExecutionError, type PrivateTempLease } from "./contracts.ts";
+import { SandboxExecutionError, type PrivateTempLease } from './contracts.ts';
 
-export const LEASE_MARKER_FILENAME = ".pi-sandbox-lease.json";
+export const LEASE_MARKER_FILENAME = '.pi-sandbox-lease.json';
 export const LEASE_MARKER_VERSION = 1;
 export const MAX_LEASE_ID_BYTES = 8;
-const LEASE_PREFIX = "l-";
-const GC_PREFIX = ".gc-";
+const LEASE_PREFIX = 'l-';
+const GC_PREFIX = '.gc-';
 const MAX_CREATE_ATTEMPTS = 8;
 const CLEANUP_QUIESCENCE_MS = 50;
 
@@ -54,8 +54,8 @@ export interface RecoveryResult {
 
 function defaultRootDir(): string {
     if (!process.getuid) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Private leases require a Unix user identity"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Private leases require a Unix user identity'),
         });
     }
     // A fixed, short sticky-directory parent keeps socket paths independent of HOME/TMPDIR.
@@ -63,37 +63,37 @@ function defaultRootDir(): string {
 }
 
 async function assertDefaultParent(): Promise<void> {
-    const parent = await lstat("/tmp");
+    const parent = await lstat('/tmp');
     if (
         !parent.isDirectory() ||
         parent.isSymbolicLink() ||
         parent.uid !== 0 ||
         ((parent.mode & 0o022) !== 0 && (parent.mode & 0o1000) === 0)
     ) {
-        throw new SandboxExecutionError("invalid-policy", {
+        throw new SandboxExecutionError('invalid-policy', {
             cause: new Error(
-                "Private leases require a root-owned sticky /tmp directory",
+                'Private leases require a root-owned sticky /tmp directory',
             ),
         });
     }
 }
 
 function cleanupError(cause: unknown): SandboxExecutionError {
-    return new SandboxExecutionError("cleanup-failed", { cause });
+    return new SandboxExecutionError('cleanup-failed', { cause });
 }
 
 function validateOwnerPid(pid: number): void {
     if (!Number.isSafeInteger(pid) || pid <= 0) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Invalid lease owner PID"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Invalid lease owner PID'),
         });
     }
 }
 
 function validateRandomId(randomId: string): void {
     if (!/^[a-f0-9]{6}$/.test(randomId)) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Invalid lease random identifier"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Invalid lease random identifier'),
         });
     }
 }
@@ -101,8 +101,8 @@ function validateRandomId(randomId: string): void {
 function leaseId(_ownerPid: number, randomId: string): string {
     const value = `${LEASE_PREFIX}${randomId}`;
     if (Buffer.byteLength(value) > MAX_LEASE_ID_BYTES) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Lease identifier exceeds its byte budget"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Lease identifier exceeds its byte budget'),
         });
     }
     return value;
@@ -111,19 +111,19 @@ function leaseId(_ownerPid: number, randomId: string): string {
 export function worstCaseProxySocketPath(zeroboxHome: string): string {
     return join(
         zeroboxHome,
-        "tmp",
-        "runs",
-        "p-ffffffff",
-        "p-4294967295-127",
-        "r-18446744073709551615.sock",
+        'tmp',
+        'runs',
+        'p-ffffffff',
+        'p-4294967295-127',
+        'r-18446744073709551615.sock',
     );
 }
 
 function assertSocketBudget(zeroboxHome: string): void {
     if (Buffer.byteLength(worstCaseProxySocketPath(zeroboxHome)) >= 108) {
-        throw new SandboxExecutionError("invalid-policy", {
+        throw new SandboxExecutionError('invalid-policy', {
             cause: new Error(
-                "Private Zerobox root exceeds Linux AF_UNIX budget",
+                'Private Zerobox root exceeds Linux AF_UNIX budget',
             ),
         });
     }
@@ -136,22 +136,22 @@ export async function assertPrivateRootDirectory(path: string): Promise<void> {
         stat.isSymbolicLink() ||
         stat.uid !== process.getuid?.()
     ) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Private lease root is not an owned directory"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Private lease root is not an owned directory'),
         });
     }
     await chmod(path, 0o700);
 }
 
 function validMarker(value: unknown, expectedId: string): value is LeaseMarker {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return false;
     }
     const marker = value as Record<string, unknown>;
     return (
         marker.version === LEASE_MARKER_VERSION &&
         marker.leaseId === expectedId &&
-        typeof marker.ownerPid === "number" &&
+        typeof marker.ownerPid === 'number' &&
         Number.isSafeInteger(marker.ownerPid) &&
         marker.ownerPid > 0 &&
         Object.keys(marker).length === 3
@@ -163,7 +163,7 @@ async function readValidMarker(
     expectedId: string,
 ): Promise<LeaseMarker | null> {
     try {
-        const value: unknown = JSON.parse(await readFile(markerPath, "utf8"));
+        const value: unknown = JSON.parse(await readFile(markerPath, 'utf8'));
         return validMarker(value, expectedId) ? value : null;
     } catch {
         return null;
@@ -194,14 +194,14 @@ async function safeDisposeRoot(
     try {
         stat = await lstat(root);
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
         throw cleanupError(error);
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-        throw cleanupError(new Error("Lease root was replaced"));
+        throw cleanupError(new Error('Lease root was replaced'));
     }
     if ((await readValidMarker(markerPath, id)) === null) {
-        throw cleanupError(new Error("Lease ownership marker is invalid"));
+        throw cleanupError(new Error('Lease ownership marker is invalid'));
     }
     // Zerobox's bwrap helper can finish a synthetic mount cleanup just after
     // the supervised target exits. Keep the owned path in place until that
@@ -213,14 +213,14 @@ async function safeDisposeRoot(
         throw cleanupError(error);
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-        throw cleanupError(new Error("Lease root was replaced"));
+        throw cleanupError(new Error('Lease root was replaced'));
     }
     if ((await readValidMarker(markerPath, id)) === null) {
-        throw cleanupError(new Error("Lease ownership marker is invalid"));
+        throw cleanupError(new Error('Lease ownership marker is invalid'));
     }
     const detachedRoot = join(
         dirname(root),
-        `${GC_PREFIX}${id}-${randomBytes(6).toString("hex")}`,
+        `${GC_PREFIX}${id}-${randomBytes(6).toString('hex')}`,
     );
     try {
         await rename(root, detachedRoot);
@@ -247,8 +247,8 @@ export async function createPrivateTempLease(
     if (options.rootDir === undefined) await assertDefaultParent();
     const rootDir = resolve(options.rootDir ?? defaultRootDir());
     if (!isAbsolute(rootDir)) {
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error("Lease root must be absolute"),
+        throw new SandboxExecutionError('invalid-policy', {
+            cause: new Error('Lease root must be absolute'),
         });
     }
     const ownerPid = options.ownerPid ?? process.pid;
@@ -257,15 +257,15 @@ export async function createPrivateTempLease(
     await assertPrivateRootDirectory(rootDir);
 
     for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
-        const randomId = options.randomId ?? randomBytes(3).toString("hex");
+        const randomId = options.randomId ?? randomBytes(3).toString('hex');
         validateRandomId(randomId);
         const id = leaseId(ownerPid, randomId);
         const root = join(rootDir, id);
-        const homeDir = join(root, "home");
-        const tmpDir = join(root, "tmp");
-        const zeroboxHome = join(root, "zerobox-home");
-        const proxyRunsDir = join(zeroboxHome, "tmp", "runs");
-        const profilesDir = join(zeroboxHome, "profiles");
+        const homeDir = join(root, 'home');
+        const tmpDir = join(root, 'tmp');
+        const zeroboxHome = join(root, 'zerobox-home');
+        const proxyRunsDir = join(zeroboxHome, 'tmp', 'runs');
+        const profilesDir = join(zeroboxHome, 'profiles');
         const markerPath = join(root, LEASE_MARKER_FILENAME);
         assertSocketBudget(zeroboxHome);
         let rootCreated = false;
@@ -288,8 +288,8 @@ export async function createPrivateTempLease(
                 ownerPid,
             };
             await writeFile(markerPath, JSON.stringify(marker), {
-                encoding: "utf8",
-                flag: "wx",
+                encoding: 'utf8',
+                flag: 'wx',
                 mode: 0o600,
             });
             await chmod(markerPath, 0o600);
@@ -318,11 +318,11 @@ export async function createPrivateTempLease(
             };
         } catch (error) {
             if (
-                (error as NodeJS.ErrnoException).code === "EEXIST" &&
+                (error as NodeJS.ErrnoException).code === 'EEXIST' &&
                 !rootCreated
             ) {
                 if (options.randomId === undefined) continue;
-                throw new SandboxExecutionError("setup-failed", {
+                throw new SandboxExecutionError('setup-failed', {
                     cause: error,
                 });
             }
@@ -337,11 +337,11 @@ export async function createPrivateTempLease(
                     // Best effort for a partial directory created by this call.
                 }
             }
-            throw new SandboxExecutionError("setup-failed", { cause: error });
+            throw new SandboxExecutionError('setup-failed', { cause: error });
         }
     }
-    throw new SandboxExecutionError("setup-failed", {
-        cause: new Error("Could not allocate a unique lease"),
+    throw new SandboxExecutionError('setup-failed', {
+        cause: new Error('Could not allocate a unique lease'),
     });
 }
 
@@ -350,7 +350,7 @@ function defaultIsPidAlive(pid: number): boolean {
         process.kill(pid, 0);
         return true;
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code !== "ESRCH";
+        return (error as NodeJS.ErrnoException).code !== 'ESRCH';
     }
 }
 
@@ -365,7 +365,7 @@ export async function recoverStalePrivateTempLeases(
         });
         const legacy = await recoverStalePrivateTempLeases({
             ...options,
-            rootDir: join(homedir(), ".pi", "zbx"),
+            rootDir: join(homedir(), '.pi', 'zbx'),
         });
         return {
             removed: [...current.removed, ...legacy.removed],
@@ -380,7 +380,7 @@ export async function recoverStalePrivateTempLeases(
         await assertPrivateRootDirectory(rootDir);
         entries = await readdir(rootDir, { withFileTypes: true });
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
             return { removed, retained };
         }
         if (error instanceof SandboxExecutionError) throw error;
@@ -431,7 +431,7 @@ function attachCleanup(primary: unknown, cleanup: SandboxExecutionError): void {
     if (primary instanceof SandboxExecutionError) {
         primary.attachCleanupError(detail);
     } else if (primary instanceof Error) {
-        Object.defineProperty(primary, "cleanupError", {
+        Object.defineProperty(primary, 'cleanupError', {
             configurable: true,
             enumerable: false,
             value: detail,

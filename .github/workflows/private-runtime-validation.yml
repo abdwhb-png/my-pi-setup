@@ -128,7 +128,10 @@ jobs:
             --lock extensions/sandbox/runtime/distribution/input-lock.json --agent-root .
       - name: Check repository types
         working-directory: .pi/agent
-        run: bun run typecheck
+        run: |
+          bun run typecheck
+          ./node_modules/.bin/tsc --noEmit -p ../.github/scripts/tsconfig.portability.json
+          bun test --isolate ../.github/scripts/portable-provider-checks.test.ts
       - name: Run Pi boundary regression suites
         working-directory: .pi/agent
         run: |
