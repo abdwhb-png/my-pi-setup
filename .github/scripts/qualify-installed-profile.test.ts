@@ -9,8 +9,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-for (const phase of ['sdk-import', 'startup', 'shutdown'])
-    test(`profile diagnostics identify ${phase} failure without exposing credentials`, () => {
+for (const phase of ['sdk-import', 'startup', 'shutdown', 'ready'])
+    test(`profile ${phase} preserves lifecycle evidence without exposing credentials`, () => {
         const root = mkdtempSync(join(tmpdir(), 'pi-profile-diagnostic-'));
         try {
             const target = join(root, '.pi');
@@ -35,12 +35,15 @@ for (const phase of ['sdk-import', 'startup', 'shutdown'])
                     ? 'throw new Error("Cannot find module \'PRIVATE_FIXTURE_SENTINEL\'");'
                     : `
 export const SessionManager = { inMemory: () => ({}) };
+export const SettingsManager = { create: () => ({ getTheme: () => 'fixture-theme' }) };
+let themeReady = false;
+export function initTheme(name, watcher) { if (name !== 'fixture-theme' || watcher !== false) throw Error('Incorrect theme setup'); themeReady = true; }
 let report;
 const failure = { extensionPath: ${JSON.stringify(join(target, 'agent/extensions/fixture/index.ts'))}, event: ${JSON.stringify(phase === 'startup' ? 'session_start' : 'session_shutdown')}, error: "Cannot find module 'PRIVATE_FIXTURE_SENTINEL'", stack: ${JSON.stringify(`at fixture (${target}/agent/extensions/fixture/index.ts:12:3)`)} };
 export async function createAgentSession() { return {
  extensionsResult: { errors: [], extensions: [] },
  session: {
-  bindExtensions: async ({onError}) => { report=onError; if (${JSON.stringify(phase)} === 'startup') report(failure); },
+  bindExtensions: async ({onError}) => { if (!themeReady) throw Error('Theme not initialized. Call initTheme() first.'); report=onError; if (${JSON.stringify(phase)} === 'startup') report(failure); },
   extensionRunner: { emit: async () => { if (${JSON.stringify(phase)} === 'shutdown') report(failure); } },
   resourceLoader: { getSkills:()=>({diagnostics:[],skills:[]}), getPrompts:()=>({diagnostics:[],prompts:[]}), getThemes:()=>({diagnostics:[],themes:[]}) },
   getAllTools:()=>[], dispose() {},
@@ -73,18 +76,22 @@ export async function createAgentSession() { return {
                     stderr: 'pipe',
                 },
             );
-            expect(result.exitCode).toBe(1);
+            expect(result.exitCode).toBe(phase === 'ready' ? 0 : 1);
             const output = readFileSync(evidence, 'utf8');
-            expect(JSON.parse(output)).toMatchObject({
-                status: 'failed',
-                stage: phase,
-                failure:
-                    phase === 'sdk-import'
-                        ? 'module-not-found'
-                        : 'lifecycle-error',
-            });
+            expect(JSON.parse(output)).toMatchObject(
+                phase === 'ready'
+                    ? { status: 'passed' }
+                    : {
+                          status: 'failed',
+                          stage: phase,
+                          failure:
+                              phase === 'sdk-import'
+                                  ? 'module-not-found'
+                                  : 'lifecycle-error',
+                      },
+            );
             expect(output).not.toContain('PRIVATE_FIXTURE_SENTINEL');
-            if (phase !== 'sdk-import')
+            if (phase === 'startup' || phase === 'shutdown')
                 expect(JSON.parse(output).lifecycleErrors[0]).toMatchObject({
                     path: 'extensions/fixture/index.ts',
                     failure: 'module-not-found',

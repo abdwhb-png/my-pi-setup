@@ -114,10 +114,17 @@ try {
                 pathToFileURL(join(agentDir, 'package.json')).href,
             )
         );
+    stage = 'theme-initialization';
+    const settingsManager = sdk.SettingsManager.create(
+        process.env.HOME!,
+        agentDir,
+    );
+    sdk.initTheme(settingsManager.getTheme(), false);
     stage = 'session-create';
     const created = await sdk.createAgentSession({
         cwd: process.env.HOME!,
         agentDir,
+        settingsManager,
         sessionManager: sdk.SessionManager.inMemory(process.env.HOME!),
     });
     session = created.session;
