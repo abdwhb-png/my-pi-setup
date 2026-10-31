@@ -46,6 +46,10 @@ function failureCode(error: unknown): string {
         return 'provider-invalid-cost';
     if (/Explicit provider budget/.test(message))
         return 'provider-invalid-budget';
+    if (/Installed profile has lifecycle errors/.test(message))
+        return 'lifecycle-error';
+    if (/Cannot read (properties|property)/.test(message))
+        return 'invalid-runtime-value';
     return 'unclassified';
 }
 
@@ -53,6 +57,16 @@ assert.equal(process.env.GITHUB_ACTIONS, 'true');
 assert.equal(process.env.GITHUB_REPOSITORY, 'abdwhb-png/my-pi-distribution');
 const target = resolve(process.argv[2]);
 const agentDir = join(target, 'agent');
+function failureFrames(stack: string | undefined) {
+    return [...(stack ?? '').matchAll(/(\/[^()\n]+):(\d+):(\d+)/g)]
+        .filter((match) => match[1].startsWith(target + '/'))
+        .slice(0, 5)
+        .map((match) => ({
+            path: relative(target, match[1]),
+            line: Number(match[2]),
+            column: Number(match[3]),
+        }));
+}
 const credentials = [
     ['PI_QUALIFICATION_AUTH_JSON', join(agentDir, 'auth.json')],
     [
@@ -65,6 +79,18 @@ let session:
     | undefined;
 let stage = 'credentials';
 const providerEvents: ProviderCheckEvent[] = [];
+let providerCatalog: Array<{
+    provider: string;
+    model: string;
+    authMode: string;
+    maximumCostUSD: number;
+}> = [];
+const lifecycleErrors: Array<{
+    path: string;
+    event: string;
+    failure: string;
+    frames: ReturnType<typeof failureFrames>;
+}> = [];
 let extensionErrors: Array<{ path: string; failure: string }> = [];
 try {
     for (const [key, path] of credentials) {
@@ -107,14 +133,23 @@ try {
         0,
         'Installed profile has extension loading errors',
     );
-    let lifecycleErrors = 0;
     stage = 'startup';
     await session.bindExtensions({
         mode: 'rpc',
-        onError: () => {
-            lifecycleErrors++;
+        onError: (error) => {
+            lifecycleErrors.push({
+                path: relative(agentDir, error.extensionPath),
+                event: error.event,
+                failure: failureCode(error.error),
+                frames: failureFrames(error.stack),
+            });
         },
     });
+    assert.equal(
+        lifecycleErrors.length,
+        0,
+        'Installed profile has lifecycle errors',
+    );
     const resources = session.resourceLoader;
     for (const result of [
         resources.getSkills(),
@@ -135,7 +170,7 @@ try {
         'Catalog-only inspection cannot request completions',
     );
     stage = 'provider-catalog';
-    const providerCatalog =
+    providerCatalog =
         process.env.QUALIFICATION_CATALOG_ONLY === 'true'
             ? (
                   await inspectProviderCases(
@@ -174,7 +209,11 @@ try {
         type: 'session_shutdown',
         reason: 'quit',
     });
-    assert.equal(lifecycleErrors, 0, 'Installed profile has lifecycle errors');
+    assert.equal(
+        lifecycleErrors.length,
+        0,
+        'Installed profile has lifecycle errors',
+    );
     writeFileSync(
         process.argv[3],
         JSON.stringify(
@@ -205,7 +244,12 @@ try {
             stage,
             failure: failureCode(error),
             extensionErrors,
+            lifecycleErrors,
+            providerCatalog,
             providerEvents,
+            frames: failureFrames(
+                error instanceof Error ? error.stack : undefined,
+            ),
         }),
         { mode: 0o600 },
     );

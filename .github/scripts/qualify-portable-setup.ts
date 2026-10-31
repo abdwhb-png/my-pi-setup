@@ -101,6 +101,11 @@ function runTests(
 }
 
 const privateProfile = process.env.QUALIFICATION_MODE === 'private';
+const profileOnly = process.env.QUALIFICATION_PROFILE_ONLY === 'true';
+assert(
+    !profileOnly || privateProfile,
+    'Profile-only diagnosis requires a private candidate',
+);
 let bundle: string;
 if (privateProfile) {
     const downloaded = join(work, 'release-one');
@@ -374,70 +379,76 @@ if (!privateProfile) {
     passed('global memory transfer rebuilds search without session messages');
 }
 
-writeJson(join(target, 'agent/auth.json'), {});
-mkdirSync(join(target, 'agent/sessions'), { recursive: true });
-writeFileSync(
-    join(target, 'agent/sessions/ci-marker'),
-    'preserve local sessions',
-);
-const next = join(work, 'bundle-two');
-cpSync(bundle, next, { recursive: true, verbatimSymlinks: true });
-writeFileSync(
-    join(next, 'setup/agent/prompts/qualification-version.md'),
-    'Synthetic update marker',
-);
-rmSync(join(next, 'manifest.json'));
-writeJson(join(next, 'manifest.json'), { ...manifest, files: inventory(next) });
-await installBundle({
-    root: target,
-    bundle: next,
-    release: 'qualification-two',
-    update: true,
-    bindings,
-});
-assert(existsSync(join(target, 'agent/prompts/qualification-version.md')));
-assert.equal(
+if (!profileOnly) {
+    writeJson(join(target, 'agent/auth.json'), {});
+    mkdirSync(join(target, 'agent/sessions'), { recursive: true });
+    writeFileSync(
+        join(target, 'agent/sessions/ci-marker'),
+        'preserve local sessions',
+    );
+    const next = join(work, 'bundle-two');
+    cpSync(bundle, next, { recursive: true, verbatimSymlinks: true });
+    writeFileSync(
+        join(next, 'setup/agent/prompts/qualification-version.md'),
+        'Synthetic update marker',
+    );
+    rmSync(join(next, 'manifest.json'));
+    writeJson(join(next, 'manifest.json'), {
+        ...manifest,
+        files: inventory(next),
+    });
     await installBundle({
         root: target,
         bundle: next,
         release: 'qualification-two',
         update: true,
         bindings,
-    }),
-    'Already installed',
-);
-await rollbackInstallation(target);
-assert.equal(readInstallation(target).release, 'qualification-one');
-assert(!existsSync(join(target, 'agent/prompts/qualification-version.md')));
-assert.equal(
-    readFileSync(join(target, 'agent/sessions/ci-marker'), 'utf8'),
-    'preserve local sessions',
-);
-if (!privateProfile)
-    assert(
-        readFileSync(
-            join(target, 'agent/pi-hermes-memory/MEMORY.md'),
-            'utf8',
-        ).includes('survives'),
+    });
+    assert(existsSync(join(target, 'agent/prompts/qualification-version.md')));
+    assert.equal(
+        await installBundle({
+            root: target,
+            bundle: next,
+            release: 'qualification-two',
+            update: true,
+            bindings,
+        }),
+        'Already installed',
     );
-run(process.execPath, [join(target, 'bin/pi-setup'), 'check'], home);
-passed('real update, idempotency, rollback and post-rollback integrity');
-const originalLauncher = readFileSync(join(target, 'bin/pi'));
-writeFileSync(join(target, 'bin/pi'), '\n// local change\n', { flag: 'a' });
-await assert.rejects(
-    installBundle({
-        root: target,
-        bundle: next,
-        release: 'qualification-two',
-        update: true,
-        bindings,
-    }),
-    /Local change/,
-);
-writeFileSync(join(target, 'bin/pi'), originalLauncher);
-passed('modified managed files refuse updates');
+    await rollbackInstallation(target);
+    assert.equal(readInstallation(target).release, 'qualification-one');
+    assert(!existsSync(join(target, 'agent/prompts/qualification-version.md')));
+    assert.equal(
+        readFileSync(join(target, 'agent/sessions/ci-marker'), 'utf8'),
+        'preserve local sessions',
+    );
+    if (!privateProfile)
+        assert(
+            readFileSync(
+                join(target, 'agent/pi-hermes-memory/MEMORY.md'),
+                'utf8',
+            ).includes('survives'),
+        );
+    run(process.execPath, [join(target, 'bin/pi-setup'), 'check'], home);
+    passed('real update, idempotency, rollback and post-rollback integrity');
+    const originalLauncher = readFileSync(join(target, 'bin/pi'));
+    writeFileSync(join(target, 'bin/pi'), '\n// local change\n', { flag: 'a' });
+    await assert.rejects(
+        installBundle({
+            root: target,
+            bundle: next,
+            release: 'qualification-two',
+            update: true,
+            bindings,
+        }),
+        /Local change/,
+    );
+    writeFileSync(join(target, 'bin/pi'), originalLauncher);
+    passed('modified managed files refuse updates');
+}
 writeJson(join(evidence, 'qualification.json'), {
     status: 'passed',
+    scope: profileOnly ? 'profile-installation' : 'full',
     sourceCommit: process.env.QUALIFICATION_SOURCE_SHA,
     platform: process.env.QUALIFICATION_PLATFORM,
     kernel: run('uname', ['-r']),
@@ -448,6 +459,11 @@ writeJson(join(evidence, 'qualification.json'), {
     exclusions: privateProfile
         ? [
               'personal memory transfer (optional memory mechanism is covered by synthetic qualification)',
+              ...(profileOnly
+                  ? [
+                        'update, idempotency, rollback and modified-file refusal omitted for profile-only diagnosis',
+                    ]
+                  : []),
               ...(process.env.QUALIFICATION_PUBLISH_TAG
                   ? []
                   : ['private GitHub publication']),

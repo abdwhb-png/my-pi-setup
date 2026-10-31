@@ -23,6 +23,10 @@ on:
         description: Authorize the configured provider calls (may incur charges)
         type: boolean
         default: false
+      profile_only:
+        description: Diagnose a fresh profile install without repeating update and rollback checks
+        type: boolean
+        default: false
       catalog_only:
         description: Inspect selected provider auth and catalog prices without generation
         type: boolean
@@ -105,6 +109,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PI_DISTRIBUTION_TOKEN || github.token }}
           QUALIFICATION_PLATFORM: ubuntu
           QUALIFICATION_MODE: private
+          QUALIFICATION_PROFILE_ONLY: ${{ inputs.profile_only }}
           QUALIFICATION_SOURCE_SHA: ${{ inputs.source_sha }}
           QUALIFICATION_RELEASE: ${{ inputs.candidate_release }}
           QUALIFICATION_PUBLISH_TAG: ${{ inputs.publish_tag }}
