@@ -309,7 +309,7 @@ writeFileSync(
     'preserve local sessions',
 );
 const next = join(work, 'bundle-two');
-cpSync(bundle, next, { recursive: true });
+cpSync(bundle, next, { recursive: true, verbatimSymlinks: true });
 writeFileSync(
     join(next, 'setup/agent/prompts/qualification-version.md'),
     'Synthetic update marker',
