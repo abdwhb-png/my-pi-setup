@@ -128,6 +128,24 @@ The current session can only narrow or disable that selection. Zerobox requires 
 
 `environment.path` controls lookup only; it never grants filesystem access. Values in `environment.variables` that start with `~/` expand against the host home directory, without changing the private sandbox HOME or granting read access. Shell expressions such as `$HOME` and `$(command)` stay literal. Environment values are hidden in diagnostics. Prefer named local installations for existing tools so the roots and command paths remain one authorization. The private tool baseline is described in [Runtime](runtime.md).
 
+## Reproducing the development environment
+
+The closed example above remains the default. For existing host development tools, use the versioned `agent/config/sandbox.development.example.json` fragment and run these commands from the repository's `agent/` directory:
+
+```sh
+bun scripts/configure-sandbox.ts preview
+bun scripts/configure-sandbox.ts apply
+bun scripts/configure-sandbox.ts check
+```
+
+The fragment uses the existing `environment.installations`, `environment.variables` and `filesystem.allowWrite` fields. It is an input to setup, not another runtime configuration file. Preview lists complete installation roots, missing installations, variable names (not their values), and cache write roots without creating files. Apply creates owner-only cache directories, validates the merged authority, and publishes it atomically with a private backup. Reapplication is a no-op. Check exits nonzero for missing declarations, missing caches or unapplied configuration. Missing installation groups are explicitly omitted; malformed declarations and escaping symlinks are errors. No host tools are installed and no grants are inferred from PATH.
+
+Keep machine-specific installation bindings outside Git. Pass `--bindings FILE` to replace a named profile installation's complete root list; the file accepts only `environment.installations` in the existing format. For example, bind `python` to an existing Python distribution's canonical root and command directory. Use `--profile FILE` for a different shared profile and `--agent-dir DIR` for an isolated Pi installation. Setup generates the local machine identity; never copy another machine's active authority. Installation prefixes and required host libraries vary: review the roots and use `/sandbox doctor <command>` to inspect dependencies before declaring a tool usable. The profile is not an automatic dependency scanner.
+
+The default development cache is `~/.cache/pi/dev-tools/`, shared across Pi sessions but separate from host caches. Tool-specific cache conventions belong in profile data, not runtime adapters. `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` retain private defaults but now respect explicit configured or allowed inherited values; denied variables stay denied. Cache variables grant no filesystem access. Host HOME, temporary storage, network ceilings and host execution gates remain protected. The profile permits Corepack to fetch a project's declared version into its own cache; it does not open network access or establish Socket coverage for downloads. Use the normal supply-chain controls for networked package operations. A network denial must remain visible rather than cause host fallback.
+
+On this installation, preserve unrelated authority settings and existing project selections. Restore the owner-only `sandbox.json.<id>.backup` to roll back setup after stopping affected work, then reload Pi. Persistent cache contents are not versioned and are not removed by rollback. Functional reproducibility does not imply identical host tool versions or cache contents. A new installation root may need approval once per machine; files added within an approved directory do not require version-specific grants.
+
 ## Local installations
 
 Define machine-local sources only in the global document:

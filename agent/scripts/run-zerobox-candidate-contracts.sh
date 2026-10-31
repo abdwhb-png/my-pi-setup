@@ -107,6 +107,7 @@ for contract in \
     extensions/sandbox/runtime/shell-baseline.integration.test.ts \
     extensions/sandbox/runtime/isolation-defaults.integration.test.ts \
     extensions/sandbox/runtime/installations.integration.test.ts \
+    extensions/sandbox/runtime/development-cache.integration.test.ts \
     extensions/sandbox/runtime/revocation.integration.test.ts \
     extensions/sandbox/runtime/linux-contract.integration.test.ts \
     extensions/sandbox/runtime/generic-command.integration.test.ts \
