@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "sourceCommit": "bf7d193621525b31025a091163b0e00df7e05bf9",
+  "platform": "ubuntu",
+  "kernel": "7.0.0-1017-azure",
+  "bundleSourceCommit": "bf7d193621525b31025a091163b0e00df7e05bf9",
+  "bundleSha256": "687602f19736abe3628b8f4f110ba7fbe182c291365d2eb5c57b5247c372a163",
+  "milestones": [
+    "verified private profile release downloaded",
+    "validate private profile inventory",
+    "clean target installation, runtime coherence and daily launcher",
+    "real bash and safe_bash through the installed native sandbox",
+    "real update, idempotency, rollback and post-rollback integrity",
+    "modified managed files refuse updates"
+  ],
+  "packageCount": 11,
+  "profile": {
+    "status": "failed",
+    "stage": "provider-checks",
+    "failure": "unclassified",
+    "extensionErrors": []
+  },
+  "providerGenerationRequests": "unknown",
+  "providerCostUSD": "unknown"
+}

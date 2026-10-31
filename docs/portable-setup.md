@@ -46,7 +46,7 @@ bun ~/pi-bootstrap/bin/pi-setup install --release setup-2026-10-31.1
 
 The default target is `~/.pi`; `--root DIR` selects a different installation directory. An existing unmanaged installation is refused. In particular, this command does not adopt or overwrite the maintained source checkout. Dry runs can download verified assets into a temporary directory but do not change the target installation.
 
-The installer verifies the complete archive before activation. At the final installation path, it imports the packed Pi release, installs the declared packages through the local daily launcher, runs the package finalizer, stages Zerobox, and generates sandbox authority with the existing development setup command. It never copies installed `node_modules` from the producer. Host package downloads still require Internet access and retain Socket Firewall protection. This is not an offline installer.
+The installer verifies the complete archive before activation. At the final installation path, it imports the packed Pi release, installs the declared packages through the local daily launcher, runs the package finalizer, stages Zerobox, and generates sandbox authority with the existing development setup command. Bundled local extensions with dependencies must include their Bun lockfiles; provisioning verifies the exact locked direct package versions and restores them with `sfw bun install --frozen-lockfile --ignore-scripts`. It never copies installed `node_modules` from the producer. Host package downloads still require Internet access and retain Socket Firewall protection. This is not an offline installer.
 
 Add the target's `bin` directory to your shell's `PATH`, configure providers through the existing secure channels, and run:
 

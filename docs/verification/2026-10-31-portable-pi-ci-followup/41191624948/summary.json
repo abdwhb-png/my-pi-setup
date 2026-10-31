@@ -1,0 +1,121 @@
+{
+  "status": "passed",
+  "scope": "profile-installation",
+  "sourceCommit": "f5439f09daaec60c2fafb7be7099ad52d9606024",
+  "platform": "ubuntu",
+  "kernel": "7.0.0-1017-azure",
+  "bundleSourceCommit": "bf7d193621525b31025a091163b0e00df7e05bf9",
+  "bundleSha256": "687602f19736abe3628b8f4f110ba7fbe182c291365d2eb5c57b5247c372a163",
+  "milestones": [
+    "verified private profile release downloaded",
+    "validate private profile inventory",
+    "clean target installation, runtime coherence and daily launcher",
+    "real bash and safe_bash through the installed native sandbox"
+  ],
+  "exclusions": [
+    "personal memory transfer (optional memory mechanism is covered by synthetic qualification)",
+    "update, idempotency, rollback and modified-file refusal omitted for profile-only diagnosis",
+    "private GitHub publication",
+    "personal extension lifecycle and provider connectivity (separate profile.json evidence)"
+  ],
+  "packageCount": 11,
+  "profile": {
+    "status": "failed",
+    "stage": "startup",
+    "failure": "lifecycle-error",
+    "extensionErrors": [],
+    "lifecycleErrors": [
+      {
+        "path": "extensions/save-tokens/index.ts",
+        "event": "session_start",
+        "failure": "unclassified",
+        "frames": [
+          {
+            "path": "agent/extensions/save-tokens/caveman.ts",
+            "line": 377,
+            "column": 21
+          },
+          {
+            "path": "agent/extensions/save-tokens/caveman.ts",
+            "line": 383,
+            "column": 13
+          },
+          {
+            "path": "agent/extensions/save-tokens/caveman.ts",
+            "line": 422,
+            "column": 9
+          }
+        ]
+      },
+      {
+        "path": "extensions/pi-permission-system-addons/index.ts",
+        "event": "session_start",
+        "failure": "unclassified",
+        "frames": [
+          {
+            "path": "agent/extensions/pi-permission-system-addons/widget.ts",
+            "line": 31,
+            "column": 10
+          },
+          {
+            "path": "agent/extensions/pi-permission-system-addons/index.ts",
+            "line": 160,
+            "column": 35
+          },
+          {
+            "path": "agent/extensions/pi-permission-system-addons/index.ts",
+            "line": 168,
+            "column": 22
+          }
+        ]
+      },
+      {
+        "path": "extensions/browser-tools/index.ts",
+        "event": "session_start",
+        "failure": "unclassified",
+        "frames": [
+          {
+            "path": "agent/extensions/browser-tools/widget.ts",
+            "line": 52,
+            "column": 20
+          },
+          {
+            "path": "agent/extensions/browser-tools/index.ts",
+            "line": 148,
+            "column": 13
+          },
+          {
+            "path": "agent/extensions/browser-tools/index.ts",
+            "line": 211,
+            "column": 9
+          }
+        ]
+      },
+      {
+        "path": "extensions/browser-tools/index.ts",
+        "event": "resources_discover",
+        "failure": "unclassified",
+        "frames": [
+          {
+            "path": "agent/extensions/browser-tools/widget.ts",
+            "line": 52,
+            "column": 20
+          },
+          {
+            "path": "agent/extensions/browser-tools/index.ts",
+            "line": 148,
+            "column": 13
+          },
+          {
+            "path": "agent/extensions/browser-tools/index.ts",
+            "line": 222,
+            "column": 9
+          }
+        ]
+      }
+    ],
+    "providerCatalog": [],
+    "providerEvents": [],
+    "frames": []
+  }
+}

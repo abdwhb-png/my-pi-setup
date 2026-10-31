@@ -1,0 +1,54 @@
+{
+  "status": "passed",
+  "scope": "profile-installation",
+  "sourceCommit": "e1e1fee350d16060fef416421c1377777224c0e0",
+  "platform": "ubuntu",
+  "kernel": "7.0.0-1017-azure",
+  "bundleSourceCommit": "bf7d193621525b31025a091163b0e00df7e05bf9",
+  "bundleSha256": "687602f19736abe3628b8f4f110ba7fbe182c291365d2eb5c57b5247c372a163",
+  "milestones": [
+    "verified private profile release downloaded",
+    "validate private profile inventory",
+    "clean target installation, runtime coherence and daily launcher",
+    "real bash and safe_bash through the installed native sandbox"
+  ],
+  "exclusions": [
+    "personal memory transfer (optional memory mechanism is covered by synthetic qualification)",
+    "update, idempotency, rollback and modified-file refusal omitted for profile-only diagnosis",
+    "private GitHub publication",
+    "personal extension lifecycle and provider connectivity (separate profile.json evidence)"
+  ],
+  "packageCount": 11,
+  "profile": {
+    "status": "failed",
+    "stage": "provider-checks",
+    "failure": "provider-request-failed",
+    "extensionErrors": [],
+    "lifecycleErrors": [],
+    "providerCatalog": [],
+    "providerEvents": [
+      {
+        "provider": "opencode-go",
+        "model": "beam-free",
+        "event": "reserved",
+        "maximumCostUSD": 0
+      },
+      {
+        "provider": "opencode-go",
+        "model": "beam-free",
+        "event": "request-started"
+      },
+      {
+        "provider": "opencode-go",
+        "model": "beam-free",
+        "event": "response-received",
+        "reportedCostUSD": 0,
+        "stopReason": "error",
+        "failure": "invalid-request",
+        "hasText": false,
+        "hasThinking": false
+      }
+    ],
+    "frames": []
+  }
+}
