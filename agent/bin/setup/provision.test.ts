@@ -8,7 +8,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { inventory, json, writeJson } from './files.ts';
 import {
@@ -18,12 +17,12 @@ import {
 } from './provision.ts';
 
 test('package verification loads the destination runtime installed after the operator module', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pi-late-runtime-'));
+    const root = mkdtempSync(join(tmpdir(), 'pi late runtime é '));
     try {
         expect(() =>
-            import.meta.resolve(
+            Bun.resolveSync(
                 '@earendil-works/pi-coding-agent',
-                pathToFileURL(join(root, 'agent/package.json')).href,
+                join(root, 'agent'),
             ),
         ).toThrow();
         const moduleRoot = join(
@@ -151,7 +150,7 @@ test('bundled extension dependencies are restored through frozen firewall instal
         const firewall = join(root, 'sfw');
         writeFileSync(
             firewall,
-            `#!${process.execPath}
+            `#!/usr/bin/env bun
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args=process.argv.slice(2);

@@ -278,3 +278,125 @@ test('an unmanaged symbolic-link parent cannot redirect an update outside the in
         rmSync(home, { recursive: true, force: true });
     }
 });
+
+test('logical tool preflight refuses missing tools before creating a target or transaction', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-logical-install-'));
+    const original = process.env.PATH;
+    try {
+        const candidate = bundle(home, 'logical');
+        const profile = join(
+            candidate,
+            'setup/agent/config/sandbox.development.example.json',
+        );
+        writeJson(profile, { tools: { python: ['python3'] } });
+        const manifest = JSON.parse(
+            readFileSync(join(candidate, 'manifest.json'), 'utf8'),
+        );
+        manifest.files = inventory(candidate);
+        delete manifest.files['manifest.json'];
+        writeJson(join(candidate, 'manifest.json'), manifest);
+        process.env.PATH = join(home, 'absent');
+        const root = join(home, '.pi');
+        await expect(
+            installBundle({
+                root,
+                bundle: candidate,
+                release: 'logical',
+                dryRun: true,
+            }),
+        ).rejects.toThrow('python3');
+        expect(existsSync(root)).toBe(false);
+        expect(existsSync(`${root}.setup-journal.json`)).toBe(false);
+    } finally {
+        if (original === undefined) delete process.env.PATH;
+        else process.env.PATH = original;
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test('discovered bindings stay local across updates and rollback, and redirected tools abort activation', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-discovered-bindings-'));
+    const original = process.env.PATH;
+    try {
+        const bin = join(home, 'tools');
+        mkdirSync(bin);
+        const executable = join(bin, 'bun');
+        writeFileSync(
+            executable,
+            `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: '1.2.3', resources: [] })}'\n`,
+            { mode: 0o700 },
+        );
+        process.env.PATH = bin;
+        const candidates = ['one', 'two', 'three'].map((version) => {
+            const dir = bundle(home, version);
+            writeJson(
+                join(
+                    dir,
+                    'setup/agent/config/sandbox.development.example.json',
+                ),
+                { tools: { bun: ['bun'] } },
+            );
+            const manifest = JSON.parse(
+                readFileSync(join(dir, 'manifest.json'), 'utf8'),
+            );
+            manifest.files = inventory(dir);
+            delete manifest.files['manifest.json'];
+            writeJson(join(dir, 'manifest.json'), manifest);
+            return dir;
+        });
+        const root = join(home, '.pi');
+        const options = {
+            root,
+            bundle: candidates[0]!,
+            release: 'one',
+            provision: async () => {},
+        };
+        const preview = await installBundle({ ...options, dryRun: true });
+        expect(preview).toContain(executable);
+        expect(existsSync(root)).toBe(false);
+        await installBundle(options);
+        const saved = readFileSync(
+            join(root, 'agent/config/setup-bindings.json'),
+            'utf8',
+        );
+        expect(saved).toContain(bin);
+        expect(
+            readInstallation(root).managed['agent/config/setup-bindings.json'],
+        ).toBeUndefined();
+        await installBundle({
+            ...options,
+            bundle: candidates[1]!,
+            release: 'two',
+            update: true,
+        });
+        expect(
+            readFileSync(
+                join(root, 'agent/config/setup-bindings.json'),
+                'utf8',
+            ),
+        ).toBe(saved);
+        await rollbackInstallation(root);
+        expect(
+            readFileSync(
+                join(root, 'agent/config/setup-bindings.json'),
+                'utf8',
+            ),
+        ).toBe(saved);
+        await expect(
+            installBundle({
+                ...options,
+                bundle: candidates[2]!,
+                release: 'three',
+                update: true,
+                provision: async () => {
+                    writeFileSync(executable, '#!/bin/sh\nexit 1\n');
+                },
+            }),
+        ).rejects.toThrow('changed after preview');
+        expect(readFileSync(join(root, 'bin/pi'), 'utf8')).toBe('one');
+    } finally {
+        if (original === undefined) delete process.env.PATH;
+        else process.env.PATH = original;
+        rmSync(home, { recursive: true, force: true });
+    }
+});

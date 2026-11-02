@@ -246,3 +246,13 @@ Use `/sandbox migrate` for historical `settings.json` sandbox sections, old `san
 Docker target selection belongs to each project. Global Docker configuration authorizes the feature, optionally limits operations, declares exact unsafe-target exceptions, and bounds the `/sandbox docker break-glass` duration with `docker.breakGlassMaxMinutes` (integer minutes, 1 to 1440, default 30). The ceiling is global-only: a project document that carries it is rejected. See [Docker authority](docker-authority.md) for these separate rules.
 
 Git metadata inside a writable project follows ordinary filesystem rules. Explicitly deny `.git` writes when required. Git pointers and symlinks do not grant write access to external directories. Zerobox still protects `.agents` and `.codex` by default.
+
+## Portable development tool discovery
+
+A development profile may declare `tools`, mapping installation names to supported commands, instead of embedding producer-specific roots. For example, `{"tools":{"python":["python3"],"php":["php","composer"]}}` requests discovery of those local installations. Supported commands are `node`, `bun`, `python3`, `go`, `php`, `composer` and `pnpm`. Explicit `environment.installations` declarations remain supported; the runtime authority schema itself is unchanged.
+
+Discovery produces the existing installation roots/file selections. It inspects only requested commands, uses absolute PATH entries, resolves links and known runtime resources, and shares the doctor's ELF metadata reader rather than invoking ldd. A mise shim can be resolved through the installed manager, but direct/system installations work without mise. Relative PATH entries, broad automatic directory roots, unavailable resources and unrecognized package-manager launchers are rejected. Metadata probes run with a restricted environment outside project directories; version-manager downloads are disabled.
+
+Preview reports detected executables, versions, read roots/file selections and missing groups. Explicit `--bindings FILE` overrides automatic discovery. Valid machine-local authority is reused; a missing or redirected installation needs explicit `preview --rediscover` and `apply --rediscover`. The apply operation is the explicit authorization action, rechecks observed resources, refuses incomplete discovery and preserves unrelated configuration. No project version-selection policy or network permission is introduced by discovery.
+
+Use [the portable setup guide](../../../../docs/portable-setup.md) for installation, local snapshots, rollback and legacy package compatibility. Static discovery is not a claim that every dynamic module, certificate store or service works; native functional qualification runs in disposable CI only.

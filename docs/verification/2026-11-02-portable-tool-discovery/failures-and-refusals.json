@@ -1,0 +1,108 @@
+[
+  {
+    "kind": "external prerequisite",
+    "runId": 41472842901,
+    "attempt": 2,
+    "jobId": 125383969927,
+    "finding": "pnpm 12.16.1 was newer than the seven-day npm release age policy.",
+    "resolution": "The system fixture now pins eligible pnpm 10.34.8; the release age policy remains enabled."
+  },
+  {
+    "kind": "test fixture defect",
+    "runId": 41472842901,
+    "attempt": 2,
+    "jobId": 125383970001,
+    "finding": "Fixture gh and sfw shebangs embedded a Bun executable path containing spaces and could not launch.",
+    "resolution": "Fixture commands use /usr/bin/env bun; the tests also passed with Bun copied into a path containing spaces."
+  },
+  {
+    "kind": "discovery defect",
+    "runId": 41477468233,
+    "jobId": 125392735799,
+    "finding": "A group-writable vendor Python executable was rejected despite an owner-only ancestor directory.",
+    "resolution": "Accept group writes only behind an owner-only ancestor, watch that boundary and executable permissions, and retain refusal for publicly writable executables."
+  },
+  {
+    "kind": "provisioning defect",
+    "runId": 41477468233,
+    "jobId": 125392735784,
+    "finding": "Package verification using an encoded file URL as the import resolution parent could miss the destination runtime or load the operator runtime for Unicode and spaced paths.",
+    "resolution": "Resolve from the destination filesystem directory with Bun.resolveSync in a fresh process, then import the resulting file URL. The regression imports a real temporary runtime and transitive dependency."
+  },
+  {
+    "kind": "discovery defect",
+    "runId": 41481202306,
+    "jobId": 125399670228,
+    "finding": "The Ubuntu PHP installation reported 66 absolute resources, exceeding the original limit of 64.",
+    "resolution": "Allow up to 256 resources while keeping the 128 KiB metadata bound and broad-directory refusals; assert all 66 fixture files remain selected."
+  },
+  {
+    "kind": "test wiring defect",
+    "runId": 41481202306,
+    "jobId": 125399670481,
+    "finding": "The new installed-tool contract omitted the baseline required by resolveShellPolicy.",
+    "resolution": "Use validatePiSandboxConfig to obtain the actual closed baseline."
+  },
+  {
+    "kind": "policy size defect",
+    "runIds": [
+      41481883678,
+      41483535679
+    ],
+    "finding": "The system PHP dependency closure produced redundant file and compatibility alias grants, and the Linux helper launch failed with E2BIG.",
+    "resolution": "Compact exact selections by parent, remove grants already covered by declared runtime directories, and use canonical library directories when those directories are already searched. Required loader aliases remain exact selections."
+  },
+  {
+    "kind": "missing runtime resource",
+    "runId": 41481883678,
+    "jobId": 125402066360,
+    "finding": "Composer failed because the PHP timezone database was inaccessible.",
+    "resolution": "Discover the PHP include path and the existing system timezone directory with its other resources."
+  },
+  {
+    "kind": "split SDK resource",
+    "runId": 41483535679,
+    "jobId": 125407798797,
+    "finding": "System Go could not read fmt through the GOROOT/src symlink.",
+    "resolution": "Include the known standard library resource explicitly and watch its link target."
+  },
+  {
+    "kind": "split SDK resource",
+    "runId": 41485499937,
+    "jobId": 125414646871,
+    "finding": "System Go could not read pkg/include/textflag.h for assembly.",
+    "resolution": "Include the SDK assembly header resource explicitly; the fixture covers both split resources."
+  },
+  {
+    "kind": "isolated environment defect",
+    "runIds": [
+      41488350208,
+      41489546509
+    ],
+    "finding": "Real mise shims reported tools inactive under the minimal probe environment. The installer had stored global configuration at XDG_CONFIG_HOME outside the disposable HOME.",
+    "resolution": "Retain the four standard absolute XDG directory selectors while excluding unrelated variables. The fixtures verify both XDG propagation and omission of a secret canary variable."
+  },
+  {
+    "kind": "resolver fixture regression",
+    "finding": "A mise-resolved command alias such as php pointing to php8.5 was lost after metadata inspection.",
+    "resolution": "Authorize the resolved command launcher and its real target rather than the mise shim. Both ordinary and versioned launchers are fixture-tested; the final mise CI cases use real shims."
+  },
+  {
+    "kind": "upstream availability",
+    "runId": 41487165375,
+    "finding": "The locked Ubuntu snapshot returned HTTP 503 and apt subsequently lacked pinned package versions.",
+    "resolution": "Keep all native pins unchanged. Explicit runtime reuse verifies a successful original builder job, unchanged native source owners and dependency inputs, and the archive hash. The default fresh native build remains available."
+  },
+  {
+    "kind": "expected refusal",
+    "runId": 41492948256,
+    "finding": "The reuse source had a failed native builder.",
+    "outcome": "The native-reuse job failed before artifact download, and both platform installation jobs were skipped."
+  },
+  {
+    "kind": "expected refusal",
+    "runId": 41493914000,
+    "finding": "A separate test branch changed the native input-lock file.",
+    "outcome": "The unchanged-input comparison failed before artifact download, and both platform installation jobs were skipped. The test-only input change is absent from the implementation branch."
+  }
+]

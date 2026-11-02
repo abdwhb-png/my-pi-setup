@@ -204,7 +204,7 @@ test('pack, publish and download preserve a private profile and verify release a
         mkdirSync(fakeTools);
         write(
             join(fakeTools, 'gh'),
-            `#!${process.execPath}
+            `#!/usr/bin/env bun
 import { appendFileSync, copyFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);

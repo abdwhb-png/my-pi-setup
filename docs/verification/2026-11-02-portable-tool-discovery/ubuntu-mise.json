@@ -1,0 +1,102 @@
+{
+  "qualification": {
+    "status": "passed",
+    "scope": "full",
+    "sourceCommit": "9c078c478369eacc588782a586ae98badf5b90b7",
+    "toolLayout": "mise",
+    "platform": "ubuntu",
+    "kernel": "7.0.0-1017-azure",
+    "bundleSourceCommit": "a697f60ff5933ee3bec9227ef370168b8da0f6d3",
+    "bundleSha256": "7fe7c63fafa5e3b067a9a004e7b3ab5eaa3d557f12d35747f960eb62eceb9f94",
+    "packages": [
+      "npm:pi-hermes-memory@0.9.10",
+      "npm:@gotgenes/pi-permission-system@33.0.0",
+      "git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9",
+      "./extensions/tool-groups"
+    ],
+    "milestones": [
+      "producer imports the frozen Pi runtime and real package sources",
+      "portable operator and qualification types",
+      "operator and launcher regression suites",
+      "pack and extract a synthetic profile with real validated runtimes",
+      "clean target installation, runtime coherence and daily launcher",
+      "discovered host tools execute inside the sandbox without writing to their installations",
+      "real bash and safe_bash through the installed native sandbox",
+      "global memory transfer rebuilds search without session messages",
+      "real update, idempotency, rollback and post-rollback integrity",
+      "modified managed files refuse updates"
+    ],
+    "exclusions": [
+      "personal profile",
+      "private GitHub publication and download",
+      "provider connectivity"
+    ]
+  },
+  "tools": [
+    {
+      "name": "pnpm-corepack",
+      "command": "node",
+      "executable": "~/.local/share/mise/installs/node/26.13.0/bin/node",
+      "version": "26.13.0",
+      "source": "resolved executable"
+    },
+    {
+      "name": "pnpm-corepack",
+      "command": "pnpm",
+      "executable": "~/.local/share/mise/installs/pnpm/12.16.1/pnpm",
+      "version": "12.16.1",
+      "source": "resolved executable"
+    },
+    {
+      "name": "bun",
+      "command": "bun",
+      "executable": "~/.local/share/mise/installs/bun/1.4.4/bin/bun",
+      "version": "1.4.4",
+      "source": "resolved executable"
+    },
+    {
+      "name": "go",
+      "command": "go",
+      "executable": "~/.local/share/mise/installs/go/1.27.3/bin/go",
+      "version": "go1.27.3",
+      "source": "resolved executable"
+    },
+    {
+      "name": "python",
+      "command": "python3",
+      "executable": "~/.local/share/mise/installs/python/3.15.2/bin/python3",
+      "version": "3.15.2",
+      "source": "resolved executable"
+    },
+    {
+      "name": "php",
+      "command": "php",
+      "executable": "/usr/bin/php8.5",
+      "version": "8.5.12",
+      "source": "resolved executable"
+    },
+    {
+      "name": "php",
+      "command": "composer",
+      "executable": "~/.local/share/mise/installs/http-composer/2.11.1/composer",
+      "version": "2.11.1",
+      "source": "resolved executable"
+    }
+  ],
+  "nativeRuntimeSource": {
+    "schema": 1,
+    "sourceRun": 41477468233,
+    "sourceCommit": "a4bd43208387a14489178ec54511f9b47ba9dd6c",
+    "targetCommit": "9c078c478369eacc588782a586ae98badf5b90b7",
+    "archiveSha256": "e81f87f82b3988fcbc4e18c749ae8a77a649f59ea5871c301ddee3dfb301c3e2",
+    "producerJob": "native-runtime / native",
+    "producerConclusion": "success",
+    "inputCheck": "unchanged"
+  },
+  "operatorRegressions": {
+    "passed": 158,
+    "failed": 0,
+    "assertions": 646
+  },
+  "pathNormalization": "~ denotes the qualification HOME; QUALIFICATION_ROOT and RUNNER_HOME replace disposable runner prefixes."
+}

@@ -83,10 +83,25 @@ For tools installed at different host prefixes, use the existing sandbox setup w
 
 ```sh
 bun ~/.pi/agent/scripts/configure-sandbox.ts preview
-bun ~/.pi/agent/scripts/configure-sandbox.ts apply --bindings ~/pi-local-bindings.json
+bun ~/.pi/agent/scripts/configure-sandbox.ts apply
 ```
 
-The bindings file uses the existing `environment.installations` format documented in the sandbox configuration guide. For initial installation, pass `--bindings ~/pi-local-bindings.json` to `install`. The operator retains these bindings locally for subsequent updates; they are excluded from distributions and rollback preserves their current values. Missing host installations abort provisioning and restore the previous setup. Install those tools separately or correct their bindings before retrying. Configuration of local proxies, provider services, Docker and browsers remains a host responsibility.
+The portable development profile declares logical tool requirements instead of paths from the producer's machine. New distributions discover Node, Bun, Python, Go, PHP/Composer and pnpm on the destination. Discovery follows executable links, gathers runtime resources and exact ELF library files, and optionally resolves mise shims when present. Neither mise nor dev-tools is required. Commands are inspected from a temporary directory outside projects, with bounded output/time and automatic version-manager downloads disabled. The four standard XDG directory selectors are retained for host configuration discovery; unrelated environment variables are omitted. This performs local metadata queries; it never installs a missing tool or trusts project configuration automatically.
+
+`install --dry-run` reports the discovered commands and proposed read-only installations before creating a target or transaction. Missing tools, ambiguous launchers, unavailable libraries and overly broad automatic directory grants fail visibly. Installation revalidates the observed resources before and after provisioning; a change causes rollback. Global installation authority is machine-local and stays outside the distribution. Generated `agent/config/setup-bindings.json` is a local setup snapshot; the current sandbox authority takes precedence over that snapshot during updates. Explicit `--bindings FILE` takes precedence over both.
+
+For an existing setup, inspect and explicitly replace discovered bindings with:
+
+```sh
+bun ~/.pi/agent/scripts/configure-sandbox.ts preview --rediscover
+bun ~/.pi/agent/scripts/configure-sandbox.ts apply --rediscover
+```
+
+Ordinary checks and updates retain valid existing bindings. Stale bindings fail instead of silently following a relocated executable. `--rediscover` is not accepted by `check`. Reapplication with unchanged resources is a no-op, and publication preserves other authority settings and creates a backup.
+
+Manual bindings remain available for supported tools in unusual layouts and for legacy distributions. The file uses the existing `environment.installations` format documented in the sandbox configuration guide. Pass it with `--bindings FILE` to installation or configuration. Corepack metadata inspection requires its selected pnpm version to be cached already; discovery does not fetch it. Unknown launchers or runtime dependencies require explicit installation bindings. Legacy packages that still contain fixed paths keep their previous behavior and need manual bindings on a different host. Automatic discovery requires a new distribution containing the logical profile and updated provisioner.
+
+Missing host tools abort before activation. Install them separately; Pi does not install host prerequisites. Configuration of proxies, provider services, Docker and browsers remains a host responsibility. A supported host and successful static inspection do not establish native sandbox execution or full TLS/service readiness.
 
 ## Advanced: import only the fork runtime
 
@@ -142,3 +157,7 @@ The portable installation mechanism passed the [Ubuntu and WSL2 CI qualification
 Private profile, publication and provider qualification runs only in GitHub Actions; see [the private qualification runbook](portable-private-qualification.md).
 
 The [follow-up qualification](verification/2026-10-31-portable-pi-ci-followup.md) records removal of the short-HOME constraint, repeated runner checks, and private workflow prerequisites.
+
+The [portable tool discovery qualification](verification/2026-11-02-portable-tool-discovery.md) records successful installation and sandbox execution with system tools and real mise shims on both Ubuntu and WSL2. It also records the prepared private candidate and the separate personal-profile qualification boundary.
+
+The [portable setup workflow](../.github/workflows/portable-setup-validation.yml) rebuilds and qualifies the native runtime by default. When native inputs are unchanged, its optional `native_runtime_run_id` input can reuse an unexpired artifact from an original portable setup run whose `native-runtime / native` job succeeded. The workflow verifies that producer, compares native runtime source owners and dependency inputs, checks the archive hash, and records its origin in `native-runtime-source.json` alongside each platform's evidence. The comparison conservatively covers the runtime/shared owners and dependency inputs listed in the workflow; changing one requires a fresh build under this policy. Current portable type checks, operator tests and installation contracts still run. A failed builder, changed native inputs or expired artifact prevents reuse; there is no automatic fallback or pin change. A run that only reused an artifact cannot serve as the original producer. Artifacts are retained for 14 days.

@@ -1,0 +1,102 @@
+{
+  "qualification": {
+    "status": "passed",
+    "scope": "full",
+    "sourceCommit": "9c078c478369eacc588782a586ae98badf5b90b7",
+    "toolLayout": "system",
+    "platform": "wsl2",
+    "kernel": "6.18.54.1-microsoft-standard-WSL2",
+    "bundleSourceCommit": "55e5099ddb2a087e35df278b8d61f7ba6de0e966",
+    "bundleSha256": "10e2b65a49caa247176676e318356f6ac7da0f415e2da4e569e9525a81bab823",
+    "packages": [
+      "npm:pi-hermes-memory@0.9.10",
+      "npm:@gotgenes/pi-permission-system@33.0.0",
+      "git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9",
+      "./extensions/tool-groups"
+    ],
+    "milestones": [
+      "producer imports the frozen Pi runtime and real package sources",
+      "portable operator and qualification types",
+      "operator and launcher regression suites",
+      "pack and extract a synthetic profile with real validated runtimes",
+      "clean target installation, runtime coherence and daily launcher",
+      "discovered host tools execute inside the sandbox without writing to their installations",
+      "real bash and safe_bash through the installed native sandbox",
+      "global memory transfer rebuilds search without session messages",
+      "real update, idempotency, rollback and post-rollback integrity",
+      "modified managed files refuse updates"
+    ],
+    "exclusions": [
+      "personal profile",
+      "private GitHub publication and download",
+      "provider connectivity"
+    ]
+  },
+  "tools": [
+    {
+      "name": "pnpm-corepack",
+      "command": "node",
+      "executable": "${QUALIFICATION_ROOT}/node/bin/node",
+      "version": "24.18.0",
+      "source": "PATH"
+    },
+    {
+      "name": "pnpm-corepack",
+      "command": "pnpm",
+      "executable": "${QUALIFICATION_ROOT}/host/node_modules/.bin/pnpm",
+      "version": "10.34.8",
+      "source": "PATH"
+    },
+    {
+      "name": "bun",
+      "command": "bun",
+      "executable": "${QUALIFICATION_ROOT}/host/node_modules/@oven/bun-linux-x64/bin/bun",
+      "version": "1.3.14",
+      "source": "PATH"
+    },
+    {
+      "name": "go",
+      "command": "go",
+      "executable": "/usr/lib/go-1.22/bin/go",
+      "version": "go1.22.2",
+      "source": "resolved executable"
+    },
+    {
+      "name": "python",
+      "command": "python3",
+      "executable": "/usr/bin/python3",
+      "version": "3.12.3",
+      "source": "PATH"
+    },
+    {
+      "name": "php",
+      "command": "php",
+      "executable": "/usr/bin/php8.3",
+      "version": "8.3.6",
+      "source": "resolved executable"
+    },
+    {
+      "name": "php",
+      "command": "composer",
+      "executable": "/usr/bin/composer",
+      "version": "2.7.1",
+      "source": "PATH"
+    }
+  ],
+  "nativeRuntimeSource": {
+    "schema": 1,
+    "sourceRun": 41477468233,
+    "sourceCommit": "a4bd43208387a14489178ec54511f9b47ba9dd6c",
+    "targetCommit": "9c078c478369eacc588782a586ae98badf5b90b7",
+    "archiveSha256": "e81f87f82b3988fcbc4e18c749ae8a77a649f59ea5871c301ddee3dfb301c3e2",
+    "producerJob": "native-runtime / native",
+    "producerConclusion": "success",
+    "inputCheck": "unchanged"
+  },
+  "operatorRegressions": {
+    "passed": 158,
+    "failed": 0,
+    "assertions": 646
+  },
+  "pathNormalization": "~ denotes the qualification HOME; QUALIFICATION_ROOT and RUNNER_HOME replace disposable runner prefixes."
+}

@@ -6,6 +6,10 @@ import {
     realpathSync,
 } from "node:fs";
 import { join, isAbsolute } from "node:path";
+import {
+    resolveDevelopmentTools,
+    type ToolDiscovery,
+} from "../development-tools.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 import {
     assertSandboxConfigMigrated,
@@ -64,12 +68,14 @@ export interface DevelopmentSetup {
     next: Record<string, unknown>;
     directories: string[];
     unavailable: { name: string; reason: string }[];
+    discovery: ToolDiscovery;
 }
 export function prepareDevelopmentSetup(options: {
     agentDir: string;
     profile: unknown;
     bindings?: unknown;
     machineId?: string;
+    rediscover?: boolean;
 }): DevelopmentSetup {
     const machineId = options.machineId ?? localMachineId();
     const path = sandboxConfigPath(options.agentDir);
@@ -81,7 +87,7 @@ export function prepareDevelopmentSetup(options: {
         : { version: 2, machineId };
     const next = object(parsed);
     const profile = object(options.profile);
-    keys(profile, ["environment", "filesystem"]);
+    keys(profile, ["environment", "filesystem", "tools"]);
     const env = object(profile.environment ?? {});
     keys(env, ["installations", "variables"]);
     const fs = object(profile.filesystem ?? {});
@@ -93,11 +99,23 @@ export function prepareDevelopmentSetup(options: {
     keys(bindingEnv, ["installations"]);
     const overrides = validateGlobalInstallations(bindingEnv.installations);
     for (const name of Object.keys(overrides)) {
-        if (!Object.hasOwn(declarations, name))
+        if (
+            !Object.hasOwn(declarations, name) &&
+            !Object.hasOwn(object(profile.tools ?? {}), name)
+        )
             throw new Error(`Unknown installation binding: ${name}`);
         declarations[name] = overrides[name];
     }
-    const unavailable: DevelopmentSetup["unavailable"] = [];
+    const discovery = resolveDevelopmentTools(profile.tools, {
+        overrides,
+        variables: env.variables,
+        existing: object(object(next.environment ?? {}).installations ?? {}),
+        rediscover: options.rediscover,
+    });
+    Object.assign(declarations, discovery.installations);
+    const unavailable: DevelopmentSetup["unavailable"] = [
+        ...discovery.unavailable,
+    ];
     const ready: typeof declarations = {};
     for (const [name, roots] of Object.entries(declarations)) {
         const absent = roots.some(
@@ -134,7 +152,11 @@ export function prepareDevelopmentSetup(options: {
     const oldInstallations = object(oldEnv.installations ?? {});
     // An unavailable replacement must not leave an old declaration appearing configured.
     const installations = { ...oldInstallations };
-    for (const name of Object.keys(declarations)) delete installations[name];
+    for (const name of new Set([
+        ...Object.keys(declarations),
+        ...Object.keys(object(profile.tools ?? {})),
+    ]))
+        delete installations[name];
     Object.assign(
         installations,
         Object.fromEntries(
@@ -182,6 +204,7 @@ export function prepareDevelopmentSetup(options: {
         ],
     };
     return {
+        discovery,
         agentDir: options.agentDir,
         machineId,
         path,
@@ -192,6 +215,13 @@ export function prepareDevelopmentSetup(options: {
     };
 }
 export function applyDevelopmentSetup(prepared: DevelopmentSetup): boolean {
+    if (prepared.unavailable.length)
+        throw new Error(
+            prepared.unavailable
+                .map((item) => `${item.name}: ${item.reason}`)
+                .join("\n"),
+        );
+    prepared.discovery.assertUnchanged();
     return withSandboxPublicationLockSync(prepared.path, () => {
         assertSandboxConfigMigrated(prepared.agentDir);
         readGlobalSandboxConfig(prepared.path, prepared.machineId);

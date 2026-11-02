@@ -7,7 +7,7 @@ import {
     applyDevelopmentSetup,
 } from "../extensions/sandbox/index.ts";
 const usage =
-    "Usage: bun scripts/configure-sandbox.ts <preview|apply|check> [--profile FILE] [--bindings FILE] [--agent-dir DIR]";
+    "Usage: bun scripts/configure-sandbox.ts <preview|apply|check> [--profile FILE] [--bindings FILE] [--agent-dir DIR] [--rediscover]";
 export function configureSandbox(args: string[]): number {
     try {
         if (args.length === 1 && ["--help", "-h"].includes(args[0]!)) {
@@ -18,15 +18,21 @@ export function configureSandbox(args: string[]): number {
         if (!mode || !["preview", "apply", "check"].includes(mode))
             throw new Error(usage);
         const flags: Record<string, string> = {};
-        for (let i = 1; i < args.length; i += 2) {
+        let rediscover = false;
+        for (let i = 1; i < args.length; i++) {
             const key = args[i]!;
+            if (key === "--rediscover") {
+                if (rediscover || mode === "check") throw new Error(usage);
+                rediscover = true;
+                continue;
+            }
             if (
                 !["--profile", "--bindings", "--agent-dir"].includes(key) ||
                 !args[i + 1] ||
                 Object.hasOwn(flags, key)
             )
                 throw new Error(usage);
-            flags[key] = args[i + 1]!;
+            flags[key] = args[++i]!;
         }
         const profile = JSON.parse(
             readFileSync(
@@ -44,12 +50,17 @@ export function configureSandbox(args: string[]): number {
         const setup = prepareDevelopmentSetup({
             profile,
             bindings,
+            rediscover,
             agentDir:
                 flags["--agent-dir"] ??
                 process.env.PI_CODING_AGENT_DIR ??
                 join(homedir(), ".pi/agent"),
         });
         console.log(`Configuration: ${setup.path}`);
+        for (const tool of setup.discovery.tools)
+            console.log(
+                `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`,
+            );
         for (const item of setup.unavailable)
             console.log(`Unavailable: ${item.name}: ${item.reason}`);
         const environment = setup.next.environment as {
@@ -67,6 +78,7 @@ export function configureSandbox(args: string[]): number {
         );
         for (const directory of setup.directories)
             console.log(`Writable cache: ${directory}`);
+        if (setup.unavailable.length) return 1;
         if (mode === "apply")
             console.log(
                 applyDevelopmentSetup(setup)

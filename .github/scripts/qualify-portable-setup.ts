@@ -34,6 +34,7 @@ import {
     rollbackInstallation,
     readInstallation,
 } from '../../agent/bin/setup/installation.ts';
+import { resolveDevelopmentTools } from '../../agent/extensions/sandbox/development-tools.ts';
 import { stageRuntimeRelease } from '../../agent/extensions/sandbox/runtime/distribution/stage-release.ts';
 
 assert.equal(
@@ -58,6 +59,7 @@ function passed(name: string) {
     console.log(`PASS: ${name}`);
     writeJson(join(evidence, 'result.json'), {
         sourceCommit: process.env.QUALIFICATION_SOURCE_SHA,
+        toolLayout: process.env.QUALIFICATION_TOOL_LAYOUT,
         platform: process.env.QUALIFICATION_PLATFORM,
         kernel: run('uname', ['-r']),
         milestones,
@@ -221,6 +223,19 @@ if (privateProfile) {
     );
     passed('producer imports the frozen Pi runtime and real package sources');
 
+    writeFileSync(
+        join(evidence, 'portable-types.log'),
+        run(
+            join(source, 'agent/node_modules/.bin/tsc'),
+            [
+                '--noEmit',
+                '-p',
+                join(source, '.github/scripts/tsconfig.portability.json'),
+            ],
+            join(source, 'agent'),
+        ),
+    );
+    passed('portable operator and qualification types');
     runTests(
         'operator-regressions',
         [
@@ -229,6 +244,10 @@ if (privateProfile) {
             'bin/pi-fork-release.test.ts',
             'bin/pi-runtime-store.test.ts',
             'bin/pi-wrapper-lib.test.ts',
+            'scripts/configure-sandbox.test.ts',
+            'extensions/sandbox/capabilities/development-tools.test.ts',
+            'extensions/sandbox/capabilities/development-setup.test.ts',
+            'extensions/sandbox/doctor.test.ts',
             'extensions/_shared/redaction.test.ts',
             'extensions/sandbox/runtime/private-temp.test.ts',
             'extensions/sandbox/runtime/runtime-bundle.test.ts',
@@ -259,36 +278,74 @@ passed(
 );
 
 const home = resolve(process.env.QUALIFICATION_HOME!);
-assert.equal(readdirSync(home).length, 0, 'Destination home must be empty');
+assert(
+    !existsSync(join(home, '.pi')),
+    'Destination must not already contain Pi',
+);
 process.env.HOME = home;
+if (process.env.QUALIFICATION_TOOL_LAYOUT === 'mise') {
+    // Starting Bun through mise activates direct tool paths; restore shims to qualify their resolution too.
+    const shims = join(home, '.local/share/mise/shims');
+    assert(
+        existsSync(join(shims, 'node')),
+        'The mise layout must provide real shims',
+    );
+    process.env.PATH = `${shims}:${process.env.PATH ?? ''}`;
+}
 const target = join(home, '.pi');
 process.env.PI_CODING_AGENT_DIR = join(target, 'agent');
-const hostBinary = (name: string) => realpathSync(run('which', [name]));
-const binding = (name: string) => {
-    const binary = hostBinary(name);
-    return [
-        {
-            root: dirname(binary),
-            files: [binary.slice(dirname(binary).length + 1)],
-            path: ['.'],
+const profile = json(
+    join(bundle, 'setup/agent/config/sandbox.development.example.json'),
+);
+const logicalTools = profile.tools !== undefined;
+let bindings: string | undefined;
+let expectedTools: ReturnType<typeof resolveDevelopmentTools>['tools'] = [];
+if (logicalTools) {
+    const discovered = resolveDevelopmentTools(profile.tools, {
+        variables:
+            profile.environment && typeof profile.environment === 'object'
+                ? (profile.environment as Record<string, unknown>).variables
+                : undefined,
+    });
+    assert.deepEqual(discovered.unavailable, []);
+    expectedTools = discovered.tools;
+    writeJson(join(evidence, 'tool-discovery.json'), {
+        tools: expectedTools,
+        installations: discovered.installations,
+    });
+} else {
+    const hostBinary = (name: string) => realpathSync(run('which', [name]));
+    const binding = (name: string) => {
+        const binary = hostBinary(name);
+        return [
+            {
+                root: dirname(binary),
+                files: [binary.slice(dirname(binary).length + 1)],
+                path: ['.'],
+            },
+        ];
+    };
+    bindings = join(work, 'bindings.json');
+    writeJson(bindings, {
+        environment: {
+            installations: {
+                'pnpm-corepack': [
+                    ...binding('node'),
+                    {
+                        root: dirname(dirname(hostBinary('pnpm'))),
+                        path: ['dist'],
+                    },
+                ],
+                bun: binding('bun'),
+                go: [
+                    { root: dirname(dirname(hostBinary('go'))), path: ['bin'] },
+                ],
+                python: binding('python3'),
+                php: [...binding('php'), ...binding('composer')],
+            },
         },
-    ];
-};
-const bindings = join(work, 'bindings.json');
-writeJson(bindings, {
-    environment: {
-        installations: {
-            'pnpm-corepack': [
-                ...binding('node'),
-                { root: dirname(dirname(hostBinary('pnpm'))), path: ['dist'] },
-            ],
-            bun: binding('bun'),
-            go: [{ root: dirname(dirname(hostBinary('go'))), path: ['bin'] }],
-            python: binding('python3'),
-            php: [...binding('php'), ...binding('composer')],
-        },
-    },
-});
+    });
+}
 await installBundle({
     root: target,
     bundle,
@@ -308,6 +365,26 @@ run(process.execPath, [join(target, 'bin/pi-fork'), 'verify'], home);
 run(process.execPath, [join(target, 'bin/pi'), '--version'], home);
 run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
+
+if (logicalTools)
+    runTests(
+        'installed-development-tools',
+        ['extensions/sandbox/runtime/development-tools.integration.test.ts'],
+        join(target, 'agent'),
+        {
+            ...process.env,
+            PI_INSTALLED_TOOL_DISCOVERY_CONTRACT: '1',
+            PI_TOOL_DISCOVERY_EXPECTED: JSON.stringify(expectedTools),
+        },
+    );
+assert.equal(
+    readFileSync(join(home, '.host-tools-marker'), 'utf8'),
+    'host tools remain local\n',
+);
+if (logicalTools)
+    passed(
+        'discovered host tools execute inside the sandbox without writing to their installations',
+    );
 
 runTests(
     'installed-sandbox',
@@ -450,6 +527,7 @@ writeJson(join(evidence, 'qualification.json'), {
     status: 'passed',
     scope: profileOnly ? 'profile-installation' : 'full',
     sourceCommit: process.env.QUALIFICATION_SOURCE_SHA,
+    toolLayout: process.env.QUALIFICATION_TOOL_LAYOUT,
     platform: process.env.QUALIFICATION_PLATFORM,
     kernel: run('uname', ['-r']),
     bundleSourceCommit: manifest.sourceCommit,

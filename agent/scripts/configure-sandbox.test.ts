@@ -73,3 +73,52 @@ test("CLI resolves one portable profile against two different home directories w
         rmSync(root, { recursive: true, force: true });
     }
 }, 120000);
+
+test("logical profiles can be inspected, applied and explicitly rediscovered through the CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-logical-cli-"));
+    try {
+        const bin = join(root, "tools");
+        mkdirSync(bin);
+        const executable = join(bin, "bun");
+        writeFileSync(
+            executable,
+            `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: "1.2.3", resources: [] })}'\n`,
+            { mode: 0o700 },
+        );
+        const profile = join(root, "profile.json");
+        writeFileSync(profile, JSON.stringify({ tools: { bun: ["bun"] } }));
+        const agent = join(root, "agent");
+        const run = (mode: string, ...flags: string[]) =>
+            Bun.spawnSync(
+                [
+                    process.execPath,
+                    join(import.meta.dir, "configure-sandbox.ts"),
+                    mode,
+                    "--profile",
+                    profile,
+                    "--agent-dir",
+                    agent,
+                    ...flags,
+                ],
+                {
+                    env: { ...process.env, HOME: root, PATH: bin },
+                    stdout: "pipe",
+                    stderr: "pipe",
+                    timeout: 20000,
+                },
+            );
+        const preview = run("preview", "--rediscover");
+        expect(preview.exitCode, new TextDecoder().decode(preview.stderr)).toBe(
+            0,
+        );
+        expect(existsSync(agent)).toBe(false);
+        expect(new TextDecoder().decode(preview.stdout)).toContain(executable);
+        expect(run("apply").exitCode).toBe(0);
+        expect(run("check").exitCode).toBe(0);
+        expect(run("check", "--rediscover").exitCode).toBe(1);
+        rmSync(executable);
+        expect(run("preview", "--rediscover").exitCode).toBe(1);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+}, 120000);

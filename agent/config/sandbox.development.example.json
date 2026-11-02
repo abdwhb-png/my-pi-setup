@@ -1,43 +1,5 @@
 {
     "environment": {
-        "installations": {
-            "pnpm-corepack": [
-                {
-                    "root": "/usr/bin",
-                    "files": ["node", "env", "pnpm"],
-                    "path": ["."]
-                },
-                {
-                    "root": "/usr/lib/node_modules/corepack",
-                    "path": []
-                }
-            ],
-            "bun": [
-                {
-                    "root": "~/.bun/bin",
-                    "path": ["."]
-                }
-            ],
-            "go": [
-                {
-                    "root": "/usr/local/go",
-                    "path": ["bin"]
-                }
-            ],
-            "python": [
-                {
-                    "root": "~/miniconda3",
-                    "path": ["bin"]
-                }
-            ],
-            "php": [
-                {
-                    "root": "~/.config/herd-lite/bin",
-                    "files": ["php", "php.ini", "cacert.pem", "composer"],
-                    "path": ["."]
-                }
-            ]
-        },
         "variables": {
             "XDG_CACHE_HOME": "~/.cache/pi/dev-tools/xdg",
             "npm_config_cache": "~/.cache/pi/dev-tools/npm",
@@ -54,5 +16,12 @@
     },
     "filesystem": {
         "allowWrite": ["~/.cache/pi/dev-tools"]
+    },
+    "tools": {
+        "pnpm-corepack": ["node", "pnpm"],
+        "bun": ["bun"],
+        "go": ["go"],
+        "python": ["python3"],
+        "php": ["php", "composer"]
     }
 }

@@ -10,6 +10,11 @@ if [[ "$runtime_input" != private ]]; then runtime_input=$(realpath "$runtime_in
 qualification_root=$2
 test ! -e "$qualification_root"
 mkdir -p "$qualification_root/evidence"
+export QUALIFICATION_HOME="$qualification_root/destination home é portable setup"
+install -d -m 700 "$QUALIFICATION_HOME"
+# The destination HOME may already contain host tools. It must not contain Pi.
+export HOME="$QUALIFICATION_HOME"
+export QUALIFICATION_TOOL_LAYOUT=${QUALIFICATION_TOOL_LAYOUT:-system}
 exec > >(tee "$qualification_root/evidence/qualification.log") 2>&1
 uname -a
 if [[ "$QUALIFICATION_PLATFORM" == wsl2 ]]; then
@@ -48,21 +53,37 @@ if ! command -v bun >/dev/null; then
 fi
 test "$(bun --version)" = 1.3.14
 sfw --version
+if [[ "$QUALIFICATION_TOOL_LAYOUT" == mise ]]; then
+  # Reuse a published, qualified developer-tool revision; Pi does not depend on this installer.
+  git clone --no-checkout https://github.com/abdwhb-png/dev-tools.git "$qualification_root/dev-tools"
+  git -C "$qualification_root/dev-tools" checkout --detach 8d4972dacefca9c95bfd6d374d9e51c35fbafb7b
+  sh "$qualification_root/dev-tools/bootstrap.sh" --yes
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+elif [[ "$QUALIFICATION_TOOL_LAYOUT" == system ]]; then
+  export COREPACK_HOME="$HOME/.cache/pi/dev-tools/corepack"
+  npm view pnpm@10.34.8 version | grep -Fx 10.34.8
+  sfw npm install --prefix "$qualification_root/host" --save-exact --ignore-scripts --no-audit --no-fund pnpm@10.34.8
+else
+  echo 'Unsupported qualification tool layout' >&2
+  exit 1
+fi
+printf 'host tools remain local\n' > "$HOME/.host-tools-marker"
 if [[ "$runtime_input" != private ]]; then
 mkdir "$qualification_root/zerobox"
 expected=$(cut -d ' ' -f1 "$runtime_input/qualified-native-runtime.sha256")
 echo "$expected  $runtime_input/qualified-native-runtime.tgz" | sha256sum --check
 tar -xzf "$runtime_input/qualified-native-runtime.tgz" -C "$qualification_root/zerobox"
+if test -f "$runtime_input/native-runtime-source.json"; then
+  cp "$runtime_input/native-runtime-source.json" "$qualification_root/evidence/native-runtime-source.json"
+fi
 fi
 export QUALIFICATION_SOURCE_SHA=${QUALIFICATION_SOURCE_SHA:-${GITHUB_SHA:?}}
-# Exercise the real sandbox with a long home, spaces and multi-byte characters.
-export QUALIFICATION_HOME="$qualification_root/destination home é portable setup"
-test ! -e "$QUALIFICATION_HOME"
-install -d -m 700 "$QUALIFICATION_HOME"
+# Exercise a long HOME containing independently installed tools.
 export QUALIFICATION_ROOT="$qualification_root"
 export QUALIFICATION_ZEROBOX="$qualification_root/zerobox"
-export HOME="$qualification_root/producer-home"
-mkdir -p "$HOME"
+export PI_CODING_AGENT_DIR="$source_root/agent"
+export PI_OFFLINE=1
+export PI_PACKAGE_FINALIZER_ACTIVE=1
 cat > "$HOME/.bunfig.toml" <<'BUN_CONFIG'
 [install]
 minimumReleaseAge = 604800

@@ -99,8 +99,63 @@ export async function installBundle(
         )
             throw new Error(`Unmanaged file collision: ${local}`);
     }
+    const profilePath = join(
+        options.bundle,
+        'setup/agent/config/sandbox.development.example.json',
+    );
+    let discovery:
+        | import('../../extensions/sandbox/development-tools.ts').ToolDiscovery
+        | undefined;
+    let resolvedBindings: Record<string, unknown> | undefined;
+    if (existsSync(profilePath)) {
+        const profile = json(profilePath);
+        if (profile.tools !== undefined) {
+            const { resolveDevelopmentTools } =
+                await import('../../extensions/sandbox/development-tools.ts');
+            const storedPath = join(root, 'agent/config/setup-bindings.json');
+            const cached = existsSync(storedPath)
+                ? object(object(json(storedPath).environment).installations)
+                : {};
+            const authorityPath = join(root, 'agent/config/sandbox.json');
+            const configured = existsSync(authorityPath)
+                ? object(
+                      object(json(authorityPath).environment ?? {})
+                          .installations ?? {},
+                  )
+                : {};
+            const stored = { ...cached, ...configured };
+            const supplied = options.bindings
+                ? object(
+                      object(json(options.bindings).environment).installations,
+                  )
+                : {};
+            const declarations = object(
+                object(profile.environment ?? {}).installations ?? {},
+            );
+            discovery = resolveDevelopmentTools(profile.tools, {
+                variables: object(profile.environment ?? {}).variables,
+                existing: stored,
+                overrides: { ...declarations, ...supplied },
+            });
+            if (discovery.unavailable.length)
+                throw new Error(
+                    discovery.unavailable
+                        .map((item) => `${item.name}: ${item.reason}`)
+                        .join('\n'),
+                );
+            resolvedBindings = {
+                environment: {
+                    installations: {
+                        ...declarations,
+                        ...supplied,
+                        ...discovery.installations,
+                    },
+                },
+            };
+        }
+    }
     if (options.dryRun)
-        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files`;
+        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + '\nRead-only installations: ' + JSON.stringify(discovery.installations) : ''}`;
     return await transact(
         root,
         options.release,
@@ -111,6 +166,9 @@ export async function installBundle(
             });
         },
         async (id) => {
+            discovery?.assertUnchanged();
+            const generated = join(root, 'agent/config/setup-bindings.json');
+            if (resolvedBindings) writeJson(generated, resolvedBindings);
             if (options.provision)
                 await options.provision(root, options.bundle, id);
             else
@@ -118,8 +176,9 @@ export async function installBundle(
                     root,
                     options.bundle,
                     id,
-                    options.bindings,
+                    resolvedBindings ? generated : options.bindings,
                 );
+            discovery?.assertUnchanged();
         },
     );
 }

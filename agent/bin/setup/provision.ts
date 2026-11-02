@@ -230,14 +230,13 @@ async function verifyPackagesInProcess(
     sources: string[],
 ): Promise<void> {
     const agentDir = join(root, 'agent');
-    const entry = import.meta.resolve(
-        '@earendil-works/pi-coding-agent',
-        pathToFileURL(join(agentDir, 'package.json')).href,
-    );
+    const entry = Bun.resolveSync('@earendil-works/pi-coding-agent', agentDir);
     const {
         DefaultPackageManager,
         SettingsManager,
-    }: typeof import('@earendil-works/pi-coding-agent') = await import(entry);
+    }: typeof import('@earendil-works/pi-coding-agent') = await import(
+        pathToFileURL(entry).href
+    );
     const manager = new DefaultPackageManager({
         cwd: root,
         agentDir,

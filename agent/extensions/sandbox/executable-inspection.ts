@@ -184,19 +184,10 @@ export function inspectSandboxExecutable(
             if (coverage(dependency) !== "covered")
                 result.issues.push(`Dependency inaccessible: ${dependency}`);
         for (const dependency of dependencies.libraries) {
-            const directories = [
-                ...dependencies.search.map((entry) =>
-                    entry
-                        .replaceAll("${ORIGIN}", dirname(candidate))
-                        .replaceAll("$ORIGIN", dirname(candidate)),
-                ),
-                "/lib/x86_64-linux-gnu",
-                "/usr/lib/x86_64-linux-gnu",
-                "/lib64",
-                "/usr/lib64",
-                "/lib",
-                "/usr/lib",
-            ];
+            const directories = executableLibraryDirectories(
+                dependencies.search,
+                candidate,
+            );
             if (
                 !directories.some(
                     (directory) =>
@@ -217,7 +208,7 @@ export function inspectSandboxExecutable(
 }
 
 /** Inspect file metadata only. Never use ldd or execute an untrusted installation. */
-function executableDependencies(bytes: Buffer): {
+export function executableDependencies(bytes: Buffer): {
     absolute: string[];
     libraries: string[];
     search: string[];
@@ -311,4 +302,23 @@ function executableDependencies(bytes: Buffer): {
     result.libraries = needed.map((value) => string(offset + value));
     result.search = paths.flatMap((value) => string(offset + value).split(":"));
     return result;
+}
+
+export function executableLibraryDirectories(
+    search: string[],
+    executable: string,
+): string[] {
+    return [
+        ...search.map((entry) =>
+            entry
+                .replaceAll("${ORIGIN}", dirname(executable))
+                .replaceAll("$ORIGIN", dirname(executable)),
+        ),
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/x86_64-linux-gnu",
+        "/lib64",
+        "/usr/lib64",
+        "/lib",
+        "/usr/lib",
+    ];
 }
