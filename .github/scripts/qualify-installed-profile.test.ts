@@ -71,6 +71,8 @@ export async function createAgentSession() { return {
                         PI_QUALIFICATION_PROVIDER_SECRETS_JSON: '',
                         QUALIFICATION_PROVIDERS: 'false',
                         QUALIFICATION_CATALOG_ONLY: 'false',
+                        QUALIFICATION_SOURCE_SHA: 'a'.repeat(40),
+                        QUALIFICATION_ARCHIVE_SHA256: 'b'.repeat(64),
                     },
                     stdout: 'pipe',
                     stderr: 'pipe',
@@ -78,6 +80,10 @@ export async function createAgentSession() { return {
             );
             expect(result.exitCode).toBe(phase === 'ready' ? 0 : 1);
             const output = readFileSync(evidence, 'utf8');
+            expect(JSON.parse(output)).toMatchObject({
+                sourceCommit: 'a'.repeat(40),
+                bundleSha256: 'b'.repeat(64),
+            });
             expect(JSON.parse(output)).toMatchObject(
                 phase === 'ready'
                     ? { status: 'passed' }

@@ -14,34 +14,22 @@ The required private repository is `abdwhb-png/my-pi-distribution`. Create it se
 
 ## Prepare and publish a distribution
 
-Run from the maintained source installation after reviewing and committing the intended setup code:
+Use the repository's [Pi setup release skill](../.agents/skills/pi-setup-release/SKILL.md) for the complete promotion, preparation, qualification and publication procedure. `develop` is for development; published code must come from an approved commit on `main`.
 
-```sh
-~/.pi/bin/pi-setup pack --output ~/pi-release-candidate
-```
+`pi-setup pack --output DIR [--source-sha FULL_SHA]` reads committed code from the selected main revision while separately capturing the current personal profile and exact installed package versions. It selects the Pi and Zerobox artifacts pinned by that source, not whichever runtime is currently active. Development edits are excluded without changing the checkout. The output directory must not exist; review its private `inventory.json` before uploading anything.
 
-The output directory must not exist. Review `inventory.json` locally before publishing. `setup.tgz` contains the committed setup resources, a snapshot of the personal profile, the current packed Pi runtime and the validated Zerobox bundle. `release.json` records the archive checksum and source commit. Packaging rejects changed or untracked setup code, altered Pi tarballs, unsupported package sources, missing resources, and invalid runtime distributions.
+`pi-setup publish --from DIR --tag TAG` creates one private draft and requests qualification. It does not immediately publish a release. The private Actions workflow qualifies that exact package and publishes the same files only when explicitly dispatched with `publish=true` and every required check passes. `publish=false` leaves it in draft. Published tags and assets must never be replaced.
 
-The profile captures settings, model selection, eligible extension configuration, keybindings and Hermes configuration. Package sources are pinned to installed npm versions and Git commits. Resource selection filters remain intact. Shared skills from `~/.agents/skills` are captured under the installation-owned `agent/portable-skills` directory and declared in settings. This is a generated distribution copy: edit the original skill source and regenerate the release, rather than maintaining the copy independently. Symlinks and credential-like files in this external skill tree require explicit resolution before packaging. The snapshot does not change the destination machine's `~/.agents` directory.
-
-Authentication, provider secret files, sessions, caches, memories, project trust, sandbox machine identity and other machine-specific authority are excluded. The configuration redactor is an additional rejection check, not proof that arbitrary prose or skill source cannot contain sensitive information. Review the explicit inventory and profile before the publication action. Keep the candidate directory private.
-
-Publish only the reviewed candidate, using a new immutable tag:
-
-```sh
-~/.pi/bin/pi-setup publish --from ~/pi-release-candidate --tag setup-2026-10-31.1
-```
-
-Publication does not happen during packaging or tests. A publication failure may leave a draft release; inspect that draft in GitHub before retrying. Published tags and assets must not be replaced.
+The package contains source resources, the personal profile, pinned packages, shared skills, the packed Pi runtime and the validated Zerobox bundle. Authentication, sessions, caches, memory and machine-specific authority remain excluded. Review prose and skills for private content; automatic redaction is not a complete privacy audit. Optional global memory transfer remains separate.
 
 ## Install on another machine
 
-Clone the public source into a temporary bootstrap checkout, then invoke its launcher:
+Replace `RELEASE_TAG` with the exact qualified tag. Clone the public source into a temporary bootstrap checkout, then invoke its launcher:
 
 ```sh
-gh repo clone abdwhb-png/my-pi-setup ~/pi-bootstrap
-bun ~/pi-bootstrap/bin/pi-setup install --release setup-2026-10-31.1 --dry-run
-bun ~/pi-bootstrap/bin/pi-setup install --release setup-2026-10-31.1
+gh repo clone abdwhb-png/my-pi-setup ~/pi-bootstrap -- --branch main
+bun ~/pi-bootstrap/bin/pi-setup install --release RELEASE_TAG --dry-run
+bun ~/pi-bootstrap/bin/pi-setup install --release RELEASE_TAG
 ```
 
 The default target is `~/.pi`; `--root DIR` selects a different installation directory. An existing unmanaged installation is refused. In particular, this command does not adopt or overwrite the maintained source checkout. Dry runs can download verified assets into a temporary directory but do not change the target installation.
@@ -114,8 +102,8 @@ This procedure is specific to this repository and manages only Pi core. For a co
 Stop Pi before changing its installation. Use a shell whose working directory is outside the target:
 
 ```sh
-~/.pi/bin/pi-setup update --release setup-2026-11-01.1 --dry-run
-~/.pi/bin/pi-setup update --release setup-2026-11-01.1
+~/.pi/bin/pi-setup update --release NEXT_RELEASE_TAG --dry-run
+~/.pi/bin/pi-setup update --release NEXT_RELEASE_TAG
 ~/.pi/bin/pi-setup rollback --dry-run
 ~/.pi/bin/pi-setup rollback
 ```

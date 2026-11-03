@@ -51,10 +51,7 @@ Per the [packages](https://pi.dev/docs/latest/packages) and [extensions](https:/
 
 ## Git branches and completion
 
-- Use `develop` as this repository's integration branch; promotion to `main` is a separate user decision. Inspect existing branches and worktrees before creating another, and reuse the task branch when isolation is needed. Use meaningful branch names without an automatic `codex/` prefix.
-- Complete authorized integration into `develop` after validating the task changes. Report the source commit, runtime identity when relevant, and local/remote status. If integration or push remains unauthorized or blocked, state the pending action explicitly instead of presenting an isolated branch or promoted binary as a consolidated setup.
-- Keep temporary CI probes and deliberately invalid fixtures off integration branches. Record their evidence, then include them in authorized cleanup. Package releases from the integrated source revision and matching qualified runtimes.
-- Before deleting branches, verify integration by ancestry and, after squash or replacement, by content. Check linked worktrees, uncommitted and ignored files, active processes and owners. Preserve unfinished or active work and a recoverable archive of unique historical commits; remove obsolete task branches locally and remotely only within the authorized cleanup scope.
+Develop on `develop`; publish only approved revisions of `main`. Follow the [Pi setup release skill](.agents/skills/pi-setup-release/SKILL.md) for promotion, qualification, publication and branch cleanup.
 
 ## Guidelines and Best Practices
 

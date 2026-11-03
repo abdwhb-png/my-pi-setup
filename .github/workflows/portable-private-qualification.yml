@@ -4,21 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Reviewed my-pi-setup commit (full SHA)
+        description: Approved my-pi-setup main commit (full SHA)
         type: string
         required: true
       candidate_release:
-        description: Immutable private release containing setup.tgz and release.json
+        description: Private draft containing the exact setup.tgz and release.json to qualify
         type: string
         required: true
-      publish_candidate:
-        description: Publish the uploaded draft candidate before qualification
+      candidate_sha256:
+        description: Expected SHA-256 of setup.tgz
+        type: string
+        required: true
+      publish:
+        description: Publish this same draft only after complete qualification succeeds
         type: boolean
         default: false
-      publish_tag:
-        description: Optional NEW immutable release tag (authorizes publication)
-        type: string
-        default: ''
       providers:
         description: Authorize the configured provider calls (may incur charges)
         type: boolean
@@ -35,6 +35,8 @@ on:
         description: Approved maximum USD using model prices (0 permits zero-priced models only)
         type: string
         default: '0'
+
+run-name: Pi setup ${{ inputs.candidate_release }}
 
 permissions:
   contents: read
@@ -59,8 +61,9 @@ jobs:
           PROVIDERS: ${{ inputs.providers }}
           CATALOG_ONLY: ${{ inputs.catalog_only }}
           CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
-          PUBLISH_TAG: ${{ inputs.publish_tag }}
-          PUBLISH_CANDIDATE: ${{ inputs.publish_candidate }}
+          PUBLISH: ${{ inputs.publish }}
+          PROFILE_ONLY: ${{ inputs.profile_only }}
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
           DISTRIBUTION_TOKEN_PRESENT: ${{ secrets.PI_DISTRIBUTION_TOKEN != '' }}
         run: |
           set -euo pipefail
@@ -71,33 +74,27 @@ jobs:
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
-          if test -n "$PUBLISH_TAG" || test "$PUBLISH_CANDIDATE" = true; then
-            if test "$DISTRIBUTION_TOKEN_PRESENT" != true; then
-              echo 'Publication requires PI_DISTRIBUTION_TOKEN with Contents write, Administration read and Attestations read on this repository.'
-              exit 1
-            fi
+          [[ "$CANDIDATE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          if test "$PUBLISH" = true; then
+            test "$PROFILE_ONLY" != true || { echo 'Publication requires full qualification.'; exit 1; }
+            test "$DISTRIBUTION_TOKEN_PRESENT" = true || { echo 'Publication requires PI_DISTRIBUTION_TOKEN.'; exit 1; }
             test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled)" = true
           fi
-          if test "$PUBLISH_CANDIDATE" = true; then
-            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
-            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | select((.name == "setup.tgz" or .name == "release.json") and .size > 0)] | length')" = 2
-            gh release edit "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --draft=false
-          fi
-          if test "$PUBLISH_CANDIDATE" = true; then
-            # Download verifies the attestation before extracting any files, after host preparation.
-            test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq .isImmutable)" = true
-          elif ! gh release verify "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY"; then
-            echo 'Release verification failed. Fine-grained PI_DISTRIBUTION_TOKEN requires Attestations read on this repository; inspect the API result below.'
-            gh --version
-            release_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_RELEASE" --jq .object.sha)
-            gh api --method GET "/repos/$GITHUB_REPOSITORY/attestations/sha1:$release_sha" -f predicate_type=release --jq '{attestationCount: (.attestations | length)}'
-            exit 1
-          fi
+          test "$(gh release view "$CANDIDATE_RELEASE" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: abdwhb-png/my-pi-setup
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the approved main revision
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.18.0'
@@ -112,7 +109,7 @@ jobs:
           QUALIFICATION_PROFILE_ONLY: ${{ inputs.profile_only }}
           QUALIFICATION_SOURCE_SHA: ${{ inputs.source_sha }}
           QUALIFICATION_RELEASE: ${{ inputs.candidate_release }}
-          QUALIFICATION_PUBLISH_TAG: ${{ inputs.publish_tag }}
+          QUALIFICATION_ARCHIVE_SHA256: ${{ inputs.candidate_sha256 }}
         run: bash .github/scripts/qualify-portable-setup.sh private "$RUNNER_TEMP/private-qualification"
       - name: Load installed resources and qualify explicitly selected providers
         env:
@@ -122,6 +119,8 @@ jobs:
           QUALIFICATION_PROVIDERS: ${{ inputs.providers }}
           QUALIFICATION_CATALOG_ONLY: ${{ inputs.catalog_only }}
           QUALIFICATION_PROVIDER_BUDGET: ${{ inputs.provider_budget_usd }}
+          QUALIFICATION_SOURCE_SHA: ${{ inputs.source_sha }}
+          QUALIFICATION_ARCHIVE_SHA256: ${{ inputs.candidate_sha256 }}
         run: |
           set -euo pipefail
           umask 077
@@ -134,6 +133,11 @@ jobs:
             echo 'Installed profile/provider verification failed. No credential-bearing log is uploaded.'
             exit 1
           fi
+      - name: Publish the qualified draft and verify client downloads
+        if: ${{ success() && inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.PI_DISTRIBUTION_TOKEN }}
+        run: bun .github/scripts/finalize-portable-setup.ts "$GITHUB_WORKSPACE" "$RUNNER_TEMP/private-qualification/release-one" "$RUNNER_TEMP/private-qualification/evidence"
       - name: Preserve only structured private evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -143,6 +147,8 @@ jobs:
             ${{ runner.temp }}/private-qualification/evidence/result.json
             ${{ runner.temp }}/private-qualification/evidence/qualification.json
             ${{ runner.temp }}/private-qualification/evidence/profile.json
+            ${{ runner.temp }}/private-qualification/evidence/publication.json
+            ${{ runner.temp }}/private-qualification/release-one/candidate.json
           if-no-files-found: warn
           retention-days: 7
       - name: Remove credentials and private scratch data

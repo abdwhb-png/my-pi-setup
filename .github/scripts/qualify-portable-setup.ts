@@ -16,8 +16,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import {
     packDistribution,
-    downloadDistribution,
-    publishDistribution,
+    downloadDraftDistribution,
     DISTRIBUTION_REPOSITORY,
     validateBundle,
 } from '../../agent/bin/setup/distribution.ts';
@@ -111,49 +110,14 @@ assert(
 let bundle: string;
 if (privateProfile) {
     const downloaded = join(work, 'release-one');
-    bundle = downloadDistribution(
-        process.env.QUALIFICATION_RELEASE!,
-        downloaded,
-    );
-    const publishTag = process.env.QUALIFICATION_PUBLISH_TAG;
-    if (publishTag) {
-        publishDistribution(downloaded, publishTag);
-        bundle = downloadDistribution(
-            publishTag,
-            join(work, 'published-release'),
-        );
-        const corrupt = join(work, 'setup.tgz');
-        cpSync(join(downloaded, 'setup.tgz'), corrupt);
-        writeFileSync(corrupt, 'corruption canary', { flag: 'a' });
-        const verification = spawnSync(
-            'gh',
-            [
-                'release',
-                'verify-asset',
-                publishTag,
-                corrupt,
-                '--repo',
-                DISTRIBUTION_REPOSITORY,
-            ],
-            { encoding: 'utf8' },
-        );
-        assert.equal(verification.error, undefined);
-        assert.notEqual(
-            verification.status,
-            0,
-            'Corrupted release asset was accepted',
-        );
-        assert(
-            verification.stderr.includes(
-                `does not contain subject sha256:${digest(readFileSync(corrupt))}`,
-            ),
-            'Corrupted asset failed for a reason other than its digest',
-        );
-        passed(
-            'private immutable publication, download and corrupted asset refusal',
-        );
-    }
-    passed('verified private profile release downloaded');
+    bundle = await downloadDraftDistribution({
+        tag: process.env.QUALIFICATION_RELEASE!,
+        directory: downloaded,
+        sourceRoot: source,
+        sourceCommit: process.env.QUALIFICATION_SOURCE_SHA!,
+        archiveSha256: process.env.QUALIFICATION_ARCHIVE_SHA256!,
+    });
+    passed('verified private draft downloaded without publication');
     delete process.env.PI_PACKAGE_FINALIZER_ACTIVE;
     delete process.env.GH_TOKEN;
 } else {
@@ -204,6 +168,7 @@ if (privateProfile) {
             'add',
             'agent/package.json',
             'agent/bun.lock',
+            'bin/zerobox',
         ],
         source,
     );
@@ -257,7 +222,11 @@ if (privateProfile) {
     );
     passed('operator and launcher regression suites');
 
-    await packDistribution(source, join(work, 'release-one'));
+    await packDistribution(
+        source,
+        join(work, 'release-one'),
+        run('git', ['rev-parse', 'HEAD'], source),
+    );
     archive(
         'extract',
         join(work, 'release-one/setup.tgz'),
@@ -542,9 +511,7 @@ writeJson(join(evidence, 'qualification.json'), {
                         'update, idempotency, rollback and modified-file refusal omitted for profile-only diagnosis',
                     ]
                   : []),
-              ...(process.env.QUALIFICATION_PUBLISH_TAG
-                  ? []
-                  : ['private GitHub publication']),
+              'private GitHub publication (separate publication.json evidence after full qualification)',
               'personal extension lifecycle and provider connectivity (separate profile.json evidence)',
           ]
         : [

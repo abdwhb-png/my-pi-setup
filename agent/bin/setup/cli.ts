@@ -8,6 +8,8 @@ import {
     packDistribution,
     publishDistribution,
     releaseTag,
+    refreshMain,
+    resolveMainCommit,
 } from './distribution.ts';
 import {
     installBundle,
@@ -18,7 +20,7 @@ import {
 } from './installation.ts';
 
 const USAGE = `Usage: pi-setup COMMAND [OPTIONS]
-  pack --output DIR
+  pack --output DIR [--source-sha SHA]
   publish --from DIR --tag TAG
   install|update --release TAG [--root DIR] [--bindings FILE] [--dry-run]
   check [--root DIR]
@@ -40,7 +42,7 @@ export async function runSetup(
         const command = args.shift();
         const memoryMode = command === 'memory' ? args.shift() : undefined;
         const allowed: Record<string, string[]> = {
-            pack: ['--output'],
+            pack: ['--output', '--source-sha'],
             publish: ['--from', '--tag'],
             install: ['--release', '--root', '--bindings', '--dry-run'],
             update: ['--release', '--root', '--bindings', '--dry-run'],
@@ -78,13 +80,28 @@ export async function runSetup(
         };
         const root = resolve(flags.get('--root') ?? join(homedir(), '.pi'));
         if (command === 'pack') {
-            await packDistribution(sourceRoot, resolve(required('--output')));
+            const output = resolve(required('--output'));
+            refreshMain(sourceRoot);
+            await packDistribution(
+                sourceRoot,
+                output,
+                resolveMainCommit(sourceRoot, flags.get('--source-sha')),
+            );
             console.log(
                 'Distribution prepared. Review inventory.json before publishing.',
             );
         } else if (command === 'publish') {
-            publishDistribution(resolve(required('--from')), required('--tag'));
-            console.log('Private immutable release published.');
+            const directory = resolve(required('--from'));
+            const tag = required('--tag');
+            refreshMain(sourceRoot);
+            const workflow = await publishDistribution(
+                directory,
+                tag,
+                sourceRoot,
+            );
+            console.log(
+                `Qualification requested for ${tag}: ${workflow}\nThe release stays in draft until all checks pass.`,
+            );
         } else if (command === 'rollback')
             console.log(
                 await rollbackInstallation(root, flags.has('--dry-run')),

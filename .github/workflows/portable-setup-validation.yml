@@ -33,13 +33,19 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$NATIVE_RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'native_runtime_run_id must be a positive run ID' >&2; exit 1; }
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID" --jq .path)" = .github/workflows/portable-setup-validation.yml || { echo 'The source must be a portable setup qualification run' >&2; exit 1; }
+          producer_path=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID" --jq .path)
+          case "$producer_path" in
+            .github/workflows/portable-setup-validation.yml) producer_job='native-runtime / native' ;;
+            .github/workflows/private-runtime-validation.yml) producer_job='native' ;;
+            *) echo 'The source must be an approved native qualification workflow' >&2; exit 1 ;;
+          esac
           native_source_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID" --jq .head_sha)
           [[ "$native_source_sha" =~ ^[a-f0-9]{40}$ ]]
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID/jobs?filter=latest&per_page=100" --jq '.jobs[] | select(.name == "native-runtime / native") | .conclusion')" = success || { echo 'The source did not produce a successfully qualified native runtime' >&2; exit 1; }
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID/jobs?filter=latest&per_page=100" --jq ".jobs[] | select(.name == \"$producer_job\") | .conclusion")" = success || { echo 'The source did not produce a successfully qualified native runtime' >&2; exit 1; }
           git fetch --no-tags --depth=1 origin "$native_source_sha"
           git diff --exit-code "$native_source_sha" HEAD -- .github/workflows/private-runtime-validation.yml .github/fixtures .github/scripts/restore-pi-runtime.py agent/package.json agent/bun.lock agent/extensions/sandbox/runtime agent/extensions/think-in-code agent/extensions/_shared ':(exclude)agent/extensions/sandbox/runtime/development-tools.integration.test.ts'
           printf '%s' "$native_source_sha" > "$RUNNER_TEMP/native-source-sha"
+          printf '%s' "$producer_job" > "$RUNNER_TEMP/native-source-job"
       - uses: actions/download-artifact@v4
         with:
           name: qualified-native-runtime
@@ -54,9 +60,9 @@ jobs:
           native_archive_sha=$(cut -d ' ' -f1 "$RUNNER_TEMP/native-runtime/qualified-native-runtime.sha256")
           [[ "$native_archive_sha" =~ ^[a-f0-9]{64}$ ]]
           printf '%s  %s\n' "$native_archive_sha" "$RUNNER_TEMP/native-runtime/qualified-native-runtime.tgz" | sha256sum --check
-          python3 - "$NATIVE_RUNTIME_RUN_ID" "$(cat "$RUNNER_TEMP/native-source-sha")" "$native_archive_sha" <<'PY' > "$RUNNER_TEMP/native-runtime/native-runtime-source.json"
+          python3 - "$NATIVE_RUNTIME_RUN_ID" "$(cat "$RUNNER_TEMP/native-source-sha")" "$native_archive_sha" "$(cat "$RUNNER_TEMP/native-source-job")" <<'PY' > "$RUNNER_TEMP/native-runtime/native-runtime-source.json"
           import json, os, sys
-          json.dump({"schema": 1, "sourceRun": int(sys.argv[1]), "sourceCommit": sys.argv[2], "targetCommit": os.environ["GITHUB_SHA"], "archiveSha256": sys.argv[3], "producerJob": "native-runtime / native", "producerConclusion": "success", "inputCheck": "unchanged"}, sys.stdout, indent=2)
+          json.dump({"schema": 1, "sourceRun": int(sys.argv[1]), "sourceCommit": sys.argv[2], "targetCommit": os.environ["GITHUB_SHA"], "archiveSha256": sys.argv[3], "producerJob": sys.argv[4], "producerConclusion": "success", "inputCheck": "unchanged"}, sys.stdout, indent=2)
           PY
       - uses: actions/upload-artifact@v4
         with:

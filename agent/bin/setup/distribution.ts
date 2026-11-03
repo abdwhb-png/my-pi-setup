@@ -12,7 +12,8 @@ import {
     chmodSync,
 } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
 import {
     archive,
@@ -141,77 +142,213 @@ export function allowedCodePath(path: string): boolean {
     );
 }
 
-export async function packDistribution(
-    sourceRoot: string,
-    output: string,
-): Promise<void> {
-    sourceRoot = resolve(sourceRoot);
-    output = resolve(output);
-    const code = run(
-        'git',
-        ['ls-tree', '-r', '--name-only', 'HEAD'],
-        sourceRoot,
-    )
-        .split('\n')
-        .filter(allowedCodePath);
-    const changed = run('git', ['diff', '--name-only', 'HEAD'], sourceRoot)
-        .split('\n')
-        .filter(allowedCodePath);
-    const untracked = run(
-        'git',
-        ['ls-files', '--others', '--exclude-standard'],
-        sourceRoot,
-    )
-        .split('\n')
-        .filter(allowedCodePath);
-    if (changed.length || untracked.length)
-        throw new Error(
-            `Uncommitted setup code: ${[...changed, ...untracked].join(', ')}`,
+export function resolveMainCommit(root: string, requested?: string): string {
+    let main: string;
+    try {
+        main = run(
+            'git',
+            ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'],
+            root,
         );
-    if (existsSync(output)) throw new Error('Output directory already exists');
-    const { loadCurrentPiRuntime } = await import('../pi-runtime-store.ts');
+    } catch (cause) {
+        throw new Error('Fetch origin/main before preparing a release', {
+            cause,
+        });
+    }
+    const commit = requested ?? main;
+    if (
+        !/^[a-f0-9]{40}$/.test(commit) ||
+        spawnSync('git', ['merge-base', '--is-ancestor', commit, main], {
+            cwd: root,
+        }).status !== 0
+    )
+        throw new Error(
+            'Release source must be a full commit from origin/main',
+        );
+    return commit;
+}
+
+export function refreshMain(root: string): void {
+    run(
+        'git',
+        ['fetch', '--no-tags', 'origin', 'main:refs/remotes/origin/main'],
+        root,
+    );
+}
+
+function gitFile(root: string, commit: string, path: string): Buffer {
+    const result = spawnSync('git', ['show', `${commit}:${path}`], {
+        cwd: root,
+        maxBuffer: 64 * 1024 * 1024,
+    });
+    if (result.status !== 0)
+        throw new Error(`Cannot read committed resource: ${path}`);
+    return result.stdout;
+}
+
+function codeFiles(
+    root: string,
+    commit: string,
+): { path: string; mode: number }[] {
+    const result = spawnSync('git', ['ls-tree', '-rz', commit], {
+        cwd: root,
+        maxBuffer: 64 * 1024 * 1024,
+    });
+    if (result.status !== 0)
+        throw new Error('Cannot enumerate committed source files');
+    return result.stdout
+        .toString()
+        .split('\0')
+        .filter(Boolean)
+        .flatMap((line) => {
+            const tab = line.indexOf('\t');
+            const [mode, type] = line.slice(0, tab).split(' ');
+            const path = line.slice(tab + 1);
+            if (!allowedCodePath(path)) return [];
+            if (type !== 'blob' || !['100644', '100755'].includes(mode!))
+                throw new Error(
+                    `Code resources must be regular tracked files: ${path}`,
+                );
+            return [{ path, mode: mode === '100755' ? 0o755 : 0o644 }];
+        });
+}
+
+async function pinnedRuntimes(root: string, commit: string) {
+    const pins = object(
+        JSON.parse(gitFile(root, commit, 'agent/package.json').toString()),
+    );
+    const dependencies = object(pins.dependencies);
+    const locations = Object.entries(dependencies)
+        .filter(([name]) => name.startsWith('@earendil-works/'))
+        .map(([name, value]) => {
+            if (
+                typeof value !== 'string' ||
+                !/^file:\.\.\/runtime\/pi-core\/releases\/[A-Za-z0-9._-]+\/packed\/tarballs\/[^/]+\.tgz$/.test(
+                    value,
+                )
+            )
+                throw new Error(`Unsupported Pi runtime pin: ${name}`);
+            return { name, path: resolve(root, 'agent', value.slice(5)) };
+        });
+    const packedRoots = new Set(
+        locations.map((pin) => dirname(dirname(pin.path))),
+    );
+    if (packedRoots.size !== 1)
+        throw new Error('Pi runtime pins must select one release');
+    const packedRoot = [...packedRoots][0]!;
+    const target = gitFile(root, commit, 'bin/zerobox').toString();
+    const selected =
+        /^\.\.\/runtimes\/zerobox\/([A-Za-z0-9._-]+)\/bin\/zerobox$/.exec(
+            target,
+        );
+    if (!selected) throw new Error('Zerobox source must pin a managed release');
+    const { parse } = await import('yaml');
+    const workflow = object(
+        parse(
+            gitFile(
+                root,
+                commit,
+                '.github/workflows/private-runtime-validation.yml',
+            ).toString(),
+        ),
+    );
+    const native = object(object(workflow.jobs).native);
+    if (!Array.isArray(native.steps))
+        throw new Error('Missing native engine source pin');
+    const engine = native.steps
+        .map((step) => object(object(step).with ?? {}))
+        .find((step) => step.repository === 'abdwhb-png/zerobox');
+    if (
+        !engine ||
+        typeof engine.ref !== 'string' ||
+        !/^[a-f0-9]{40}$/.test(engine.ref)
+    )
+        throw new Error('Missing exact native engine source pin');
+    return {
+        packedRoot,
+        packages: locations.map((pin) => ({
+            name: pin.name,
+            tarball: relative(packedRoot, pin.path),
+        })),
+        zeroRoot: dirname(dirname(resolve(root, 'bin', target))),
+        zeroVersion: selected[1],
+        engineCommit: engine.ref,
+    };
+}
+
+async function validateRuntimes(
+    pins: Awaited<ReturnType<typeof pinnedRuntimes>>,
+    packedRoot: string,
+    zeroRoot: string,
+) {
     const { validatePackedReleaseDirectory } =
         await import('../pi-fork-release.ts');
-    const runtime = loadCurrentPiRuntime(join(sourceRoot, 'runtime/pi-core'));
-    validatePackedReleaseDirectory(join(runtime.releaseRoot, 'packed'));
+    const runtime = validatePackedReleaseDirectory(packedRoot);
+    for (const pin of pins.packages)
+        if (
+            !runtime.packages.some(
+                (pkg) => pkg.name === pin.name && pkg.tarball === pin.tarball,
+            )
+        )
+            throw new Error(
+                `Pi runtime differs from its source pin: ${pin.name}`,
+            );
+    const provenancePath = join(zeroRoot, 'provenance.json');
     const { readPrivateRuntimeEntry, resolvePrivateRuntime } =
         await import('../../extensions/sandbox/runtime/runtime-bundle.ts');
     const entry = await readPrivateRuntimeEntry(
-        join(sourceRoot, 'bin/zerobox'),
-        new URL(
-            '../../extensions/sandbox/runtime/zerobox-provenance.json',
-            import.meta.url,
-        ),
+        join(zeroRoot, 'bin/zerobox'),
+        pathToFileURL(provenancePath),
     );
     const zerobox = await resolvePrivateRuntime({
         binaryPath: entry.binaryPath,
         expectedBinarySha256: entry.provenance.binarySha256,
     });
+    if (
+        zerobox.version !== pins.zeroVersion ||
+        zerobox.manifestSha256 !== entry.provenance.runtimeManifestSha256 ||
+        zerobox.helperSha256 !== entry.provenance.helperSha256
+    )
+        throw new Error('Zerobox differs from its source release pin');
+    if (json(provenancePath).sourceCommit !== pins.engineCommit)
+        throw new Error('Zerobox engine differs from its source commit pin');
+    return zerobox;
+}
+
+export async function packDistribution(
+    sourceRoot: string,
+    output: string,
+    sourceCommit = resolveMainCommit(sourceRoot),
+): Promise<void> {
+    sourceRoot = resolve(sourceRoot);
+    output = resolve(output);
+    if (!/^[a-f0-9]{40}$/.test(sourceCommit))
+        throw new Error('Invalid source commit');
+    const code = codeFiles(sourceRoot, sourceCommit);
+    if (existsSync(output)) throw new Error('Output directory already exists');
+    const selected = await pinnedRuntimes(sourceRoot, sourceCommit);
+    const packedRoot = selected.packedRoot;
+    const zerobox = await validateRuntimes(
+        selected,
+        packedRoot,
+        selected.zeroRoot,
+    );
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-pack-'));
     try {
         const bundle = join(temporary, 'bundle');
         mkdirSync(bundle, { mode: 0o700 });
-        for (const path of code) {
+        for (const { path, mode } of code) {
             const target = child(join(bundle, 'setup'), path);
-            const stat = lstatSync(join(sourceRoot, path));
-            if (!stat.isFile())
-                throw new Error(
-                    `Code resources must be regular tracked files: ${path}`,
-                );
-            const result = spawnSync('git', ['show', `HEAD:${path}`], {
-                cwd: sourceRoot,
-                maxBuffer: 64 * 1024 * 1024,
-            });
-            if (result.status !== 0)
-                throw new Error(`Cannot read committed code: ${path}`);
             mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-            writeFileSync(target, result.stdout, { mode: stat.mode & 0o755 });
+            writeFileSync(target, gitFile(sourceRoot, sourceCommit, path), {
+                mode,
+            });
         }
         const packages = await captureProfile(
             sourceRoot,
             join(bundle, 'setup'),
         );
-        cpSync(join(runtime.releaseRoot, 'packed'), join(bundle, 'pi'), {
+        cpSync(packedRoot, join(bundle, 'pi'), {
             recursive: true,
             verbatimSymlinks: true,
         });
@@ -230,7 +367,7 @@ export async function packDistribution(
         const manifest: SetupManifest = {
             schemaVersion: 1,
             platform: 'linux-x64',
-            sourceCommit: run('git', ['rev-parse', 'HEAD'], sourceRoot),
+            sourceCommit,
             packages,
             files: inventory(bundle),
         };
@@ -439,24 +576,86 @@ export function releaseTag(tag: string): string {
         throw new Error('Invalid release tag');
     return tag;
 }
-export function publishDistribution(directory: string, tag: string): void {
+function distributionDescriptor(directory: string): {
+    sourceCommit: string;
+    sha256: string;
+} {
+    const value = json(join(directory, 'release.json'));
+    if (
+        value.schemaVersion !== 1 ||
+        typeof value.sourceCommit !== 'string' ||
+        !/^[a-f0-9]{40}$/.test(value.sourceCommit) ||
+        typeof value.sha256 !== 'string' ||
+        value.sha256 !== digest(readFileSync(join(directory, 'setup.tgz')))
+    )
+        throw new Error(
+            'Distribution archive checksum or source descriptor mismatch',
+        );
+    return { sourceCommit: value.sourceCommit, sha256: value.sha256 };
+}
+
+function unpackDistribution(
+    directory: string,
+    destination: string,
+): SetupManifest {
+    const descriptor = distributionDescriptor(directory);
+    archive('extract', join(directory, 'setup.tgz'), destination);
+    const manifest = validateBundle(destination);
+    if (descriptor.sourceCommit !== manifest.sourceCommit)
+        throw new Error('Release source descriptors disagree');
+    return manifest;
+}
+
+export async function validateReleaseSource(
+    root: string,
+    bundle: string,
+    expectedCommit: string,
+): Promise<SetupManifest> {
+    resolveMainCommit(root, expectedCommit);
+    const manifest = validateBundle(bundle);
+    if (manifest.sourceCommit !== expectedCommit)
+        throw new Error('Candidate and qualification source commits disagree');
+    const expected = codeFiles(root, expectedCommit);
+    const actual = Object.keys(manifest.files)
+        .filter(
+            (path) =>
+                path.startsWith('setup/') && allowedCodePath(path.slice(6)),
+        )
+        .sort();
+    if (
+        actual.join('\n') !==
+        expected
+            .map((file) => `setup/${file.path}`)
+            .sort()
+            .join('\n')
+    )
+        throw new Error('Candidate code inventory differs from main');
+    for (const file of expected)
+        if (
+            manifest.files[`setup/${file.path}`] !==
+            `${file.mode}:${digest(gitFile(root, expectedCommit, file.path))}`
+        )
+            throw new Error(`Candidate code differs from main: ${file.path}`);
+    await validateRuntimes(
+        await pinnedRuntimes(root, expectedCommit),
+        join(bundle, 'pi'),
+        join(bundle, 'zerobox'),
+    );
+    return manifest;
+}
+
+export async function publishDistribution(
+    directory: string,
+    tag: string,
+    sourceRoot: string,
+): Promise<string> {
     releaseTag(tag);
     requirePrivateRepository();
-    const descriptor = json(join(directory, 'release.json'));
-    if (
-        descriptor.schemaVersion !== 1 ||
-        descriptor.sha256 !== digest(readFileSync(join(directory, 'setup.tgz')))
-    )
-        throw new Error('Distribution archive checksum mismatch');
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-publish-'));
     try {
-        archive(
-            'extract',
-            join(directory, 'setup.tgz'),
-            join(temporary, 'bundle'),
-        );
-        validateBundle(join(temporary, 'bundle'));
-        // Publication is an explicit operator action, never part of pack or tests.
+        const bundle = join(temporary, 'bundle');
+        const manifest = unpackDistribution(directory, bundle);
+        await validateReleaseSource(sourceRoot, bundle, manifest.sourceCommit);
         const config = JSON.parse(
             run('gh', [
                 'api',
@@ -479,40 +678,283 @@ export function publishDistribution(directory: string, tag: string): void {
             '--title',
             tag,
             '--notes',
-            'Private Pi setup distribution. Memories and credentials are excluded.',
+            'Private Pi setup awaiting qualification. Memories and credentials are excluded.',
         ]);
+        const descriptor = distributionDescriptor(directory);
+        run('gh', [
+            'workflow',
+            'run',
+            'portable-private-qualification.yml',
+            '--repo',
+            DISTRIBUTION_REPOSITORY,
+            '--ref',
+            'main',
+            '-f',
+            `source_sha=${manifest.sourceCommit}`,
+            '-f',
+            `candidate_release=${tag}`,
+            '-f',
+            `candidate_sha256=${descriptor.sha256}`,
+            '-f',
+            'publish=true',
+        ]);
+        return `https://github.com/${DISTRIBUTION_REPOSITORY}/actions/workflows/portable-private-qualification.yml`;
+    } finally {
+        writableDirectories(temporary);
+        rmSync(temporary, { recursive: true, force: true });
+    }
+}
+
+interface DraftRelease {
+    tag: string;
+    releaseId: number;
+    assets: { id: number; name: string; size: number }[];
+}
+function draftRelease(tag: string): DraftRelease {
+    releaseTag(tag);
+    const value = object(
+        JSON.parse(
+            run('gh', [
+                'release',
+                'view',
+                tag,
+                '--repo',
+                DISTRIBUTION_REPOSITORY,
+                '--json',
+                'databaseId,isDraft,tagName',
+            ]),
+        ),
+    );
+    if (
+        value.isDraft !== true ||
+        value.tagName !== tag ||
+        !Number.isSafeInteger(value.databaseId) ||
+        Number(value.databaseId) <= 0
+    )
+        throw new Error('Candidate must be an existing private draft');
+    const releaseId = Number(value.databaseId);
+    const raw: unknown = JSON.parse(
+        run('gh', [
+            'api',
+            `repos/${DISTRIBUTION_REPOSITORY}/releases/${releaseId}/assets`,
+        ]),
+    );
+    if (!Array.isArray(raw)) throw new Error('Invalid draft assets');
+    const assets = raw
+        .map((entry) => {
+            const item = object(entry);
+            if (
+                !Number.isSafeInteger(item.id) ||
+                !Number.isSafeInteger(item.size) ||
+                Number(item.size) <= 0 ||
+                !['setup.tgz', 'release.json'].includes(String(item.name))
+            )
+                throw new Error(
+                    'Draft must contain only setup.tgz and release.json',
+                );
+            return {
+                id: Number(item.id),
+                name: String(item.name),
+                size: Number(item.size),
+            };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+    if (
+        assets.length !== 2 ||
+        new Set(assets.map((asset) => asset.name)).size !== 2
+    )
+        throw new Error('Draft must contain exactly two candidate assets');
+    return { tag, releaseId, assets };
+}
+
+export async function downloadDraftDistribution(options: {
+    tag: string;
+    directory: string;
+    sourceRoot: string;
+    sourceCommit: string;
+    archiveSha256: string;
+}): Promise<string> {
+    if (!/^[a-f0-9]{64}$/.test(options.archiveSha256))
+        throw new Error('Expected candidate archive SHA-256');
+    resolveMainCommit(options.sourceRoot, options.sourceCommit);
+    requirePrivateRepository();
+    const release = draftRelease(options.tag);
+    mkdirSync(options.directory, { recursive: true, mode: 0o700 });
+    run('gh', [
+        'release',
+        'download',
+        options.tag,
+        '--repo',
+        DISTRIBUTION_REPOSITORY,
+        '--dir',
+        options.directory,
+        '--pattern',
+        'setup.tgz',
+        '--pattern',
+        'release.json',
+    ]);
+    if (
+        digest(readFileSync(join(options.directory, 'setup.tgz'))) !==
+        options.archiveSha256
+    )
+        throw new Error('Candidate archive differs from the requested SHA-256');
+    const bundle = join(options.directory, 'bundle');
+    unpackDistribution(options.directory, bundle);
+    await validateReleaseSource(
+        options.sourceRoot,
+        bundle,
+        options.sourceCommit,
+    );
+    if (JSON.stringify(release) !== JSON.stringify(draftRelease(options.tag)))
+        throw new Error('Draft changed while downloading');
+    writeJson(join(options.directory, 'candidate.json'), {
+        schemaVersion: 1,
+        ...release,
+        sourceCommit: options.sourceCommit,
+        archiveSha256: options.archiveSha256,
+        descriptorSha256: digest(
+            readFileSync(join(options.directory, 'release.json')),
+        ),
+    });
+    return bundle;
+}
+
+function verifyPublishedRelease(tag: string): void {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            run('gh', [
+                'release',
+                'verify',
+                tag,
+                '--repo',
+                DISTRIBUTION_REPOSITORY,
+            ]);
+            return;
+        } catch (error) {
+            if (
+                attempt >= 29 ||
+                !(error instanceof Error) ||
+                (!error.message.includes('no attestations for tag') &&
+                    !error.message.includes(
+                        'no attestations found for release',
+                    ))
+            )
+                throw error;
+            Bun.sleepSync(1000);
+        }
+    }
+}
+
+export async function finalizeDistribution(options: {
+    sourceRoot: string;
+    directory: string;
+    evidenceDirectory: string;
+}): Promise<void> {
+    if (
+        process.env.GITHUB_ACTIONS !== 'true' ||
+        process.env.GITHUB_REPOSITORY !== DISTRIBUTION_REPOSITORY ||
+        process.env.GITHUB_ACTOR !== DISTRIBUTION_REPOSITORY.split('/')[0]
+    )
+        throw new Error(
+            'Publication is restricted to the owner qualification workflow',
+        );
+    const receipt = json(join(options.directory, 'candidate.json'));
+    if (
+        receipt.schemaVersion !== 1 ||
+        typeof receipt.tag !== 'string' ||
+        typeof receipt.sourceCommit !== 'string' ||
+        typeof receipt.archiveSha256 !== 'string' ||
+        typeof receipt.descriptorSha256 !== 'string'
+    )
+        throw new Error('Invalid candidate receipt');
+    const qualification = json(
+        join(options.evidenceDirectory, 'qualification.json'),
+    );
+    if (
+        qualification.status !== 'passed' ||
+        qualification.scope !== 'full' ||
+        qualification.sourceCommit !== receipt.sourceCommit ||
+        qualification.bundleSourceCommit !== receipt.sourceCommit ||
+        qualification.bundleSha256 !== receipt.archiveSha256
+    )
+        throw new Error(
+            'Publication requires full qualification of the exact candidate',
+        );
+    const profile = json(join(options.evidenceDirectory, 'profile.json'));
+    if (
+        profile.status !== 'passed' ||
+        profile.sourceCommit !== receipt.sourceCommit ||
+        profile.bundleSha256 !== receipt.archiveSha256
+    )
+        throw new Error(
+            'Publication requires complete profile qualification of the exact candidate',
+        );
+    if (
+        digest(readFileSync(join(options.directory, 'setup.tgz'))) !==
+            receipt.archiveSha256 ||
+        digest(readFileSync(join(options.directory, 'release.json'))) !==
+            receipt.descriptorSha256
+    )
+        throw new Error('Qualified candidate changed');
+    requirePrivateRepository();
+    const release = draftRelease(receipt.tag);
+    if (
+        receipt.releaseId !== release.releaseId ||
+        JSON.stringify(receipt.assets) !== JSON.stringify(release.assets)
+    )
+        throw new Error('Qualified draft assets changed');
+    const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-finalize-'));
+    try {
+        const downloaded = join(temporary, 'draft');
+        await downloadDraftDistribution({
+            tag: receipt.tag,
+            directory: downloaded,
+            sourceRoot: options.sourceRoot,
+            sourceCommit: receipt.sourceCommit,
+            archiveSha256: receipt.archiveSha256,
+        });
+        const current = json(join(downloaded, 'candidate.json'));
+        if (JSON.stringify(receipt) !== JSON.stringify(current))
+            throw new Error('Qualified draft changed');
+        const config = object(
+            JSON.parse(
+                run('gh', [
+                    'api',
+                    `repos/${DISTRIBUTION_REPOSITORY}/immutable-releases`,
+                ]),
+            ),
+        );
+        if (config.enabled !== true)
+            throw new Error('Immutable releases must remain enabled');
         run('gh', [
             'release',
             'edit',
-            tag,
+            receipt.tag,
             '--repo',
             DISTRIBUTION_REPOSITORY,
             '--draft=false',
+            '--latest',
+            '--notes',
+            `Qualified Pi setup. Source: ${receipt.sourceCommit}. Archive SHA-256: ${receipt.archiveSha256}.`,
         ]);
-        // GitHub creates the release attestation asynchronously after publication.
-        for (let attempt = 0; ; attempt++) {
-            try {
-                run('gh', [
-                    'release',
-                    'verify',
-                    tag,
-                    '--repo',
-                    DISTRIBUTION_REPOSITORY,
-                ]);
-                break;
-            } catch (error) {
-                if (
-                    attempt >= 29 ||
-                    !(error instanceof Error) ||
-                    (!error.message.includes('no attestations for tag') &&
-                        !error.message.includes(
-                            'no attestations found for release',
-                        ))
-                )
-                    throw error;
-                Bun.sleepSync(1000);
-            }
-        }
+        verifyPublishedRelease(receipt.tag);
+        const published = join(temporary, 'published');
+        downloadDistribution(receipt.tag, published);
+        if (
+            digest(readFileSync(join(published, 'setup.tgz'))) !==
+                receipt.archiveSha256 ||
+            digest(readFileSync(join(published, 'release.json'))) !==
+                receipt.descriptorSha256
+        )
+            throw new Error(
+                'Published assets differ from the qualified candidate',
+            );
+        writeJson(join(options.evidenceDirectory, 'publication.json'), {
+            status: 'passed',
+            tag: receipt.tag,
+            sourceCommit: receipt.sourceCommit,
+            archiveSha256: receipt.archiveSha256,
+        });
     } finally {
         writableDirectories(temporary);
         rmSync(temporary, { recursive: true, force: true });
@@ -546,14 +988,7 @@ export function downloadDistribution(tag: string, directory: string): string {
             '--repo',
             DISTRIBUTION_REPOSITORY,
         ]);
-    const descriptor = json(join(directory, 'release.json'));
-    if (
-        descriptor.schemaVersion !== 1 ||
-        descriptor.sha256 !== digest(readFileSync(join(directory, 'setup.tgz')))
-    )
-        throw new Error('Downloaded archive checksum mismatch');
     const bundle = join(directory, 'bundle');
-    archive('extract', join(directory, 'setup.tgz'), bundle);
-    validateBundle(bundle);
+    unpackDistribution(directory, bundle);
     return bundle;
 }

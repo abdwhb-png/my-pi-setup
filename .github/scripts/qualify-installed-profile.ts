@@ -77,6 +77,10 @@ const credentials = [
 let session:
     | import('../../agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js').AgentSession
     | undefined;
+const candidateIdentity = {
+    sourceCommit: process.env.QUALIFICATION_SOURCE_SHA,
+    bundleSha256: process.env.QUALIFICATION_ARCHIVE_SHA256,
+};
 let stage = 'credentials';
 const providerEvents: ProviderCheckEvent[] = [];
 let providerCatalog: Array<{
@@ -226,6 +230,7 @@ try {
         JSON.stringify(
             {
                 status: 'passed',
+                ...candidateIdentity,
                 extensions: created.extensionsResult.extensions.length,
                 skills: resources.getSkills().skills.length,
                 prompts: resources.getPrompts().prompts.length,
@@ -248,6 +253,7 @@ try {
         process.argv[3],
         JSON.stringify({
             status: 'failed',
+            ...candidateIdentity,
             stage,
             failure: failureCode(error),
             extensionErrors,

@@ -2,30 +2,25 @@
 
 Real personal-profile, publication and provider verification runs on disposable GitHub-hosted runners, never against the daily installation. The public workflow uses synthetic data. The private workflow must live in `abdwhb-png/my-pi-distribution`; it refuses another repository or an actor other than the repository owner. There are no push, pull-request or scheduled triggers for private checks.
 
-## Private inputs
+## Release contract
 
-The distribution repository must be private, have an initialized default branch and have immutable releases enabled. Copy the canonical [private workflow](../.github/workflows/portable-private-qualification.yml) to its `.github/workflows/` directory without editing the generated copy. When changing the workflow, update this repository first and copy that file again. The qualification implementation remains in `my-pi-setup` and is checked out at the full reviewed commit supplied to each dispatch.
+The [repository release skill](../.agents/skills/pi-setup-release/SKILL.md) owns the promotion and publication procedure. The distribution repository must be private with an initialized default branch. Keep its workflow byte-identical to this repository's canonical workflow. Published releases require immutability; qualification accepts only a private draft and never weakens the attestation requirement for client installations.
 
-Supply a candidate through the private release UI: create a draft, attach the `setup.tgz` and `release.json` produced by `pi-setup pack`, then select `publish_candidate` when dispatching the workflow to finalize it as an immutable release on the runner. An already published immutable candidate can be used with that option disabled. Review the separate inventory before uploading. The candidate contains the actual portable profile and its pinned runtimes, but no authentication, sessions or memory. This initial candidate is an input, not qualification evidence. No workflow reads this workstation to create it. A changed setup implementation requires a new candidate built from that implementation; evidence records both the qualification-source commit and bundle-source commit.
+| Workflow input | Contract |
+| --- | --- |
+| `source_sha` | Full approved commit on `my-pi-setup` main. The package and qualification must identify this same source. |
+| `candidate_release` | Existing private draft containing exactly `setup.tgz` and `release.json`, using the final release tag. |
+| `candidate_sha256` | Expected SHA-256 of `setup.tgz`, recorded when preparing the package. |
+| `publish` | False by default. True authorizes finalization of this same draft only after complete qualification succeeds. |
+| `profile_only` | Optional shortened diagnosis; rejected when publication is requested. |
+| `providers` / `catalog_only` | Optional generation or catalog inspection, mutually exclusive and disabled by default. |
+| `provider_budget_usd` | Zero by default; explicit generation budgets cannot exceed 10 USD. |
 
-The standard repository token reads releases. Publication requires the `PI_DISTRIBUTION_TOKEN` Actions secret: a fine-grained token restricted to this repository with Contents read/write, Administration read and Attestations read. The administration permission is needed to verify the immutable-release setting; the standard Actions token was rejected by that endpoint in a runner check. See the [official repository API permissions](https://docs.github.com/en/rest/repos/repos) and [attestation API permissions](https://docs.github.com/en/rest/repos/attestations). The attestation permission is also required for read-only verification with a fine-grained token. If a token is already configured, edit its repository permissions under GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens; updating permissions on the existing token does not require pasting its value again. Access to private package forks must be configured separately through the package Git credential channel if the profile requires them; the repository token does not grant access to unrelated private repositories.
+Qualification binds the source revision, canonical code, pinned runtimes, both asset hashes and asset IDs. It tests clean installation, sandbox execution, update, idempotency, rollback, modified-file refusal and the installed extension lifecycle. The complete profile must pass before publication. Providers remain a separate optional assertion. Real checks run on disposable Actions runners; personal memory is never exported for them.
 
-## Dispatch
+Publication uses `PI_DISTRIBUTION_TOKEN`, restricted to this repository with Contents read/write, Administration read and Attestations read. The token checks the immutable-release setting and verifies published attestations. A draft has no publication attestation: qualification downloads it through authenticated private access and validates its exact contents. Client downloads continue requiring immutable release attestations and matching asset hashes.
 
-Run **Private Pi profile qualification** in the distribution repository with:
-
-- `source_sha`: the full reviewed commit of `my-pi-setup` containing the qualification scripts.
-- `candidate_release`: the immutable input release tag.
-- `publish_candidate`: false by default; set true to authorize finalization of the uploaded draft on the runner. The workflow requires both candidate assets and enabled release immutability.
-- `publish_tag`: empty for read/install qualification, or a new tag to explicitly authorize publication of another immutable release. Existing tags are never replaced.
-- `providers`: false by default. Set true only to authorize the selected generation requests.
-- `profile_only`: false by default. After full qualification of the same candidate, install it afresh and check the sandbox/profile without repeating update, rollback or modified-file tests. Evidence labels this scope and the omitted checks explicitly.
-- `catalog_only`: false by default. Inspect selected authentication, refreshed catalog metadata and maximum modeled request costs without generation. Mutually exclusive with `providers`; uses `provider_budget_usd` for the reservation check.
-- `provider_budget_usd`: zero by default. With `providers` explicitly enabled, zero permits only models whose input, output and cache rates are all zero. Positive budgets must not exceed 10 USD. The generation flag remains false by default.
-
-The runner installs into a new long HOME containing spaces and Unicode. It verifies the private release and asset attestations, installs the actual package sources, runs the installed sandbox contract, updates, repeats the update, rolls back and checks modified-file refusal. Publication additionally verifies a fresh download and rejection of an altered asset. The profile stage loads the installed SDK and all selected extensions, checks resource diagnostics, starts and shuts down the extension lifecycle, and records registered tools. Optional memory transfer is covered separately by the public synthetic qualification without exporting personal memory. These are distinct assertions; successful installation alone does not prove profile startup or provider connectivity.
-
-The shared installer test makes a synthetic second bundle to exercise transaction semantics. It does not represent an independently maintained future profile release. Native runtime compatibility is rebuilt and qualified by the public Ubuntu/WSL2 workflow from pinned source commits; it no longer depends on an earlier run's expiring artifact. Private personal-profile qualification currently runs on Ubuntu; the public mechanism qualification separately covers WSL2.
+There is no separate published candidate or second output release. Before finalization, failures leave the draft unpublished. After finalization, verification failures may leave an immutable release; retain that evidence and inspect the state before another action. Legacy published releases remain installable through the normal verified downloader, but the new qualification workflow consumes drafts only.
 
 ## Credentials and provider cases
 
@@ -52,6 +47,6 @@ Manual dispatch by the owner is the authorization gate. GitHub environment appro
 
 ## Evidence and failure handling
 
-The private `private-portability-evidence` artifact contains only `result.json`, `qualification.json`, and `profile.json` when those stages have run, retained for seven days. Missing profile evidence or `status: failed` is a failed or incomplete profile qualification, even if earlier installation milestones passed. Whole qualification jobs are never automatically retried. After publication only, the operator polls attestation verification up to 30 times at one-second intervals when GitHub reports no attestation yet; invalid signatures and other errors fail immediately. A newly finalized input candidate is verified by the downloader after host preparation and before extraction, avoiding a second publication-wait implementation in the bootstrap workflow. Keep the run URL, source SHA, bundle SHA and structured evidence with the release decision.
+The private `private-portability-evidence` artifact contains structured `result.json`, `qualification.json`, `profile.json`, the draft `candidate.json` receipt, and `publication.json` when publication ran, retained for seven days. Missing profile evidence or `status: failed` is a failed or incomplete profile qualification, even if earlier installation milestones passed. Whole qualification jobs are never automatically retried. After publication only, the operator polls attestation verification up to 30 times at one-second intervals when GitHub reports no attestation yet; invalid signatures and other errors fail immediately. The draft is rechecked against its qualification receipt before finalization; published assets then pass through the normal client downloader. Keep the run URL, source SHA, bundle SHA and structured evidence with the release decision.
 
 The public workflow performs two independent full runs on each of Ubuntu and WSL2, retaining logs for diagnosis. Its reusable native-runtime job rebuilds from pinned inputs and must pass the global typecheck and native contracts before downstream qualification starts. Historical failures remain recorded in the [CI report](verification/2026-10-31-portable-pi-ci.md).
