@@ -343,6 +343,7 @@ export async function packDistribution(
             writeFileSync(target, gitFile(sourceRoot, sourceCommit, path), {
                 mode,
             });
+            chmodSync(target, mode);
         }
         const packages = await captureProfile(
             sourceRoot,

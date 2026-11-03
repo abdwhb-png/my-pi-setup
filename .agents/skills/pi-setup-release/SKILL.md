@@ -51,7 +51,7 @@ This creates a draft and requests the private workflow with `publish=true`; its 
 
 For an existing draft, inspect it and dispatch the same workflow with its original source/digest and `publish=true`; do not call the create operation again. It requalifies the same files before publishing. Provider generation remains disabled by default.
 
-A failure before finalization leaves the draft unpublished. Preserve its evidence and diagnose it; do not automatically retry whole jobs, replace assets after successful qualification, or create another tag to hide a failure. A failure after finalization may leave an immutable published release: report that state and inspect it instead of attempting replacement or deletion. Retain the run URL, source SHA, archive SHA and publication evidence.
+A failure before finalization leaves the draft unpublished. When a verified correction requires a new package, retain the failed archive and run evidence; update only the still-unqualified draft assets, record the new source/digest, and run full qualification again. A prior receipt never qualifies replacement assets. Preserve its evidence and diagnose it; do not automatically retry whole jobs, replace assets after successful qualification, or create another tag to hide a failure. A failure after finalization may leave an immutable published release: report that state and inspect it instead of attempting replacement or deletion. Retain the run URL, source SHA, archive SHA and publication evidence.
 
 ## Install and memory
 

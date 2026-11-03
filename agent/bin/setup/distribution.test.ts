@@ -229,7 +229,7 @@ test('pack snapshots main and publish requests qualification without finalizing 
         const script = join(home, 'pack.ts');
         write(
             script,
-            `const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3]);`,
+            `process.umask(0o077); const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3]);`,
         );
         const output = join(home, 'output');
         chmodSync(join(runtime, 'packed/tarballs'), 0o555);
@@ -241,6 +241,12 @@ test('pack snapshots main and publish requests qualification without finalizing 
         archive('extract', join(output, 'setup.tgz'), join(home, 'unpacked'));
         const manifest = validateBundle(join(home, 'unpacked'));
         expect(manifest.sourceCommit).toBe(mainCommit);
+        expect(manifest.files['setup/bin/pi']?.split(':')[0]).toBe(
+            String(0o755),
+        );
+        expect(manifest.files['setup/agent/package.json']?.split(':')[0]).toBe(
+            String(0o644),
+        );
         expect(
             readFileSync(
                 join(home, 'unpacked/setup/agent/extensions/space é.ts'),
