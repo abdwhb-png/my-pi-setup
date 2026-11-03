@@ -190,3 +190,82 @@ test("a writable cache cannot overlap a read-only host installation", () => {
         rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("logical tool requirements resolve an existing installation without fixed home paths", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-tool-discovery-"));
+    const original = process.env.PATH;
+    try {
+        const bin = join(root, "arbitrary-prefix/bin");
+        mkdirSync(bin, { recursive: true });
+        const executable = join(bin, "bun");
+        writeFileSync(
+            executable,
+            `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: "1.2.3", resources: [] })}'\n`,
+            { mode: 0o700 },
+        );
+        process.env.PATH = bin;
+        const agentDir = join(root, "agent");
+        const prepared = prepareDevelopmentSetup({
+            agentDir,
+            machineId: "fixture",
+            profile: { tools: { bun: ["bun"] } },
+        });
+        expect(prepared.unavailable).toEqual([]);
+        const environment = prepared.next.environment as {
+            installations: {
+                bun: Array<{ root: string; path: string[]; files?: string[] }>;
+            };
+        };
+        expect(
+            environment.installations.bun.some(
+                (entry) =>
+                    entry.root === bin &&
+                    entry.path.includes(".") &&
+                    entry.files?.includes("bun"),
+            ),
+        ).toBe(true);
+        expect(existsSync(agentDir)).toBe(false);
+        expect(applyDevelopmentSetup(prepared)).toBe(true);
+        expect(
+            applyDevelopmentSetup(
+                prepareDevelopmentSetup({
+                    agentDir,
+                    machineId: "fixture",
+                    profile: { tools: { bun: ["bun"] } },
+                }),
+            ),
+        ).toBe(false);
+    } finally {
+        if (original === undefined) delete process.env.PATH;
+        else process.env.PATH = original;
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("a runtime reporting a missing library directory is unavailable without publishing stale grants", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-missing-runtime-"));
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const original = process.env.PATH;
+    try {
+        const executable = join(bin, "python3");
+        writeFileSync(
+            executable,
+            `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: "1.2.3", resources: [join(root, "missing-stdlib")] })}'\n`,
+            { mode: 0o700 },
+        );
+        process.env.PATH = bin;
+        const result = prepareDevelopmentSetup({
+            agentDir: join(root, "agent"),
+            machineId: "fixture",
+            profile: { tools: { python: ["python3"] } },
+        });
+        expect(result.unavailable).toHaveLength(1);
+        expect(() => applyDevelopmentSetup(result)).toThrow();
+        expect(existsSync(join(root, "agent"))).toBe(false);
+    } finally {
+        if (original === undefined) delete process.env.PATH;
+        else process.env.PATH = original;
+        rmSync(root, { recursive: true, force: true });
+    }
+});

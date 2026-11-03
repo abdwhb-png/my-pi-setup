@@ -6,12 +6,15 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { cleanupRuntimes } from "./setup/cleanup.ts";
+import { acquireRuntimeStorageLock, pinRuntimeEntry, runtimeProcessIdentity } from "../extensions/_shared/runtime-storage.ts";
 import {
   activateRelease,
   loadActivePiRuntime,
@@ -71,6 +74,119 @@ function pointCurrent(runtimeRoot: string, releaseRoot: string): void {
 }
 
 describe("pi-runtime-store", () => {
+  it('retains runtime resources referenced by a portable installation snapshot', async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    const root = join(homeDir, '.pi');
+    try {
+      const snapshot = createRelease(runtimeRoot, 'snapshot');
+      const current = createRelease(runtimeRoot, 'current');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755); activateRelease(current, runtimeRoot);
+      writeFileSync(join(root, '.pi-setup-state.json'), JSON.stringify({ schemaVersion: 1, managed: {
+        'runtime/pi-core/releases/snapshot/runtime-manifest.json': 'snapshot fingerprint',
+      } }));
+      const report = await cleanupRuntimes(root);
+      expect(report.entries).toContainEqual(expect.objectContaining({ path: snapshot, action: 'keep', reason: 'managed setup snapshot' }));
+    } finally { rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it('keeps releases referenced by installed package links', async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    const root = join(homeDir, '.pi');
+    try {
+      const linked = createRelease(runtimeRoot, 'linked');
+      const current = createRelease(runtimeRoot, 'current');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755);
+      activateRelease(current, runtimeRoot);
+      mkdirSync(join(root, 'agent/node_modules'), { recursive: true });
+      symlinkSync(join(linked, 'package'), join(root, 'agent/node_modules/fixture'));
+      await cleanupRuntimes(root);
+      expect(existsSync(linked)).toBe(true);
+    } finally { rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it('retains an older runtime pinned by the current process and ignores a reused PID identity', async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    const root = join(homeDir, '.pi');
+    try {
+      const old = createRelease(runtimeRoot, 'live');
+      const previous = createRelease(runtimeRoot, 'previous');
+      const current = createRelease(runtimeRoot, 'current');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755);
+      chmodSync(old, 0o755);
+      activateRelease(previous, runtimeRoot); activateRelease(current, runtimeRoot);
+      const binary = join(old, 'package/dist/pi');
+      expect(pinRuntimeEntry(root, () => binary)).toBe(binary);
+      const live = await cleanupRuntimes(root);
+      expect(live.entries).toContainEqual(expect.objectContaining({ path: old, action: 'keep', reason: `live session PID ${process.pid}` }));
+      const identity = runtimeProcessIdentity()!;
+      const file = join(`${root}.runtime-users`, `${identity.pid}-${identity.started}.json`);
+      const record = JSON.parse(readFileSync(file, 'utf8')); record.started = '0';
+      const stale = join(`${root}.runtime-users`, `${identity.pid}-0.json`);
+      renameSync(file, stale); writeFileSync(stale, JSON.stringify(record));
+      await cleanupRuntimes(root);
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(stale)).toBe(false);
+    } finally { rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it('refuses cleanup while promotion holds the kernel lock', async () => {
+    const { homeDir } = createFixture();
+    const root = join(homeDir, '.pi');
+    const lock = acquireRuntimeStorageLock(root);
+    try {
+      await expect(cleanupRuntimes(root)).rejects.toThrow('Runtime storage is busy');
+      const alias = join(homeDir, 'alias'); symlinkSync(root, alias);
+      expect(() => acquireRuntimeStorageLock(alias)).toThrow('Runtime storage is busy');
+    }
+    finally { lock.release(); rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it('preserves unknown directories and symlink targets outside the store', async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    const root = join(homeDir, '.pi');
+    try {
+      const current = createRelease(runtimeRoot, 'current');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755);
+      activateRelease(current, runtimeRoot);
+      const unknown = join(runtimeRoot, 'releases/unknown'); mkdirSync(unknown);
+      const outside = join(homeDir, 'personal'); mkdirSync(outside); writeFileSync(join(outside, 'keep.txt'), 'keep');
+      symlinkSync(outside, join(runtimeRoot, 'releases/redirect'));
+      const report = await cleanupRuntimes(root);
+      expect(report.entries).toContainEqual(expect.objectContaining({ path: unknown, action: 'keep', reason: 'unrecognized runtime metadata' }));
+      expect(report.warnings.some(warning => warning.includes('/redirect'))).toBe(true);
+      expect(readFileSync(join(outside, 'keep.txt'), 'utf8')).toBe('keep');
+    } finally { rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it("previews and removes only unreferenced releases and inactive promotion states", async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    const root = join(homeDir, '.pi');
+    try {
+      const obsolete = createRelease(runtimeRoot, 'obsolete');
+      const pinned = createRelease(runtimeRoot, 'package-pinned');
+      const previous = createRelease(runtimeRoot, 'previous');
+      const current = createRelease(runtimeRoot, 'current');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755);
+      activateRelease(obsolete, runtimeRoot);
+      activateRelease(previous, runtimeRoot);
+      activateRelease(current, runtimeRoot);
+      mkdirSync(join(root, 'agent'));
+      writeFileSync(join(root, 'agent/package.json'), JSON.stringify({
+        dependencies: { fixture: 'file:../runtime/pi-core/releases/package-pinned/package' },
+      }));
+      const preview = await cleanupRuntimes(root, true);
+      expect(preview.entries).toContainEqual(expect.objectContaining({ path: obsolete, action: 'remove' }));
+      expect(existsSync(obsolete)).toBe(true);
+      await cleanupRuntimes(root);
+      expect(existsSync(obsolete)).toBe(false);
+      for (const kept of [current, previous, pinned]) expect(existsSync(kept)).toBe(true);
+      expect(loadCurrentPiRuntime(runtimeRoot).releaseId).toBe('current');
+      expect(loadPreviousPiRuntime(runtimeRoot).releaseId).toBe('previous');
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a Bun entry that escapes the installed package", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-bun-entry-"));
     const packageRoot = join(root, "package");

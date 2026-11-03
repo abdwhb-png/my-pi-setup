@@ -23,10 +23,12 @@ import {
   loadPreviousPiRuntime,
   resolvePiLaunchCommand,
   rollbackRelease,
+  cleanupPiRuntimeStore,
   type ActivePiRuntime,
   type PiRuntimeManifest,
   type PiRuntimePackage,
 } from "./pi-runtime-store.ts";
+import { acquireRuntimeStorageLock, runtimeChildStdio } from "../extensions/_shared/runtime-storage.ts";
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 const RELEASE_MANIFEST = "release-manifest.json";
@@ -79,6 +81,25 @@ interface AgentFilesBackup {
 
 export async function deployFork(options: DeployForkOptions = {}): Promise<ActivePiRuntime> {
   const context = resolveDeploymentContext(options);
+  const piRoot = dirname(context.agentDir);
+  const lock = acquireRuntimeStorageLock(piRoot);
+  let runtime: ActivePiRuntime;
+  try { runtime = await deployForkLocked(context); }
+  finally { lock.release(); }
+  await cleanupAfterPromotion(piRoot);
+  return runtime;
+}
+
+async function cleanupAfterPromotion(piRoot: string): Promise<void> {
+  if (existsSync(`${piRoot}.setup-journal.json`)) return;
+  try {
+    const reports = await cleanupPiRuntimeStore(piRoot);
+    for (const report of reports) for (const warning of report.warnings) console.warn(warning);
+  }
+  catch (error) { console.warn(`Pi was promoted, but runtime cleanup failed: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+async function deployForkLocked(context: DeploymentContext): Promise<ActivePiRuntime> {
   if (!context.packedRoot) verifySourceRoot(context.sourceRoot);
   runCommand(context.sfwExecutable, ["--version"]);
   const runtime = await buildImmutableRelease(context);
@@ -102,6 +123,16 @@ export async function deployFork(options: DeployForkOptions = {}): Promise<Activ
 export async function rollbackFork(
   options: RollbackForkOptions = {},
 ): Promise<ActivePiRuntime> {
+  const piRoot = dirname(resolve(options.agentDir ?? join(homedir(), ".pi", "agent")));
+  const lock = acquireRuntimeStorageLock(piRoot);
+  let runtime: ActivePiRuntime;
+  try { runtime = await rollbackForkLocked(options); }
+  finally { lock.release(); }
+  await cleanupAfterPromotion(piRoot);
+  return runtime;
+}
+
+async function rollbackForkLocked(options: RollbackForkOptions): Promise<ActivePiRuntime> {
   const runtimeRoot = resolve(options.runtimeRoot ?? getPiRuntimeRoot());
   const agentDir = resolve(options.agentDir ?? join(homedir(), ".pi", "agent"));
   const sfwExecutable = options.sfwExecutable ?? "sfw";
@@ -139,8 +170,8 @@ function resolveDeploymentContext(options: DeployForkOptions): DeploymentContext
 async function buildImmutableRelease(context: DeploymentContext): Promise<ActivePiRuntime> {
   const stagingRoot = join(context.runtimeRoot, ".staging", randomUUID());
   const packedRoot = join(stagingRoot, "packed");
-  mkdirSync(join(context.runtimeRoot, ".staging"), { recursive: true });
-  mkdirSync(join(context.runtimeRoot, "releases"), { recursive: true });
+  mkdirSync(join(context.runtimeRoot, ".staging"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(context.runtimeRoot, "releases"), { recursive: true, mode: 0o700 });
 
   try {
     const packedManifest = context.packedRoot
@@ -467,7 +498,7 @@ function runRpcSmoke(
           PI_OFFLINE: "1",
           PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT: runtime.packageRoot,
         },
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: runtimeChildStdio("pipe"),
       },
     );
     let stdout = "";
@@ -485,6 +516,10 @@ function runRpcSmoke(
       () => finish(new Error(`Pi runtime smoke check failed: RPC timeout. ${stderr}`)),
       10_000,
     );
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      finish(new Error("Pi runtime smoke check failed: RPC streams were not opened"));
+      return;
+    }
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
     });
@@ -724,7 +759,7 @@ function makeTreeReadOnly(root: string): void {
 }
 
 function runCommand(command: string, args: string[], cwd?: string): void {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", env: process.env });
+  const result = spawnSync(command, args, { cwd, stdio: runtimeChildStdio("inherit"), env: process.env });
   if (result.status !== 0) {
     throw new Error(`Command failed (${String(result.status)}): ${command} ${args.join(" ")}`);
   }

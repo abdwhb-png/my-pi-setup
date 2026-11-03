@@ -22,6 +22,8 @@ Use the repository's [Pi setup release skill](../.agents/skills/pi-setup-release
 
 The package contains source resources, the personal profile, pinned packages, shared skills, the packed Pi runtime and the validated Zerobox bundle. Authentication, sessions, caches, memory and machine-specific authority remain excluded. Review prose and skills for private content; automatic redaction is not a complete privacy audit. Optional global memory transfer remains separate.
 
+Release preparation includes storage cleanup before the next package and after verified publication, following the release skill. Downloaded archives and expanded delivery candidates are disposable once their remote or installed copy has been verified. Retain compact source/digest and qualification receipts; keep active/previous runtimes and migration backups separate from disposable build outputs. Local build caches and historical delivery directories are not included in the portable package.
+
 ## Install on another machine
 
 Replace `RELEASE_TAG` with the exact qualified tag. Clone the public source into a temporary bootstrap checkout, then invoke its launcher:
@@ -103,6 +105,12 @@ bun ~/.pi/agent/scripts/configure-sandbox.ts apply
 
 The portable development profile declares logical tool requirements instead of paths from the producer's machine. New distributions discover Node, Bun, Python, Go, PHP/Composer and pnpm on the destination. Discovery follows executable links, gathers runtime resources and exact ELF library files, and optionally resolves mise shims when present. Neither mise nor dev-tools is required. Commands are inspected from a temporary directory outside projects, with bounded output/time and automatic version-manager downloads disabled. The four standard XDG directory selectors are retained for host configuration discovery; unrelated environment variables are omitted. This performs local metadata queries; it never installs a missing tool or trusts project configuration automatically.
 
+PHP's `include_path` and `extension_dir` contain search candidates, which may name directories absent from a valid installation. Discovery grants only existing search directories. Loaded configuration files and executable dependencies remain subject to the normal existence and revalidation checks. A fresh discovery failure does not imply stale stored bindings.
+
+For every supported command, reused and explicit bindings must still expose an executable through their own authorized PATH entries and file selections. Discovery rechecks executable permissions and rejects writable, missing or redirected commands. It never repairs a stale binding by falling back to another installation on the current PATH. The resolved executable behind a launcher receives the same permission checks as the launcher itself.
+
+Qualification runs clean Ubuntu containers separately for system and mise tools before the Ubuntu and WSL2 sandbox jobs. The containers start without distro PHP, Composer, Go or pnpm; system packages are installed only in the system branch. Each layout records actual canonical executable origins, runs all seven tools, checks retained bindings without ambient PATH and executes negative discovery regressions. The pinned dev-tools revision deliberately supplies PHP through APT and links it into mise; that origin is checked explicitly rather than described as a private PHP installation. PHP fixtures additionally exercise absent search directories regardless of system resources. These checks run on changes to `develop` and `main`; their configured presence does not establish a successful CI run.
+
 `install --dry-run` reports the discovered commands and proposed read-only installations before creating a target or transaction. Missing tools, ambiguous launchers, unavailable libraries and overly broad automatic directory grants fail visibly. Installation revalidates the observed resources before and after provisioning; a change causes rollback. Global installation authority is machine-local and stays outside the distribution. Generated `agent/config/setup-bindings.json` is a local setup snapshot; the current sandbox authority takes precedence over that snapshot during updates. Explicit `--bindings FILE` takes precedence over both.
 
 For an existing setup, inspect and explicitly replace discovered bindings with:
@@ -123,6 +131,21 @@ Missing host tools abort before activation. Install them separately; Pi does not
 This procedure is specific to this repository and manages only Pi core. For a complete installation on another machine, use the `pi-setup install` procedure above.
 
 `~/.pi/bin/pi-fork import /path/to/packed` installs a previously built Pi release without the `pi-core` source checkout. The directory must contain `release-manifest.json` and its referenced tarballs. Transfer the `packed/` directory, not an installed `node_modules` tree. Import verifies the package hashes, copies only the declared archives into staging, installs dependencies through Socket Firewall, runs the runtime smoke checks, synchronizes the agent pins, and promotes the runtime only after coherence verification. Bun, Node and Socket Firewall must already be available. An existing release with the same identity is rejected, as with `deploy`.
+
+## Runtime retention and cleanup
+
+Successful Pi runtime promotions, Zerobox promotions and portable setup transactions collect unreferenced runtime versions automatically. To inspect or apply the same policy manually:
+
+```sh
+pi-setup cleanup --dry-run
+pi-setup cleanup
+```
+
+Both commands accept `--root DIR`. The JSON report lists each recognized directory, its proposed action and retention reason, allocated bytes, estimated reclaimable bytes and warnings. Preview does not delete versions or stale references. Cleanup keeps current and previous runtimes, installed package pins and links, portable installation snapshot references, and versions pinned by live processes. Unknown directories and symbolic links are retained. Migration backups and historical package-set snapshots have their own lifecycle and are not deleted by this command.
+
+The daily Pi launcher records its resolved runtime before launch; the Zerobox backend records its resolved version before loading it. References bind the owner PID to its Linux process start time and boot identity, so a reused PID cannot retain or release another process's version. Normal exit removes references; a later cleanup reaps references left by killed processes. An older Pi session without this metadata conservatively defers Zerobox collection until it exits. A long-lived process may therefore retain more than the two ordinary runtime versions.
+
+Promotions, package mutations, packaging, setup journal creation and garbage collection share a kernel lock. Python 3 with its standard Unix `fcntl` module, already a host prerequisite, acquires that lock through an inherited descriptor. Mutating child processes inherit it, so interruption of their waiting parent does not permit concurrent cleanup; the kernel releases the lock when its last holder exits. Small control resources live beside the installation: `~/.pi.runtime.lock` and `~/.pi.runtime-users/` for the default root. They are outside portable archives and setup snapshots. Cleanup never requires deleting a stale lock file. Busy or uninspectable relevant processes produce an explicit failure or retention reason instead of an unsafe purge.
 
 ## Update, rollback and recovery
 

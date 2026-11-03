@@ -42,6 +42,8 @@ The first staging attempt correctly refused the restricted executor's filesystem
 
 The previous `native-40321985864-1` release remains intact. Evidence, verified archives, activation metadata and a guarded rollback script are retained under `~/.pi/runtime/deliveries/docker-access-20261029/`. Run `python3 ~/.pi/runtime/deliveries/docker-access-20261029/rollback.py` to restore the previous managed link only if the current and previous runtime identities still match the recorded hashes. The script was syntax-checked; rollback was not executed.
 
+Storage cleanup on 2026-11-03 removed the downloaded ZIP, tar archive and expanded candidate after comparing all 4,216 regular candidate files against installed runtime `native-40901222245-1`. Activation metadata, checksums, candidate manifests, logs and the guarded rollback script remain in the delivery directory. Installed runtimes were preserved; the preceding archive-retention statement records the original delivery state.
+
 Restart every existing Pi session before using the new configuration workflow so all writers honor the publication lock. Then open `/sandbox docker configure` in the trusted project and review the desired service permissions. Global Sandbox configuration and Pi settings remained byte-identical across activation. No Ownertek permissions or project configuration were changed. Existing user sessions were not restarted.
 
 ## Validation limits

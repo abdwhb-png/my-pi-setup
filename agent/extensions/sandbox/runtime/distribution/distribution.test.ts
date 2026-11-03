@@ -1,4 +1,7 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { pinPrivateRuntimeEntry } from '../runtime-bundle.ts';
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,11 +9,20 @@ import { createHash } from "node:crypto";
 
 const root = new URL("./", import.meta.url);
 const builder = new URL("./build.py", root).pathname;
-const { stageRuntimeRelease } = await import("./stage-release.ts");
+const { stageRuntimeRelease, cleanupZeroboxRuntimeStore } = await import("./stage-release.ts");
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
+const fixtureRoots: string[] = [];
+afterEach(async () => {
+    for (const parent of fixtureRoots.splice(0)) {
+        await rm(parent, { recursive: true, force: true });
+        await rm(`${parent}.runtime-users`, { recursive: true, force: true });
+        await rm(`${parent}.runtime.lock`, { force: true });
+    }
+});
 
 async function fixture() {
     const parent = await mkdtemp(join(tmpdir(), "pi-runtime-distribution-"));
+    fixtureRoots.push(parent);
     const candidate = join(parent, "candidate");
     for (const [path, value] of Object.entries({
         "bin/zerobox": "engine",
@@ -38,6 +50,66 @@ async function fixture() {
     await writeFile(entry, "previous", { mode: 0o700 });
     return { parent, candidate, entry, provenance };
 }
+
+test('promotion retains only current and previous managed Zerobox versions', async () => {
+    const f = await fixture();
+    try {
+        for (const version of ['first', 'second', 'third']) {
+            const manifest = await Bun.file(join(f.candidate, 'manifest.json')).json();
+            manifest.version = version;
+            await writeFile(join(f.candidate, 'manifest.json'), JSON.stringify(manifest));
+            await writeFile(f.provenance, JSON.stringify({ version, binarySha256: sha('engine') }));
+            await stageRuntimeRelease({ candidateRoot: f.candidate, runtimeBase: join(f.parent, 'runtimes'),
+                managedBinary: f.entry, provenanceSource: f.provenance, expectedBinarySha256: sha('engine') });
+        }
+        const store = join(f.parent, 'runtimes/zerobox');
+        expect(await Bun.file(join(store, 'first/manifest.json')).exists()).toBe(false);
+        expect(await Bun.file(join(store, 'second/manifest.json')).exists()).toBe(true);
+        expect(await Bun.file(join(store, 'third/manifest.json')).exists()).toBe(true);
+        expect(await readlink(join(store, '.previous'))).toBe('second');
+    } finally { await rm(f.parent, { recursive: true, force: true }); }
+});
+
+test('a live session keeps its pinned Zerobox version across later promotions', async () => {
+    const f = await fixture();
+    for (const version of ['first', 'second', 'third']) {
+        const manifest = await Bun.file(join(f.candidate, 'manifest.json')).json(); manifest.version = version;
+        await writeFile(join(f.candidate, 'manifest.json'), JSON.stringify(manifest));
+        await writeFile(f.provenance, JSON.stringify({ version, binarySha256: sha('engine') }));
+        await stageRuntimeRelease({ candidateRoot: f.candidate, runtimeBase: join(f.parent, 'runtimes'),
+            managedBinary: f.entry, provenanceSource: f.provenance, expectedBinarySha256: sha('engine') });
+        if (version === 'first') await pinPrivateRuntimeEntry(f.entry, new URL(`file://${f.provenance}`));
+    }
+    const old = join(f.parent, 'runtimes/zerobox/first');
+    const reports = await cleanupZeroboxRuntimeStore(f.parent);
+    expect(reports[0]!.entries).toContainEqual(expect.objectContaining({ path: old, action: 'keep', reason: `live session PID ${process.pid}` }));
+    expect(await Bun.file(join(old, 'manifest.json')).exists()).toBe(true);
+});
+
+test('legacy live Pi sessions defer Zerobox collection until they exit', async () => {
+    const f = await fixture();
+    const script = join(f.parent, 'bin/pi');
+    await writeFile(script, 'process.stdout.write("ready");setInterval(()=>{},1000);');
+    const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+        await once(child.stdout!, 'data');
+        for (const version of ['first', 'second', 'third']) {
+            const manifest = await Bun.file(join(f.candidate, 'manifest.json')).json(); manifest.version = version;
+            await writeFile(join(f.candidate, 'manifest.json'), JSON.stringify(manifest));
+            await writeFile(f.provenance, JSON.stringify({ version, binarySha256: sha('engine') }));
+            await stageRuntimeRelease({ candidateRoot: f.candidate, runtimeBase: join(f.parent, 'runtimes'),
+                managedBinary: f.entry, provenanceSource: f.provenance, expectedBinarySha256: sha('engine') });
+        }
+        const old = join(f.parent, 'runtimes/zerobox/first');
+        expect(await Bun.file(join(old, 'manifest.json')).exists()).toBe(true);
+        const preview = await cleanupZeroboxRuntimeStore(f.parent, true);
+        expect(preview[0]!.entries.find(entry => entry.path === old)?.reason).toBe('legacy Pi session has no precise runtime reference');
+    } finally {
+        const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+    }
+    await cleanupZeroboxRuntimeStore(f.parent);
+    expect(await Bun.file(join(f.parent, 'runtimes/zerobox/first/manifest.json')).exists()).toBe(false);
+});
 
 test("preserves relative runtime symlinks when staging the verified tree",async()=>{
     const f=await fixture();

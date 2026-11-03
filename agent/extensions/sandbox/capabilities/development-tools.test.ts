@@ -7,64 +7,10 @@ import {
     existsSync,
     chmodSync,
     realpathSync,
+    renameSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-    prepareDevelopmentSetup,
-    applyDevelopmentSetup,
-} from "./development-setup.ts";
-
-test("logical tool requirements resolve an existing installation without fixed home paths", () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-tool-discovery-"));
-    const original = process.env.PATH;
-    try {
-        const bin = join(root, "arbitrary-prefix/bin");
-        mkdirSync(bin, { recursive: true });
-        const executable = join(bin, "bun");
-        writeFileSync(
-            executable,
-            `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: "1.2.3", resources: [] })}'\n`,
-            { mode: 0o700 },
-        );
-        process.env.PATH = bin;
-        const agentDir = join(root, "agent");
-        const prepared = prepareDevelopmentSetup({
-            agentDir,
-            machineId: "fixture",
-            profile: { tools: { bun: ["bun"] } },
-        });
-        expect(prepared.unavailable).toEqual([]);
-        const environment = prepared.next.environment as {
-            installations: {
-                bun: Array<{ root: string; path: string[]; files?: string[] }>;
-            };
-        };
-        expect(
-            environment.installations.bun.some(
-                (entry) =>
-                    entry.root === bin &&
-                    entry.path.includes(".") &&
-                    entry.files?.includes("bun"),
-            ),
-        ).toBe(true);
-        expect(existsSync(agentDir)).toBe(false);
-        expect(applyDevelopmentSetup(prepared)).toBe(true);
-        expect(
-            applyDevelopmentSetup(
-                prepareDevelopmentSetup({
-                    agentDir,
-                    machineId: "fixture",
-                    profile: { tools: { bun: ["bun"] } },
-                }),
-            ),
-        ).toBe(false);
-    } finally {
-        if (original === undefined) delete process.env.PATH;
-        else process.env.PATH = original;
-        rmSync(root, { recursive: true, force: true });
-    }
-});
 
 import { symlinkSync } from "node:fs";
 import { resolveDevelopmentTools } from "../development-tools.ts";
@@ -76,11 +22,15 @@ function fixture() {
     return {
         root,
         bin,
-        command(name: string, resources: string[] = []) {
+        command(
+            name: string,
+            resources: string[] = [],
+            reportedExecutable?: string,
+        ) {
             const executable = join(bin, name);
             writeFileSync(
                 executable,
-                `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable, version: "1.2.3", resources })}'\n`,
+                `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ executable: reportedExecutable ?? executable, version: "1.2.3", resources })}'\n`,
                 { mode: 0o700 },
             );
             return executable;
@@ -90,6 +40,263 @@ function fixture() {
         },
     };
 }
+
+const commands = ["node", "bun", "python3", "go", "php", "composer", "pnpm"];
+
+test.each(commands)(
+    "mise rejects an unsafe %s target before running its metadata probe",
+    (command) => {
+        const f = fixture();
+        try {
+            const runtime = join(f.root, "actual");
+            mkdirSync(runtime);
+            const binary = join(runtime, command);
+            const marker = join(f.root, "unsafe-target-ran");
+            writeFileSync(
+                binary,
+                `#!/bin/sh\nprintf ran > '${marker}'\nprintf '%s\\n' '${JSON.stringify({ executable: binary, version: "1.2.3", resources: [] })}'\n`,
+                { mode: 0o777 },
+            );
+            chmodSync(binary, 0o777);
+            const mise = join(f.bin, "mise");
+            writeFileSync(mise, `#!/bin/sh\nprintf '%s\\n' '${binary}'\n`, {
+                mode: 0o700,
+            });
+            symlinkSync(mise, join(f.bin, command));
+            const result = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(result.unavailable).toHaveLength(1);
+            expect(existsSync(marker)).toBe(false);
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "%s discovery validates the resolved executable behind a launcher",
+    (command) => {
+        const f = fixture();
+        try {
+            const runtime = join(f.root, "actual");
+            mkdirSync(runtime);
+            const binary = join(runtime, command);
+            writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o600 });
+            f.command(command, [], binary);
+            expect(
+                resolveDevelopmentTools({ tools: [command] }, { path: f.bin })
+                    .unavailable,
+            ).toHaveLength(1);
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "retained %s bindings reject a command that lost execution permission",
+    (command) => {
+        const f = fixture();
+        try {
+            const binary = f.command(command);
+            const fresh = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(fresh.unavailable).toEqual([]);
+            chmodSync(binary, 0o600);
+            const reused = resolveDevelopmentTools(
+                { tools: [command] },
+                { existing: fresh.installations, path: f.bin },
+            );
+            expect(reused.unavailable).toHaveLength(1);
+            expect(reused.installations.tools).toBeUndefined();
+            expect(reused.unavailable[0].reason).toContain(command);
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "retained %s bindings stay valid independently of the ambient PATH",
+    (command) => {
+        const f = fixture();
+        try {
+            f.command(command);
+            const fresh = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            const retained = resolveDevelopmentTools(
+                { tools: [command] },
+                { existing: fresh.installations, path: join(f.root, "absent") },
+            );
+            expect(retained.unavailable).toEqual([]);
+            expect(retained.installations).toEqual(fresh.installations);
+            retained.assertUnchanged();
+            chmodSync(join(f.bin, command), 0o600);
+            expect(() => retained.assertUnchanged()).toThrow(
+                "changed after preview",
+            );
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "retained %s bindings reject unsafe commands without PATH fallback",
+    (command) => {
+        const f = fixture();
+        try {
+            const binary = f.command(command);
+            const fresh = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            const fallback = join(f.root, "fallback");
+            mkdirSync(fallback);
+            writeFileSync(join(fallback, command), "#!/bin/sh\nexit 77\n", {
+                mode: 0o700,
+            });
+            chmodSync(binary, 0o777);
+            const retained = resolveDevelopmentTools(
+                { tools: [command] },
+                { existing: fresh.installations, path: fallback },
+            );
+            expect(retained.unavailable).toHaveLength(1);
+            expect(retained.unavailable[0].reason).toContain(
+                "Untrusted writable executable",
+            );
+            expect(retained.installations.tools).toBeUndefined();
+            rmSync(binary);
+            expect(
+                resolveDevelopmentTools(
+                    { tools: [command] },
+                    { existing: fresh.installations, path: fallback },
+                ).unavailable,
+            ).toHaveLength(1);
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "explicit %s bindings cannot expose an unselected file",
+    (command) => {
+        const f = fixture();
+        try {
+            f.command(command);
+            f.command("unrelated");
+            const result = resolveDevelopmentTools(
+                { tools: [command] },
+                {
+                    overrides: {
+                        tools: [
+                            { root: f.bin, path: ["."], files: ["unrelated"] },
+                        ],
+                    },
+                    path: f.bin,
+                },
+            );
+            expect(result.unavailable).toHaveLength(1);
+            expect(result.installations.tools).toBeUndefined();
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "%s discovery refuses missing required resources and broad grants",
+    (command) => {
+        const f = fixture();
+        try {
+            f.command(command, [join(f.root, "missing-required")]);
+            const missing = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(missing.unavailable).toHaveLength(1);
+            expect(missing.unavailable[0].reason).toContain("missing-required");
+            f.command(command, ["/usr"]);
+            const broad = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(broad.unavailable).toHaveLength(1);
+            expect(broad.unavailable[0].reason).toContain(
+                "Refusing broad installation root",
+            );
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "retained %s bindings reject redirected command aliases",
+    (command) => {
+        const f = fixture();
+        try {
+            const alias = f.command(command);
+            const original = join(f.bin, "original");
+            renameSync(alias, original);
+            symlinkSync(original, alias);
+            const fresh = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(fresh.unavailable).toEqual([]);
+            const outside = join(f.root, "outside-command");
+            writeFileSync(outside, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+            rmSync(alias);
+            symlinkSync(outside, alias);
+            const reused = resolveDevelopmentTools(
+                { tools: [command] },
+                { existing: fresh.installations, path: f.bin },
+            );
+            expect(reused.unavailable).toHaveLength(1);
+            expect(reused.installations.tools).toBeUndefined();
+        } finally {
+            f.dispose();
+        }
+    },
+);
+
+test.each(commands)(
+    "%s discovery reports malformed metadata and missing commands without leaking output",
+    (command) => {
+        const f = fixture();
+        try {
+            const binary = f.command(command);
+            writeFileSync(
+                binary,
+                "#!/bin/sh\nprintf '%s' 'PRIVATE_METADATA_CANARY'\n",
+            );
+            const malformed = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: f.bin },
+            );
+            expect(malformed.unavailable).toHaveLength(1);
+            expect(JSON.stringify(malformed)).not.toContain(
+                "PRIVATE_METADATA_CANARY",
+            );
+            const missing = resolveDevelopmentTools(
+                { tools: [command] },
+                { path: join(f.root, "no-tools") },
+            );
+            expect(missing.unavailable).toHaveLength(1);
+            expect(missing.unavailable[0].reason).toContain(command);
+        } finally {
+            f.dispose();
+        }
+    },
+);
 
 test("group-writable vendor executables require an owner-only ancestor", () => {
     const f = fixture();
@@ -343,6 +550,22 @@ test("a symlink redirected after discovery cannot be authorized", () => {
     }
 });
 
+test("fresh discovery failures do not recommend rediscovering stale bindings", () => {
+    const f = fixture();
+    try {
+        f.command("python3", [join(f.root, "missing-stdlib")]);
+        const result = resolveDevelopmentTools(
+            { python: ["python3"] },
+            { path: f.bin },
+        );
+        expect(result.unavailable).toHaveLength(1);
+        expect(result.unavailable[0].reason).toContain("missing-stdlib");
+        expect(result.unavailable[0].reason).not.toContain("--rediscover");
+    } finally {
+        f.dispose();
+    }
+});
+
 test("invalid stored bindings block discovery until explicit rediscovery", () => {
     const f = fixture();
     try {
@@ -350,10 +573,12 @@ test("invalid stored bindings block discovery until explicit rediscovery", () =>
         const existing = {
             bun: [{ root: join(f.root, "missing"), path: ["bin"] }],
         };
-        expect(
-            resolveDevelopmentTools({ bun: ["bun"] }, { existing, path: f.bin })
-                .unavailable,
-        ).toHaveLength(1);
+        const stale = resolveDevelopmentTools(
+            { bun: ["bun"] },
+            { existing, path: f.bin },
+        );
+        expect(stale.unavailable).toHaveLength(1);
+        expect(stale.unavailable[0].reason).toContain("--rediscover");
         expect(
             resolveDevelopmentTools(
                 { bun: ["bun"] },
@@ -361,27 +586,6 @@ test("invalid stored bindings block discovery until explicit rediscovery", () =>
             ).unavailable,
         ).toEqual([]);
     } finally {
-        f.dispose();
-    }
-});
-
-test("a runtime reporting a missing library directory is unavailable without publishing stale grants", () => {
-    const f = fixture();
-    const original = process.env.PATH;
-    try {
-        f.command("python3", [join(f.root, "missing-stdlib")]);
-        process.env.PATH = f.bin;
-        const result = prepareDevelopmentSetup({
-            agentDir: join(f.root, "agent"),
-            machineId: "fixture",
-            profile: { tools: { python: ["python3"] } },
-        });
-        expect(result.unavailable).toHaveLength(1);
-        expect(() => applyDevelopmentSetup(result)).toThrow();
-        expect(existsSync(join(f.root, "agent"))).toBe(false);
-    } finally {
-        if (original === undefined) delete process.env.PATH;
-        else process.env.PATH = original;
         f.dispose();
     }
 });

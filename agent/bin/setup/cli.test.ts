@@ -5,6 +5,23 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
 
+test('cleanup previews an empty installation without changing it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-cleanup-cli-'));
+    try {
+        const result = spawnSync(process.execPath, [
+            resolve(import.meta.dir, '../../../bin/pi-setup'),
+            'cleanup', '--root', root, '--dry-run',
+        ], { encoding: 'utf8' });
+        expect(result.status).toBe(0);
+        const report = JSON.parse(result.stdout);
+        expect(report.dryRun).toBe(true);
+        expect(report.entries).toEqual([]);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(`${root}.runtime.lock`, { force: true });
+    }
+});
+
 test('the public setup launcher documents all operations and rejects incomplete mutation commands', () => {
     const entry = resolve(import.meta.dir, '../../../bin/pi-setup');
     const help = spawnSync(process.execPath, [entry, '--help'], {
@@ -61,6 +78,10 @@ test('bootstrap help loads without installed Pi packages or node_modules', () =>
             ),
             join(root, 'agent/extensions/_shared/secret-redaction.ts'),
         );
+        cpSync(resolve(import.meta.dir, '../../extensions/_shared/runtime-storage.ts'),
+            join(root, 'agent/extensions/_shared/runtime-storage.ts'));
+        cpSync(resolve(import.meta.dir, '../../extensions/_shared/json-object.ts'),
+            join(root, 'agent/extensions/_shared/json-object.ts'));
         const result = spawnSync(
             process.execPath,
             [join(root, 'bin/pi-setup'), '--help'],

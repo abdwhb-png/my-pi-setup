@@ -24,6 +24,7 @@ const USAGE = `Usage: pi-setup COMMAND [OPTIONS]
   publish --from DIR --tag TAG
   install|update --release TAG [--root DIR] [--bindings FILE] [--dry-run]
   check [--root DIR]
+  cleanup [--root DIR] [--dry-run]
   rollback [--root DIR] [--dry-run]
   recover [--root DIR]
   memory export --output FILE [--root DIR]
@@ -47,6 +48,7 @@ export async function runSetup(
             install: ['--release', '--root', '--bindings', '--dry-run'],
             update: ['--release', '--root', '--bindings', '--dry-run'],
             check: ['--root'],
+            cleanup: ['--root', '--dry-run'],
             rollback: ['--root', '--dry-run'],
             recover: ['--root'],
             memory:
@@ -127,6 +129,9 @@ export async function runSetup(
             console.log(
                 'Global memory transfer complete; sessions and project memories excluded.',
             );
+        } else if (command === 'cleanup') {
+            const { cleanupRuntimes } = await import('./cleanup.ts');
+            console.log(JSON.stringify(await cleanupRuntimes(root, flags.has('--dry-run')), null, 2));
         } else if (command === 'check') {
             const result = spawnSync(
                 process.execPath,

@@ -18,6 +18,14 @@ Inspect branches and worktrees before creating another. Work directly on `develo
 3. Promote the validated scope to `main` when authorized, push it, and record its full SHA. Fetch `origin/main` before selecting the release revision. Do not rewrite history or change the working checkout to manufacture release eligibility.
 4. Keep the private distribution workflow identical to the canonical `.github/workflows/portable-private-qualification.yml` in this repository. Synchronize it when that canonical file changes, then verify the private workflow revision before dispatch.
 
+## Local storage lifecycle
+
+Release preparation must leave only the files needed by the next step. Before packing, run `pi-setup cleanup --dry-run`, inspect the retained references and proposed removals, then run `pi-setup cleanup`. This uses the same retention policy as successful runtime promotions; legacy live sessions and unknown resources remain protected. Inspect storage left by completed attempts and remove verified disposable copies so they do not accumulate between publications. Keep the current and previous installed runtimes, referenced package installations, active processes and worktrees, personal state and migration backups outside this cleanup.
+
+Use temporary directories for builds, extraction and downloads, and remove them in success and failure paths. After a delivery is installed, compare its candidate against the installed runtime before removing the duplicate candidate, downloaded ZIP and tar archive; retain the activation record, checksums and guarded rollback script. Do not remove the installed runtime used by that script.
+
+After publication, verify the immutable release and both local assets with `gh release verify` and `gh release verify-asset`. Preserve the source SHA, archive SHA, tag, run URLs and structured publication/qualification receipts, then delete local `setup.tgz` copies. A retained draft can be downloaded again; verify its asset digests before discarding a local duplicate. For superseded or failed attempts, retain the descriptor, inventory and compact failure evidence; keep large archives only while an unresolved diagnosis needs their bytes. Delete only explicit, inspected paths after checking references and active use; never sweep a cache, staging or runtime root by filename pattern alone. Report the space reclaimed and any retained state.
+
 ## Prepare one private package
 
 Run the maintained setup operator; the checkout may remain on `develop`:
@@ -51,7 +59,7 @@ This creates a draft and requests the private workflow with `publish=true`; its 
 
 For an existing draft, inspect it and dispatch the same workflow with its original source/digest and `publish=true`; do not call the create operation again. It requalifies the same files before publishing. Provider generation remains disabled by default.
 
-A failure before finalization leaves the draft unpublished. When a verified correction requires a new package, retain the failed archive and run evidence; update only the still-unqualified draft assets, record the new source/digest, and run full qualification again. A prior receipt never qualifies replacement assets. Preserve its evidence and diagnose it; do not automatically retry whole jobs, replace assets after successful qualification, or create another tag to hide a failure. A failure after finalization may leave an immutable published release: report that state and inspect it instead of attempting replacement or deletion. Retain the run URL, source SHA, archive SHA and publication evidence.
+A failure before finalization leaves the draft unpublished. When a verified correction requires a new package, retain its source/digest and failure evidence; keep the archive only while diagnosis requires it, update only the still-unqualified draft assets, record the new source/digest, and run full qualification again. A prior receipt never qualifies replacement assets. Preserve its evidence and diagnose it; do not automatically retry whole jobs, replace assets after successful qualification, or create another tag to hide a failure. A failure after finalization may leave an immutable published release: report that state and inspect it instead of attempting replacement or deletion. Retain the run URL, source SHA, archive SHA and publication evidence.
 
 ## Install and memory
 

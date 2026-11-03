@@ -13,6 +13,8 @@ import {
 } from 'node:fs';
 import { dirname, resolve, relative, isAbsolute, join } from 'node:path';
 import { redactTextPreservingContext } from '../../extensions/_shared/secret-redaction.ts';
+import { runtimeChildStdio } from '../../extensions/_shared/runtime-storage.ts';
+export { asJsonObject as object, readJsonObject as json } from '../../extensions/_shared/json-object.ts';
 
 export function run(
     command: string,
@@ -25,6 +27,7 @@ export function run(
         env,
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
+        stdio: runtimeChildStdio('pipe'),
     });
     if (result.error || result.status !== 0) {
         // Redact before taking each stream's tail, so truncation cannot split a secret.
@@ -43,14 +46,6 @@ export function run(
         );
     }
     return result.stdout.trim();
-}
-export function object(value: unknown): Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Expected a JSON object');
-    return value as Record<string, unknown>;
-}
-export function json(path: string): Record<string, unknown> {
-    return object(JSON.parse(readFileSync(path, 'utf8')));
 }
 export function writeJson(path: string, value: unknown): void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

@@ -15,6 +15,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
+import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import {
     archive,
     assertInventory,
@@ -320,6 +321,12 @@ export async function packDistribution(
     output: string,
     sourceCommit = resolveMainCommit(sourceRoot),
 ): Promise<void> {
+    const lock = acquireRuntimeStorageLock(sourceRoot);
+    try { await packDistributionLocked(sourceRoot, output, sourceCommit); }
+    finally { lock.release(); }
+}
+
+async function packDistributionLocked(sourceRoot: string, output: string, sourceCommit: string): Promise<void> {
     sourceRoot = resolve(sourceRoot);
     output = resolve(output);
     if (!/^[a-f0-9]{40}$/.test(sourceCommit))
@@ -612,6 +619,12 @@ export async function validateReleaseSource(
     bundle: string,
     expectedCommit: string,
 ): Promise<SetupManifest> {
+    const lock = acquireRuntimeStorageLock(root);
+    try { return await validateReleaseSourceLocked(root, bundle, expectedCommit); }
+    finally { lock.release(); }
+}
+
+async function validateReleaseSourceLocked(root: string, bundle: string, expectedCommit: string): Promise<SetupManifest> {
     resolveMainCommit(root, expectedCommit);
     const manifest = validateBundle(bundle);
     if (manifest.sourceCommit !== expectedCommit)

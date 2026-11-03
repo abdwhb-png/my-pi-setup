@@ -218,15 +218,20 @@ if (privateProfile) {
             'bin/pi-runtime-store.test.ts',
             'bin/pi-wrapper-lib.test.ts',
             'scripts/configure-sandbox.test.ts',
+            '../.github/scripts/qualify-portable-setup.test.ts',
             'extensions/sandbox/capabilities/development-tools.test.ts',
+            'extensions/sandbox/capabilities/php-discovery.integration.test.ts',
             'extensions/sandbox/capabilities/development-setup.test.ts',
             'extensions/sandbox/doctor.test.ts',
             'extensions/_shared/redaction.test.ts',
+            'extensions/_shared/runtime-storage.test.ts',
+            'extensions/sandbox/runtime/distribution/distribution.test.ts',
             'extensions/sandbox/runtime/private-temp.test.ts',
             'extensions/sandbox/runtime/runtime-bundle.test.ts',
             'extensions/sandbox/preparation.test.ts',
         ],
         join(source, 'agent'),
+        { ...process.env, PI_PHP_DISCOVERY_CONTRACT: '1' },
     );
     passed('operator and launcher regression suites');
 

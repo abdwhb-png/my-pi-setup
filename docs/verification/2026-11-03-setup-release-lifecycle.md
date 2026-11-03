@@ -47,3 +47,9 @@ The historical generic [Lint workflow](https://github.com/abdwhb-png/my-pi-setup
 ## Boundaries
 
 The new finalization path was exercised against the GitHub test boundary, including refusal of failed, partial, mismatched and changed candidates and delayed/invalid attestation handling. Actual finalization and post-publication verification of this new draft were deliberately not executed. Public WSL2 qualification covers the synthetic mechanism; the complete personal profile was qualified on Ubuntu only. No paid provider generation, personal memory transfer or VPS installation was performed. Uncommitted Docker work in the separate Zerobox repository remains outside the qualified runtime.
+
+## Subsequent publication and storage cleanup
+
+Release `setup-2026-11-03.2`, from source `abf23b47e9cb6e8f39251555246e0dc996395487`, subsequently passed [public qualification](https://github.com/abdwhb-png/my-pi-setup/actions/runs/41698290046) and [private qualification and publication](https://github.com/abdwhb-png/my-pi-distribution/actions/runs/41698845429). Its archive SHA-256 is `7ccf4a5e5bc1d0c0dfb5a3f615d16f446a4613f5a8d74f59ec86b6172ce182fe`. The published release and both assets passed GitHub attestation verification. Provider generation remained disabled.
+
+Storage cleanup on 2026-11-03 removed local setup archives, including the resolved umask failure, after retaining descriptors, inventories and structured qualification/failure evidence. The older `.1` draft's remote asset digest was verified before removing its local archive. Compact qualification receipts remain in the corresponding `~/.cache/pi/release-candidates/` directories; the cleanup receipt is `~/.cache/pi/cleanup/2026-11-03-release-storage.json`. The earlier archive locations above describe their state at qualification time and no longer imply that large local copies must be retained.

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activateRelease } from "./pi-runtime-store.ts";
 import { deployFork, rollbackFork, verifyRuntimeCoherence } from "./pi-fork-release.ts";
+import { writableDirectories } from './setup/files.ts';
 
 interface DeploymentFixture {
   root: string;
@@ -203,6 +204,22 @@ async function expectFailure(action: () => Promise<unknown>, message: string): P
 }
 
 describe("pi-fork-release", () => {
+  it('automatically removes releases older than the validated rollback target', async () => {
+    const fixture = createDeploymentFixture();
+    try {
+      const builder = join(fixture.sourceRoot, 'scripts/local-release.mjs');
+      const initial = readFileSync(builder, 'utf8');
+      const first = await deploy(fixture);
+      writeFileSync(builder, initial.replace('abcdef1234567890', 'bbbbbb1234567890'));
+      const second = await deploy(fixture);
+      writeFileSync(builder, initial.replace('abcdef1234567890', 'cccccc1234567890'));
+      const third = await deploy(fixture);
+      expect(existsSync(first.releaseRoot)).toBe(false);
+      expect(realpathSync(join(fixture.runtimeRoot, 'previous'))).toBe(second.releaseRoot);
+      expect(realpathSync(join(fixture.runtimeRoot, 'current'))).toBe(third.releaseRoot);
+    } finally { writableDirectories(fixture.root); rmSync(fixture.root, { recursive: true, force: true }); }
+  });
+
   it("imports verified packed artifacts without the source checkout", async () => {
     const producer = createDeploymentFixture();
     const built = await deploy(producer);

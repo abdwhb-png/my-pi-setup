@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
     lstat,
     open,
@@ -8,6 +9,7 @@ import {
     readlink,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { pinRuntimeEntry } from "../../_shared/runtime-storage.ts";
 import { SandboxExecutionError } from "./contracts.ts";
 
 export interface PrivateRuntimeComponent {
@@ -91,7 +93,7 @@ async function secure(path: string, directory = false, signal?: AbortSignal) {
 
 const HASH_BLOCK_BYTES = 1024 * 1024;
 
-async function hashFile(
+export async function hashRuntimeFile(
     path: string,
     size: number,
     signal?: AbortSignal,
@@ -124,15 +126,44 @@ async function hashFile(
     }
 }
 
+export function pinManagedZeroboxEntry(entry: string): string {
+    const absolute = resolve(entry);
+    const managed = absolute.indexOf("/runtimes/zerobox/");
+    const piRoot =
+        managed >= 0 ? absolute.slice(0, managed) : dirname(dirname(absolute));
+    return pinRuntimeEntry(piRoot, () => realpathSync(absolute));
+}
+
 /** Resolve once so an atomic entry switch cannot pair two releases' metadata. */
 export async function readPrivateRuntimeEntry(
     entry: string,
     legacyProvenance: URL,
     signal?: AbortSignal,
 ): Promise<{ binaryPath: string; provenance: RuntimeProvenance }> {
+    return readPrivateRuntimeMetadata(entry, legacyProvenance, signal, () =>
+        realpath(entry),
+    );
+}
+
+export async function pinPrivateRuntimeEntry(
+    entry: string,
+    legacyProvenance: URL,
+    signal?: AbortSignal,
+) {
+    signal?.throwIfAborted();
+    const binaryPath = pinManagedZeroboxEntry(entry);
+    return readPrivateRuntimeMetadata(entry, legacyProvenance, signal, () => binaryPath);
+}
+
+async function readPrivateRuntimeMetadata(
+    entry: string,
+    legacyProvenance: URL,
+    signal: AbortSignal | undefined,
+    resolveBinary: () => string | Promise<string>,
+): Promise<{ binaryPath: string; provenance: RuntimeProvenance }> {
     try {
         signal?.throwIfAborted();
-        const binaryPath = await realpath(entry);
+        const binaryPath = await resolveBinary();
         signal?.throwIfAborted();
         const managed = (await lstat(entry)).isSymbolicLink();
         signal?.throwIfAborted();
@@ -256,7 +287,7 @@ async function tree(
                 if (file.sha256 !== undefined) {
                     const stat = await secure(path, false, signal);
                     if (
-                        (await hashFile(path, stat.size, signal)) !==
+                        (await hashRuntimeFile(path, stat.size, signal)) !==
                         file.sha256
                     )
                         throw new Error(
@@ -324,7 +355,7 @@ export async function resolvePrivateRuntime(
         if (((await lstat(binaryPath)).mode & 0o111) === 0)
             throw new Error("Runtime executable lacks execute permission");
         if (
-            (await hashFile(binaryPath, binaryStat.size, signal)) !==
+            (await hashRuntimeFile(binaryPath, binaryStat.size, signal)) !==
             options.expectedBinarySha256
         )
             throw new Error("Runtime executable digest mismatch");
@@ -376,7 +407,7 @@ export async function resolvePrivateRuntime(
         const helperStat = await secure(helper, false, signal);
         if (
             (await realpath(helper)) !== helper ||
-            (await hashFile(helper, helperStat.size, signal)) !==
+            (await hashRuntimeFile(helper, helperStat.size, signal)) !==
                 manifest.helper.sha256
         )
             throw new Error("Runtime helper digest mismatch");

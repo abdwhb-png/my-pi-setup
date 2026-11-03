@@ -17,6 +17,7 @@ import {
     selectInstallations,
     validateGlobalInstallations,
     installationContains,
+    installationReadPaths,
     type GlobalInstallations,
 } from "./capabilities/installations.ts";
 import {
@@ -57,7 +58,7 @@ const PROBES: Record<string, string[]> = {
     go: ["env", "-json", "GOROOT", "GOVERSION"],
     php: [
         "-r",
-        '$r=array_filter(array_merge([php_ini_loaded_file(),ini_get("extension_dir"),is_dir("/usr/share/zoneinfo") ? "/usr/share/zoneinfo" : false],array_filter(explode(PATH_SEPARATOR,get_include_path()),fn($p)=>str_starts_with($p,DIRECTORY_SEPARATOR)),preg_split("/[,\\n]+/",php_ini_scanned_files() ?: ""))); echo json_encode(["executable"=>PHP_BINARY,"version"=>PHP_VERSION,"resources"=>array_values(array_map("trim",$r))]);',
+        '$r=array_filter(array_merge([php_ini_loaded_file(),is_dir(ini_get("extension_dir")) ? ini_get("extension_dir") : false,is_dir("/usr/share/zoneinfo") ? "/usr/share/zoneinfo" : false],array_filter(explode(PATH_SEPARATOR,get_include_path()),fn($p)=>str_starts_with($p,DIRECTORY_SEPARATOR) && is_dir($p)),preg_split("/[,\\n]+/",php_ini_scanned_files() ?: ""))); echo json_encode(["executable"=>PHP_BINARY,"version"=>PHP_VERSION,"resources"=>array_values(array_map("trim",$r))]);',
     ],
     composer: ["--no-plugins", "--no-scripts", "--version"],
     pnpm: ["--version"],
@@ -67,6 +68,17 @@ function object(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Tool requirements must be an object");
     return value as Record<string, unknown>;
+}
+
+function firstExecutable(candidates: string[]): string | undefined {
+    return candidates.find((path) => {
+        try {
+            accessSync(path, constants.X_OK);
+            return statSync(path).isFile();
+        } catch {
+            return false;
+        }
+    });
 }
 
 /** Resolve declared tools only; never install packages or execute project code. */
@@ -121,6 +133,34 @@ export function resolveDevelopmentTools(
             permissionsOnly,
         });
     };
+    const checkExecutable = (candidate: string) => {
+        accessSync(candidate, constants.X_OK);
+        if (!statSync(candidate).isFile())
+            throw new Error(`Tool command is not a file: ${candidate}`);
+        watch(candidate);
+        const mode = statSync(candidate).mode;
+        let privateAncestor: string | undefined;
+        if ((mode & 0o020) !== 0 && (mode & 0o002) === 0) {
+            // Vendor modes can allow group writes behind an owner-only directory.
+            for (
+                let parent = dirname(realpathSync(candidate));
+                parent !== dirname(parent);
+                parent = dirname(parent)
+            ) {
+                const metadata = statSync(parent);
+                if (
+                    metadata.uid === process.geteuid?.() &&
+                    (metadata.mode & 0o077) === 0
+                ) {
+                    privateAncestor = parent;
+                    watch(parent, true);
+                    break;
+                }
+            }
+        }
+        if ((mode & 0o002) !== 0 || ((mode & 0o020) !== 0 && !privateAncestor))
+            throw new Error(`Untrusted writable executable: ${candidate}`);
+    };
     const installations: GlobalInstallations = {};
     const tools: DiscoveredTool[] = [];
     const unavailable: ToolDiscovery["unavailable"] = [];
@@ -148,6 +188,30 @@ export function resolveDevelopmentTools(
                     watch(entry.root);
                     for (const file of entry.files ?? [])
                         watch(join(entry.root, file));
+                }
+                const entries = installations[name];
+                for (const command of commands) {
+                    const candidates = entries.flatMap((entry) =>
+                        entry.path.map((part) =>
+                            join(entry.root, part, command),
+                        ),
+                    );
+                    const candidate = firstExecutable(
+                        candidates.filter((path) =>
+                            entries.some((entry) =>
+                                installationReadPaths(entry).some((resource) =>
+                                    entry.files === undefined
+                                        ? installationContains(resource, path)
+                                        : resource === path,
+                                ),
+                            ),
+                        ),
+                    );
+                    if (!candidate)
+                        throw new Error(
+                            `Bound command ${command} is unavailable or not executable; repair its authorized installation`,
+                        );
+                    checkExecutable(candidate);
                 }
                 continue;
             }
@@ -258,48 +322,14 @@ export function resolveDevelopmentTools(
                 const search = (options.path ?? process.env.PATH ?? "")
                     .split(delimiter)
                     .filter(isAbsolute);
-                const candidate = search
-                    .map((directory) => join(directory, command))
-                    .find((path) => {
-                        try {
-                            accessSync(path, constants.X_OK);
-                            return statSync(path).isFile();
-                        } catch {
-                            return false;
-                        }
-                    });
+                const candidate = firstExecutable(
+                    search.map((directory) => join(directory, command)),
+                );
                 if (!candidate)
                     throw new Error(
                         `Command ${command} not found on absolute PATH entries; install it or supply --bindings FILE`,
                     );
-                watch(candidate);
-                const mode = statSync(candidate).mode;
-                let privateAncestor: string | undefined;
-                if ((mode & 0o020) !== 0 && (mode & 0o002) === 0) {
-                    // Vendor modes can allow group writes behind an owner-only directory.
-                    for (
-                        let parent = dirname(realpathSync(candidate));
-                        parent !== dirname(parent);
-                        parent = dirname(parent)
-                    ) {
-                        const metadata = statSync(parent);
-                        if (
-                            metadata.uid === process.geteuid?.() &&
-                            (metadata.mode & 0o077) === 0
-                        ) {
-                            privateAncestor = parent;
-                            watch(parent, true);
-                            break;
-                        }
-                    }
-                }
-                if (
-                    (mode & 0o002) !== 0 ||
-                    ((mode & 0o020) !== 0 && !privateAncestor)
-                )
-                    throw new Error(
-                        `Untrusted writable executable: ${candidate}`,
-                    );
+                checkExecutable(candidate);
                 const directory = mkdtempSync(join(tmpdir(), "pi-tool-probe-"));
                 let data: Record<string, unknown>;
                 let executable = candidate;
@@ -355,7 +385,7 @@ export function resolveDevelopmentTools(
                             throw new Error(
                                 `Unresolved ${command} shim; supply --bindings FILE`,
                             );
-                        watch(executable);
+                        checkExecutable(executable);
                     }
                     const output = query(executable, PROBES[command]);
                     if (command === "go" && output.startsWith("{")) {
@@ -440,6 +470,7 @@ export function resolveDevelopmentTools(
                     !isAbsolute(data.executable)
                 )
                     throw new Error(`Invalid ${command} metadata`);
+                checkExecutable(data.executable);
                 if (realpathSync(executable) === realpathSync(data.executable))
                     addFile(executable, true);
                 else if (basename(data.executable) !== command)
@@ -523,9 +554,11 @@ export function resolveDevelopmentTools(
             selectInstallations({ [name]: installations[name] });
         } catch (error) {
             delete installations[name];
+            const stale =
+                !overrides[name] && !options.rediscover && existing[name];
             unavailable.push({
                 name,
-                reason: `${error instanceof Error ? error.message : "Tool discovery failed"}. Use preview/apply --rediscover for stale bindings.`,
+                reason: `${error instanceof Error ? error.message : "Tool discovery failed"}${stale ? ". Use preview/apply --rediscover for stale bindings." : ""}`,
             });
         }
     }

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { runtimeChildStdio } from "../extensions/_shared/runtime-storage.ts";
 import { getDefaultAgentDir, repairConfiguredPiPackages } from "../extensions/_shared/package-install/finalizer.ts";
 import {
   isToolGroupsEntry,
@@ -201,7 +202,7 @@ export function runRealPi(realPiPath: string, args: string[], cwd: string, reque
     : { command: realPiPath, prefixArgs: [] };
   const result = spawnSync(launch.command, [...launch.prefixArgs, ...args], {
     cwd,
-    stdio: "inherit",
+    stdio: runtimeChildStdio("inherit"),
     env,
   });
   return result.status ?? 1;

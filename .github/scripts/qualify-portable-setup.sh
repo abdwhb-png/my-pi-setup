@@ -6,7 +6,7 @@ test "${GITHUB_ACTIONS:-}" = true
 test "$(uname -m)" = x86_64
 source_root=$(pwd -P)
 runtime_input=$1
-if [[ "$runtime_input" != private ]]; then runtime_input=$(realpath "$runtime_input"); fi
+if [[ "$runtime_input" != private && "$runtime_input" != tools-only ]]; then runtime_input=$(realpath "$runtime_input"); fi
 qualification_root=$2
 test ! -e "$qualification_root"
 mkdir -p "$qualification_root/evidence"
@@ -14,6 +14,10 @@ export QUALIFICATION_HOME="$qualification_root/destination home é portable setu
 install -d -m 700 "$QUALIFICATION_HOME"
 # The destination HOME may already contain host tools. It must not contain Pi.
 export HOME="$QUALIFICATION_HOME"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
 export QUALIFICATION_TOOL_LAYOUT=${QUALIFICATION_TOOL_LAYOUT:-system}
 exec > >(tee "$qualification_root/evidence/qualification.log") 2>&1
 uname -a
@@ -23,12 +27,19 @@ else
   ! uname -r | grep -qi microsoft
 fi
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git unzip xz-utils python3 build-essential php-cli composer golang-go bubblewrap libcap2-bin gh
-if test -e /proc/sys/kernel/unprivileged_userns_clone; then
-  sudo sysctl -w kernel.unprivileged_userns_clone=1
-fi
-if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
-  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+sudo apt-get install -y ca-certificates curl git unzip xz-utils python3 build-essential bubblewrap libcap2-bin gh
+case "$QUALIFICATION_TOOL_LAYOUT" in
+  system) sudo apt-get install -y php-cli composer golang-go ;;
+  mise) ;;
+  *) echo 'Unsupported qualification tool layout' >&2; exit 1 ;;
+esac
+if [[ "$runtime_input" != tools-only ]]; then
+  if test -e /proc/sys/kernel/unprivileged_userns_clone; then
+    sudo sysctl -w kernel.unprivileged_userns_clone=1
+  fi
+  if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  fi
 fi
 if ! command -v node >/dev/null || [[ $(node --version) != v24.18.0 ]]; then
   curl --fail --location https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz -o "$qualification_root/node.tar.xz"
@@ -53,6 +64,7 @@ if ! command -v bun >/dev/null; then
 fi
 test "$(bun --version)" = 1.3.14
 sfw --version
+qualification_bun=$(command -v bun)
 if [[ "$QUALIFICATION_TOOL_LAYOUT" == mise ]]; then
   # Reuse a published, qualified developer-tool revision; Pi does not depend on this installer.
   git clone --no-checkout https://github.com/abdwhb-png/dev-tools.git "$qualification_root/dev-tools"
@@ -68,6 +80,16 @@ else
   exit 1
 fi
 printf 'host tools remain local\n' > "$HOME/.host-tools-marker"
+timeout --kill-after=10s 180s "$qualification_bun" .github/scripts/qualify-tool-discovery.ts "$source_root" "$qualification_root/evidence"
+if [[ "$runtime_input" == tools-only ]]; then
+  cd "$source_root/agent"
+  PI_PHP_DISCOVERY_CONTRACT=1 "$qualification_bun" test --isolate \
+    extensions/sandbox/capabilities/development-tools.test.ts \
+    extensions/sandbox/capabilities/php-discovery.integration.test.ts \
+    ../.github/scripts/qualify-portable-setup.test.ts \
+    > "$qualification_root/evidence/tool-regressions.log" 2>&1
+  exit 0
+fi
 if [[ "$runtime_input" != private ]]; then
 mkdir "$qualification_root/zerobox"
 expected=$(cut -d ' ' -f1 "$runtime_input/qualified-native-runtime.sha256")

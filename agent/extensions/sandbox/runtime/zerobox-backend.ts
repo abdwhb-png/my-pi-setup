@@ -36,6 +36,8 @@ import { assertPrivateRootDirectory } from "./private-temp.ts";
 import {
     resolvePrivateRuntime,
     readPrivateRuntimeEntry,
+    pinManagedZeroboxEntry,
+    pinPrivateRuntimeEntry,
     type RuntimeProvenance,
     type PrivateRuntimeBundle,
 } from "./runtime-bundle.ts";
@@ -513,10 +515,10 @@ class ZeroboxBackend implements SandboxBackend {
         deadline.check();
         const pinned = this.#expectedProvenance
             ? {
-                  binaryPath: this.#binaryPath,
+                  binaryPath: pinManagedZeroboxEntry(this.#binaryPath),
                   provenance: this.#expectedProvenance,
               }
-            : await readPrivateRuntimeEntry(
+            : await pinPrivateRuntimeEntry(
                   this.#binaryPath,
                   PROVENANCE_URL,
                   deadline.signal,

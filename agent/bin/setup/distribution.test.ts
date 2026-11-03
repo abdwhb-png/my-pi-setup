@@ -23,6 +23,13 @@ import {
 } from './distribution.ts';
 import * as distribution from './distribution.ts';
 import { run, writeJson, digest, archive, inventory } from './files.ts';
+import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
+test('packing cannot race runtime garbage collection', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-pack-lock-'));
+    const lock = acquireRuntimeStorageLock(root);
+    try { await expect(packDistribution(root, join(root, 'output'), 'a'.repeat(40))).rejects.toThrow('Runtime storage is busy'); }
+    finally { lock.release(); rmSync(root, { recursive: true, force: true }); rmSync(`${root}.runtime.lock`, { force: true }); }
+});
 test('distribution code selection excludes credentials and runtime user state', () => {
     for (const path of [
         'agent/auth.json',

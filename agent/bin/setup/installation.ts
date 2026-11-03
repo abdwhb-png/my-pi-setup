@@ -11,6 +11,7 @@ import {
     lstatSync,
 } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
+import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import { validateBundle } from './distribution.ts';
 import {
     assertInventory,
@@ -243,7 +244,6 @@ async function transact(
     prepare: (candidate: string) => Promise<void>,
     provision: (id: string) => Promise<void>,
 ): Promise<string> {
-    assertStopped(root);
     if (existsSync(root) && lstatSync(root).isSymbolicLink())
         throw new Error('Installation root must not be a symbolic link');
     const id = randomUUID();
@@ -251,21 +251,23 @@ async function transact(
     const backup = join(workspace, 'previous'),
         candidate = join(workspace, 'candidate');
     const journal = `${root}.setup-journal.json`;
-    const hadTarget = existsSync(root);
-    const old = hadTarget ? readInstallation(root) : undefined;
-    const baseline = hadTarget ? inventory(root) : {};
+    let hadTarget: boolean;
+    let old: InstallationState | undefined;
+    let baseline: Record<string, string>;
     mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
-    writeFileSync(
-        journal,
-        JSON.stringify({
-            schemaVersion: 1,
-            id,
-            pid: process.pid,
-            hadTarget,
-            phase: 'preparing',
-        }),
-        { flag: 'wx', mode: 0o600 },
-    );
+    const storageLock = acquireRuntimeStorageLock(root);
+    try {
+        assertSetupIdle(root);
+        assertStopped(root);
+        hadTarget = existsSync(root);
+        old = hadTarget ? readInstallation(root) : undefined;
+        baseline = hadTarget ? inventory(root) : {};
+        writeFileSync(journal, JSON.stringify({
+            schemaVersion: 1, id, pid: process.pid, hadTarget, phase: 'preparing',
+        }), { flag: 'wx', mode: 0o600 });
+    } finally {
+        storageLock.release();
+    }
     try {
         mkdirSync(workspace, { mode: 0o700 });
         if (hadTarget)
@@ -328,6 +330,9 @@ async function transact(
         });
         rmSync(journal);
         if (!hadTarget) rmSync(workspace, { recursive: true, force: true });
+        const { cleanupRuntimes } = await import('./cleanup.ts');
+        try { await cleanupRuntimes(root); }
+        catch (error) { console.warn(`Setup completed, but runtime cleanup failed: ${error instanceof Error ? error.message : String(error)}`); }
         return `Installed ${release}`;
     } catch (error) {
         recoverInstallation(root, true);

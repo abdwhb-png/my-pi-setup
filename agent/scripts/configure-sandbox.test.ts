@@ -6,6 +6,7 @@ import {
     readFileSync,
     existsSync,
     rmSync,
+    chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +116,13 @@ test("logical profiles can be inspected, applied and explicitly rediscovered thr
         expect(new TextDecoder().decode(preview.stdout)).toContain(executable);
         expect(run("apply").exitCode).toBe(0);
         expect(run("check").exitCode).toBe(0);
+        const authority = join(agent, "config/sandbox.json");
+        const beforePermissionLoss = readFileSync(authority);
+        chmodSync(executable, 0o600);
+        expect(run("check").exitCode).toBe(1);
+        expect(run("apply").exitCode).toBe(1);
+        expect(readFileSync(authority)).toEqual(beforePermissionLoss);
+        chmodSync(executable, 0o700);
         expect(run("check", "--rediscover").exitCode).toBe(1);
         rmSync(executable);
         expect(run("preview", "--rediscover").exitCode).toBe(1);

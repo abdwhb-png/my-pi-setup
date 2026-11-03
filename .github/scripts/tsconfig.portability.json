@@ -7,6 +7,8 @@
   },
   "include": [
     "qualify-portable-setup.ts",
+    "qualify-tool-discovery.ts",
+    "qualify-portable-setup.test.ts",
     "finalize-portable-setup.ts",
     "qualify-installed-profile.ts",
     "portable-provider-checks.ts",

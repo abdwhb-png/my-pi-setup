@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -13,6 +14,38 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { acquireRuntimeStorageLock, pruneRuntimeDirectories, readRuntimeUsage, type RuntimeCleanupReport } from "../extensions/_shared/runtime-storage.ts";
+
+export async function cleanupPiRuntimeStore(piRoot: string, dryRun = false): Promise<RuntimeCleanupReport[]> {
+  const lock = acquireRuntimeStorageLock(piRoot);
+  try {
+    if (existsSync(`${lock.root}.setup-journal.json`)) throw new Error("Runtime cleanup is blocked by a setup transaction");
+    const runtimeRoot = join(lock.root, "runtime/pi-core");
+    if (!existsSync(join(runtimeRoot, "releases"))) return [];
+    const keep = new Map<string, string>();
+    for (const name of ["current", "previous"])
+      if (existsSync(join(runtimeRoot, name))) {
+        const runtime = name === "current" ? loadCurrentPiRuntime(runtimeRoot) : loadPreviousPiRuntime(runtimeRoot);
+        keep.set(runtime.releaseRoot, `${name} Pi runtime`);
+      }
+    if (!keep.size) throw new Error("Pi runtime cleanup requires a current release");
+    loadCurrentPiRuntime(runtimeRoot);
+    const usage = readRuntimeUsage(lock, dryRun);
+    const releases = await pruneRuntimeDirectories({ lock, store: join(runtimeRoot, "releases"), keep, usage, dryRun,
+      validate: (path) => { loadManagedRelease(path, runtimeRoot); },
+    });
+    const active = join(runtimeRoot, "active");
+    const states = await pruneRuntimeDirectories({ lock, store: join(runtimeRoot, "states"),
+      keep: new Map(existsSync(active) ? [[realpathSync(active), "active promotion state"]] : []), usage, dryRun,
+      validate: (path) => {
+        const names = readdirSync(path);
+        if (!names.includes("current") || names.some(name => !["current", "previous"].includes(name) || !lstatSync(join(path, name)).isSymbolicLink()))
+          throw new Error("Unrecognized promotion state");
+      },
+    });
+    return [releases, states];
+  } finally { lock.release(); }
+}
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 const RUNTIME_MANIFEST = "runtime-manifest.json";
@@ -114,9 +147,9 @@ export function rollbackRelease(runtimeRoot = getPiRuntimeRoot()): ActivePiRunti
 
 function publishState(runtimeRoot: string, currentRelease: string, previousRelease?: string): void {
   const statesRoot = join(runtimeRoot, "states");
-  mkdirSync(statesRoot, { recursive: true });
+  mkdirSync(statesRoot, { recursive: true, mode: 0o700 });
   const stateRoot = join(statesRoot, `${Date.now()}-${process.pid}-${randomUUID()}`);
-  mkdirSync(stateRoot);
+  mkdirSync(stateRoot, { mode: 0o700 });
   symlinkSync(relative(stateRoot, currentRelease), join(stateRoot, "current"));
   if (previousRelease !== undefined) {
     symlinkSync(relative(stateRoot, previousRelease), join(stateRoot, "previous"));
