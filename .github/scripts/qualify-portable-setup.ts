@@ -12,8 +12,10 @@ import {
     realpathSync,
     rmSync,
     writeFileSync,
+    symlinkSync,
+    unlinkSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, relative } from 'node:path';
 import {
     packDistribution,
     downloadDraftDistribution,
@@ -148,7 +150,7 @@ if (privateProfile) {
         [join(source, 'bin/pi'), 'list', '--no-approve'],
         source,
     );
-    await stageRuntimeRelease({
+    const stagedRelease = await stageRuntimeRelease({
         candidateRoot: zero,
         runtimeBase: join(source, 'runtimes'),
         managedBinary: join(source, 'bin/zerobox'),
@@ -157,6 +159,12 @@ if (privateProfile) {
             json(join(zero, 'provenance.json')).binarySha256,
         ),
     });
+    const managedBinary = join(source, 'bin/zerobox');
+    unlinkSync(managedBinary);
+    symlinkSync(
+        relative(dirname(managedBinary), join(stagedRelease, 'bin/zerobox')),
+        managedBinary,
+    );
     // The importer owns these generated manifests; record the disposable producer snapshot.
     run(
         'git',
