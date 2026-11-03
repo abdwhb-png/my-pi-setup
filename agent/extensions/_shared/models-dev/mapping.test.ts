@@ -46,7 +46,10 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('maps ocg/go-<id> to provider opencode-go when owned_by begins with ocode-go', () => {
+    it('maps ocg/ ids to provider opencode-go, with or without the go- route marker', () => {
+        // Live CPA exposes both shapes under the ocg/ prefix: `ocg/go-<id>` for
+        // aliased routes and `ocg/<id>` for routes whose alias carries no
+        // `go-` marker. Both denote the same opencode-go provider scope.
         const cases: Array<[string, string, ModelsDevRef[]]> = [
             [
                 'ocg/go-deepseek-v4-flash',
@@ -63,6 +66,11 @@ describe('resolveCpaModelsDevRefs', () => {
                 'ocode-go',
                 [providerRef('opencode-go', 'deepseek-v4-pro')],
             ],
+            [
+                'ocg/space-bunny',
+                'ocode-go-3',
+                [providerRef('opencode-go', 'space-bunny')],
+            ],
         ];
         for (const [modelId, ownedBy, expected] of cases) {
             expect(
@@ -72,25 +80,120 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('keeps bare go- duplicates unmapped', () => {
-        expect(resolveCpaModelsDevRefs('go-deepseek-v4-flash', 'ocode-go (main)')).toEqual([]);
-        expect(resolveCpaModelsDevRefs('go-glm-5.2', 'ocode-go')).toEqual([]);
+    it('strips the go- route marker from ocz/ ids before scoping them to opencode', () => {
+        // The ocode-zen group aliases shared routes as `go-<id>` and then adds
+        // its own `ocz/` prefix, so a client id can carry two markers while
+        // models.dev only knows the bare route id.
+        const cases: Array<[string, string, ModelsDevRef[]]> = [
+            [
+                'ocz/go-deepseek-v4-flash',
+                'ocode-zen',
+                [providerRef('opencode', 'deepseek-v4-flash')],
+            ],
+            [
+                'ocz/go-glm-5.3-flash',
+                'ocode-zen',
+                [providerRef('opencode', 'glm-5.3-flash')],
+            ],
+            [
+                'ocz/go-big-pickle',
+                'ocode-zen',
+                [providerRef('opencode', 'big-pickle')],
+            ],
+            [
+                'ocz/mimo-v2.5-free',
+                'ocode-zen (free)',
+                [providerRef('opencode', 'mimo-v2.5-free')],
+            ],
+        ];
+        for (const [modelId, ownedBy, expected] of cases) {
+            expect(
+                resolveCpaModelsDevRefs(modelId, ownedBy),
+                `${ownedBy}/${modelId}`,
+            ).toEqual(expected);
+        }
+    });
+
+    it('maps bare go- aliases of the ocode-zen group to provider opencode', () => {
+        // `go-big-pickle` is the unprefixed alias of the same ocode-zen route.
+        // Only the ocode-go bare duplicates must stay unmapped.
+        expect(resolveCpaModelsDevRefs('go-big-pickle', 'ocode-zen')).toEqual([
+            providerRef('opencode', 'big-pickle'),
+        ]);
+    });
+
+    it('resolves a bare go- alias from its owner, and leaves it unmapped without one', () => {
+        // A bare `go-` id is the unprefixed alias of the same route, so the
+        // owner identifies the group it belongs to. Without an owner the
+        // group is unknowable and the id stays unmapped, because `go-` alone
+        // does not distinguish ocode-go from ocode-zen.
+        expect(
+            resolveCpaModelsDevRefs('go-deepseek-v4-flash', 'ocode-go (main)'),
+        ).toEqual([providerRef('opencode-go', 'deepseek-v4-flash')]);
+        expect(resolveCpaModelsDevRefs('go-glm-5.2', 'ocode-go')).toEqual([
+            providerRef('opencode-go', 'glm-5.2'),
+        ]);
         expect(resolveCpaModelsDevRefs('go-deepseek-v4-flash')).toEqual([]);
     });
 
-    it('does not infer a provider when owned_by is unknown or missing', () => {
+    it('falls back to shared derivation for an unrecognized owned_by', () => {
+        // A new CPA client group must be enriched without a code edit. The
+        // derived refs stay exact, so an id with no models.dev counterpart
+        // still resolves to nothing.
         expect(
             resolveCpaModelsDevRefs('deepseek/deepseek-v4-flash', 'mystery-provider'),
-        ).toEqual([]);
-        expect(resolveCpaModelsDevRefs('glm-unknown', 'mystery-provider')).toEqual([]);
-        expect(resolveCpaModelsDevRefs('unknown-bare-id', 'mystery-provider')).toEqual([]);
-        expect(resolveUsageModelsDevRefs('cpa', 'glm-unknown')).toEqual([]);
-        expect(resolveUsageModelsDevRefs('cpa', 'unknown-bare-id')).toEqual([]);
+        ).toEqual([
+            providerRef('openrouter', 'deepseek/deepseek-v4-flash'),
+            baseRef('deepseek/deepseek-v4-flash'),
+        ]);
+        expect(resolveCpaModelsDevRefs('gemini-9-unreleased', 'mystery-provider')).toEqual(
+            [
+                providerRef('google', 'gemini-9-unreleased'),
+                baseRef('google/gemini-9-unreleased'),
+            ],
+        );
     });
 
-    it('maps ocg/go- ids by prefix even when owned_by is absent', () => {
+    it('does not infer a vendor for an id outside every known family', () => {
+        for (const modelId of ['glm-unknown', 'unknown-bare-id', 'jev-1.13']) {
+            expect(
+                resolveCpaModelsDevRefs(modelId, 'mystery-provider'),
+                `live:${modelId}`,
+            ).toEqual([]);
+            expect(resolveUsageModelsDevRefs('cpa', modelId), `usage:${modelId}`).toEqual(
+                [],
+            );
+        }
+    });
+
+    it('maps the anthropic client group by owner with base ref fallback', () => {
+        // owned_by "anthropic" is a live CPA group the adapter never handled;
+        // its ids are already exact models.dev anthropic ids.
+        for (const modelId of [
+            'claude-opus-5-5',
+            'claude-sonnet-5-5',
+            'claude-opus-4-8',
+            'claude-fable-5-1',
+            'claude-haiku-4-5-20251001',
+        ]) {
+            const expected = [
+                providerRef('anthropic', modelId),
+                baseRef(`anthropic/${modelId}`),
+            ];
+            expect(
+                resolveCpaModelsDevRefs(modelId, 'anthropic'),
+                `live:${modelId}`,
+            ).toEqual(expected);
+        }
+    });
+
+    it('maps ocg/ ids by prefix even when owned_by is absent', () => {
+        // The group prefix carries the group, so no owner is needed.
         expect(resolveCpaModelsDevRefs('ocg/go-deepseek-v4-flash')).toEqual([
             providerRef('opencode-go', 'deepseek-v4-flash'),
+        ]);
+        expect(resolveCpaModelsDevRefs('ocg/space-bunny')).toEqual([
+            providerRef('opencode-go', 'space-bunny'),
         ]);
     });
 
@@ -120,16 +223,24 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('maps Z.ai client ids by owner and exact historical conventions', () => {
+    it('strips the zcoding- alias marker from Z.ai client ids', () => {
+        // Live CPA exposes the Z.ai coding routes as `zcoding-<id>`, optionally
+        // behind the `zai-coding/` group prefix. models.dev only knows the
+        // bare GLM id under provider zai-coding-plan.
         for (const modelId of ['glm-4.7', 'glm-5.2', 'glm-5-turbo']) {
             const expected = [providerRef('zai-coding-plan', modelId)];
             expect(
-                resolveCpaModelsDevRefs(modelId, 'z.ai (coding)'),
-                `live:${modelId}`,
+                resolveCpaModelsDevRefs(`zcoding-${modelId}`, 'z.ai (coding)'),
+                `live:zcoding-${modelId}`,
             ).toEqual(expected);
-            expect(resolveUsageModelsDevRefs('cpa', modelId), `usage:${modelId}`).toEqual(
-                expected,
-            );
+            expect(
+                resolveCpaModelsDevRefs(`zai-coding/zcoding-${modelId}`, 'z.ai (coding)'),
+                `live:zai-coding/zcoding-${modelId}`,
+            ).toEqual(expected);
+            expect(
+                resolveUsageModelsDevRefs('cpa', `zcoding-${modelId}`),
+                `usage:zcoding-${modelId}`,
+            ).toEqual(expected);
             expect(
                 resolveCpaModelsDevRefs(`zai-coding/${modelId}`, 'z.ai (coding)'),
                 `prefixed:${modelId}`,
@@ -158,20 +269,23 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('maps exactly the nine live Antigravity client ids', () => {
+    it('derives Antigravity client ids to vendor base refs', () => {
+        // The Antigravity client ids are vendor model ids, so the vendor is
+        // derived from the family prefix instead of an id table. Gemini keeps
+        // models.dev's dotted google ids verbatim.
         const cases: Array<[string, string]> = [
-            ['claude-opus-4-6-thinking', 'anthropic/claude-opus-4-6'],
-            ['claude-sonnet-4-6', 'anthropic/claude-sonnet-4-6'],
-            ['gemini-3.1-flash-image', 'google/gemini-3.1-flash-image'],
-            ['gemini-3.1-flash-lite', 'google/gemini-3.1-flash-lite'],
-            ['gemini-3.1-pro-preview', 'google/gemini-3.1-pro-preview'],
-            ['gemini-3.5-flash', 'google/gemini-3.5-flash'],
-            ['gemini-3.6-flash', 'google/gemini-3.6-flash'],
-            ['gemini-3-flash-preview', 'google/gemini-3-flash-preview'],
-            ['gpt-oss-120b-medium', 'openai/gpt-oss-120b'],
+            ['gemini-4-argon', 'gemini-4-argon'],
+            ['gemini-3.8-flash', 'gemini-3.8-flash'],
+            ['gemini-3.1-flash-image', 'gemini-3.1-flash-image'],
+            ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite'],
+            ['gemini-3.5-flash-lite', 'gemini-3.5-flash-lite'],
+            ['gemini-3-flash-preview', 'gemini-3-flash-preview'],
         ];
-        for (const [modelId, base] of cases) {
-            const expected = [baseRef(base)];
+        for (const [modelId, vendorId] of cases) {
+            const expected = [
+                providerRef('google', vendorId),
+                baseRef(`google/${vendorId}`),
+            ];
             expect(
                 resolveCpaModelsDevRefs(modelId, 'antigravity'),
                 `live:${modelId}`,
@@ -182,17 +296,52 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('does not map hidden or excluded Antigravity ids', () => {
-        for (const modelId of [
-            'gemini-3.6-flash-high',
-            'gemini-3-flash-agent',
-            'gemini-pro-agent',
-            'gemini-3-flash',
-            'gemini-3.1-pro-low',
-            'gemini-3.5-flash-low',
-            'gemini-3.5-flash-extra-low',
-            'gemini-3.5-flash-lite',
-        ]) {
+    it('strips the -agy vendor marker and normalizes anthropic version separators', () => {
+        // `-agy` is a CPA-local marker with no models.dev counterpart, and
+        // models.dev's anthropic ids are dash-separated while the CPA aliases
+        // are dot-separated.
+        const cases: Array<[string, string]> = [
+            ['claude-opus-4.6-agy', 'claude-opus-4-6'],
+            ['claude-sonnet-4.6-agy', 'claude-sonnet-4-6'],
+            ['claude-opus-5.5-agy', 'claude-opus-5-5'],
+            ['claude-sonnet-5.5-agy', 'claude-sonnet-5-5'],
+        ];
+        for (const [modelId, vendorId] of cases) {
+            const expected = [
+                providerRef('anthropic', vendorId),
+                baseRef(`anthropic/${vendorId}`),
+            ];
+            expect(
+                resolveCpaModelsDevRefs(modelId, 'antigravity'),
+                `live:${modelId}`,
+            ).toEqual(expected);
+            expect(resolveUsageModelsDevRefs('cpa', modelId), `usage:${modelId}`).toEqual(
+                expected,
+            );
+        }
+    });
+
+    it('strips a trailing reasoning-budget segment when the full id is unknown', () => {
+        // models.dev records the base route, not the per-budget variant, so
+        // the exact id is tried first and the stripped id is the fallback.
+        const expected = [
+            providerRef('openai', 'gpt-oss-120b-medium'),
+            baseRef('openai/gpt-oss-120b-medium'),
+            providerRef('openai', 'gpt-oss-120b'),
+            baseRef('openai/gpt-oss-120b'),
+        ];
+        expect(
+            resolveCpaModelsDevRefs('gpt-oss-120b-medium', 'antigravity'),
+            'live:gpt-oss-120b-medium',
+        ).toEqual(expected);
+        expect(
+            resolveUsageModelsDevRefs('cpa', 'gpt-oss-120b-medium'),
+            'usage:gpt-oss-120b-medium',
+        ).toEqual(expected);
+    });
+
+    it('does not invent a vendor for an Antigravity id outside every known family', () => {
+        for (const modelId of ['mystery-model-1', 'internal-preview']) {
             expect(resolveCpaModelsDevRefs(modelId, 'antigravity'), modelId).toEqual([]);
             expect(resolveUsageModelsDevRefs('cpa', modelId), `usage:${modelId}`).toEqual(
                 [],
@@ -200,8 +349,23 @@ describe('resolveCpaModelsDevRefs', () => {
         }
     });
 
-    it('skips or/-prefixed pool aliases', () => {
-        expect(resolveCpaModelsDevRefs('or/deepseek-v4-flash')).toEqual([]);
+    it('strips the or/ group prefix to the pool id, live and without owned_by', () => {
+        // `or/` belongs to exactly one group, so unlike a bare `go-` id it
+        // needs no owner to identify the group behind it.
+        const expected = [
+            providerRef('openrouter', 'deepseek/deepseek-v4-pro'),
+            baseRef('deepseek/deepseek-v4-pro'),
+        ];
+        expect(
+            resolveCpaModelsDevRefs('or/deepseek/deepseek-v4-pro', 'openrouter'),
+            'live:or/deepseek/deepseek-v4-pro',
+        ).toEqual(expected);
+        expect(
+            resolveUsageModelsDevRefs('cpa', 'or/deepseek/deepseek-v4-pro'),
+            'usage:or/deepseek/deepseek-v4-pro',
+        ).toEqual(expected);
+        expect(resolveCpaModelsDevRefs('or/')).toEqual([]);
+        expect(resolveCpaModelsDevRefs('or/noslash')).toEqual([]);
     });
 
     it('returns no candidates for empty or whitespace ids', () => {
@@ -361,9 +525,21 @@ describe('resolveUsageModelsDevRefs', () => {
                 ],
             ],
             ['zai-coding/glm-5.2', [providerRef('zai-coding-plan', 'glm-5.2')]],
-            ['glm-5.2', [providerRef('zai-coding-plan', 'glm-5.2')]],
+            ['zcoding-glm-5.2', [providerRef('zai-coding-plan', 'glm-5.2')]],
+            // A bare `glm-5.2` is genuinely ambiguous: models.dev publishes it
+            // under zai-coding-plan, zhipuai, and opencode at different
+            // prices. Persisted rows that predate the `zcoding-` alias stay
+            // unmapped rather than borrowing one vendor's price by convention;
+            // a modelRule is the way to pin one.
+            ['glm-5.2', []],
             ['ocz/deepseek-v4-flash-free', [providerRef('opencode', 'deepseek-v4-flash-free')]],
-            ['claude-sonnet-4-6', [baseRef('anthropic/claude-sonnet-4-6')]],
+            [
+                'claude-sonnet-4-6',
+                [
+                    providerRef('anthropic', 'claude-sonnet-4-6'),
+                    baseRef('anthropic/claude-sonnet-4-6'),
+                ],
+            ],
             ['codex-auto-review', []],
             ['ocg/go-', []],
             ['zai-coding/', []],
