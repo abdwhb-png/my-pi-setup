@@ -23,6 +23,7 @@ Inspect branches and worktrees before creating another. Work directly on `develo
 Run the maintained setup operator; the checkout may remain on `develop`:
 
 ```sh
+install -d -m 700 ~/.cache/pi/release-candidates
 bun ~/.pi/bin/pi-setup pack --output ~/.cache/pi/release-candidates/RELEASE_TAG
 ```
 
