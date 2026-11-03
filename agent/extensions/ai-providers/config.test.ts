@@ -5,6 +5,18 @@ import {
 } from './config.ts';
 
 describe('normalizeAiProvidersConfig', () => {
+    test('merges the CPA endpoint without losing it in unrelated project overrides', () => {
+        const global = mergeAiProvidersConfig(
+            { providers: {}, widgets: {}, cpa: {} },
+            normalizeAiProvidersConfig({ cpa: { baseUrl: ' https://proxy.example.test/v1 ' } }),
+        );
+        expect(global.cpa.baseUrl).toBe('https://proxy.example.test/v1');
+        expect(mergeAiProvidersConfig(global, normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 40_000 } })).cpa.baseUrl)
+            .toBe('https://proxy.example.test/v1');
+        expect(mergeAiProvidersConfig(global, normalizeAiProvidersConfig({ cpa: { baseUrl: 'http://127.0.0.1:18317/v1' } })).cpa.baseUrl)
+            .toBe('http://127.0.0.1:18317/v1');
+    });
+
     test('accepts a positive CPA refresh TTL', () => {
         expect(
             normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 45_000 } }),

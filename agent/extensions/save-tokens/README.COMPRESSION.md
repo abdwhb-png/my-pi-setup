@@ -33,9 +33,9 @@ Supported environment overrides:
 - `EDGEE_COMPRESSOR_BASE_URL`
 - `EDGEE_COMPRESSOR_TIMEOUT_MS`
 
-Backend selection and connection settings are resolved during extension setup.
-After changing settings or these environment variables, run `/reload` or
-restart Pi. Starting a new session alone does not rebuild the backend registry.
+Connection overrides take precedence over trusted project settings, global settings and the local defaults above. They accept remote service roots and local ports forwarded by a private tunnel. Keep `/v1` out of the Headroom base URL; its adapter adds `/v1/compress`, while Edgee adds `/compress`. Only the selected backend is contacted. The [portable setup guide](../../../docs/portable-setup.md) documents CPA and compression endpoints together with an example for forwarded ports.
+
+Backend selection and connection settings are resolved during extension setup. After changing configuration files, run `/reload` or restart Pi. Changes to the exported launch environment require restarting Pi. Starting a new session alone does not rebuild the backend registry.
 
 ## Tool Policy
 

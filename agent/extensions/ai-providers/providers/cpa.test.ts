@@ -8,20 +8,34 @@
  *   - Exposes a stable provider projection handle
  */
 
-import { afterAll, describe, test, expect, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { writeFixtureFile } from '../../_shared/testing/config-fixture.ts';
 import type { ChatModelConfig } from "../rules/model-rules.ts";
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 
 import type { CpaModelEntry } from './cpa-models.ts';
+import { createCpaCatalogCache } from './cpa-catalog-cache.ts';
 import type { LifecycleCtx } from './cpa.ts';
 
 // The diagnostic path is captured at module load, so isolate before importing.
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const agentDir = mkdtempSync(join(tmpdir(), 'cpa-provider-test-'));
+const configPath = join(agentDir, 'config', 'ai-providers.json');
+let previousBaseUrl: string | undefined;
+beforeEach(() => {
+    previousBaseUrl = process.env.CLIPROXY_BASE_URL;
+    delete process.env.CLIPROXY_BASE_URL;
+});
+afterEach(() => {
+    if (previousBaseUrl === undefined) delete process.env.CLIPROXY_BASE_URL;
+    else process.env.CLIPROXY_BASE_URL = previousBaseUrl;
+    rmSync(configPath, { force: true });
+    rmSync(join(agentDir, 'artifacts', 'cache', 'ai-providers'), { recursive: true, force: true });
+});
 afterAll(() => {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -129,6 +143,100 @@ function registerCpaProvider(
 // ── Tests ──
 
 describe('registerCpaProvider', () => {
+    test('uses the configured CPA endpoint for registration and catalog discovery', async () => {
+        writeFixtureFile(configPath, JSON.stringify({
+            cpa: { baseUrl: 'http://127.0.0.1:18317/v1' },
+        }));
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const buildModels = createMockBuildCpaModels();
+        const handle = registerCpaProvider(pi, { buildModels });
+
+        expect(registeredProviders[0].config.baseUrl).toBe('http://127.0.0.1:18317/v1');
+        await handle.refreshProjection({
+            model: undefined,
+            modelRegistry: { find: () => undefined },
+            hasUI: false,
+        } as unknown as LifecycleCtx, { force: true });
+
+        expect(buildModels).toHaveBeenCalledWith('http://127.0.0.1:18317/v1', getCliproxyApiKey());
+        expect(registeredProviders.at(-1)?.config.baseUrl).toBe('http://127.0.0.1:18317/v1');
+    });
+
+    test('prefers the normalized environment endpoint over the configured endpoint', async () => {
+        writeFixtureFile(configPath, JSON.stringify({
+            cpa: { baseUrl: 'http://127.0.0.1:18317/v1' },
+        }));
+        process.env.CLIPROXY_BASE_URL = ' https://proxy.example.test/cpa/v1/// ';
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const buildModels = createMockBuildCpaModels();
+        const handle = registerCpaProvider(pi, { buildModels });
+
+        expect(registeredProviders[0].config.baseUrl).toBe('https://proxy.example.test/cpa/v1');
+        await handle.refreshProjection({
+            model: undefined,
+            modelRegistry: { find: () => undefined },
+            hasUI: false,
+        } as unknown as LifecycleCtx, { force: true });
+        expect(buildModels).toHaveBeenCalledWith('https://proxy.example.test/cpa/v1', getCliproxyApiKey());
+    });
+
+    test.each([
+        'invalid-endpoint',
+        'ftp://proxy.example.test/v1',
+        'https://user:fixture-password@proxy.example.test/v1',
+        'https://proxy.example.test/v1?key=fixture-key',
+        'https://proxy.example.test/v1?',
+        'https://proxy.example.test/v1#fragment',
+        'https://proxy.example.test/v1#',
+    ])('rejects an invalid CPA endpoint without registering a provider: %s', (baseUrl) => {
+        process.env.CLIPROXY_BASE_URL = baseUrl;
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        expect(() => registerCpaProvider(pi)).toThrow(
+            'Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.',
+        );
+        expect(registeredProviders).toHaveLength(0);
+    });
+
+    test('ignores a blank environment override and normalizes the configured endpoint', () => {
+        writeFixtureFile(configPath, JSON.stringify({
+            cpa: { baseUrl: ' http://127.0.0.1:18317/v1/// ' },
+        }));
+        process.env.CLIPROXY_BASE_URL = '  ';
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        registerCpaProvider(pi);
+        expect(registeredProviders[0].config.baseUrl).toBe('http://127.0.0.1:18317/v1');
+    });
+
+    test('keeps the verified catalog cache isolated when the CPA endpoint changes', async () => {
+        const cachePath = join(agentDir, 'artifacts', 'cache', 'ai-providers', 'cpa-catalog.v1.json');
+        await createCpaCatalogCache({ cachePath, endpoint: 'http://localhost:8317/v1' }).save([fakeEntry]);
+        process.env.CLIPROXY_BASE_URL = 'http://127.0.0.1:18317/v1';
+        const first = createMockExtensionAPI();
+        const handle = registerCpaProviderProduction(first.pi, {
+            buildModels: mock(async () => ({
+                models: [fakeModel], entries: [fakeEntry], source: 'live' as const,
+            })),
+        });
+        expect(first.registeredProviders[0].config.models).toEqual(STATIC_FALLBACK_MODELS);
+
+        await handle.refreshProjection({
+            model: undefined,
+            modelRegistry: { find: () => undefined },
+            hasUI: false,
+        } as unknown as LifecycleCtx, { force: true });
+
+        const reloaded = createMockExtensionAPI();
+        registerCpaProviderProduction(reloaded.pi);
+        expect(reloaded.registeredProviders[0].config.models).toContainEqual(
+            expect.objectContaining({ id: fakeEntry.id }),
+        );
+
+        delete process.env.CLIPROXY_BASE_URL;
+        const oldEndpoint = createMockExtensionAPI();
+        registerCpaProviderProduction(oldEndpoint.pi);
+        expect(oldEndpoint.registeredProviders[0].config.models).toEqual(STATIC_FALLBACK_MODELS);
+    });
+
     test('registers with correct provider name', () => {
         const { pi, registeredProviders } = createMockExtensionAPI();
         registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
@@ -142,7 +250,7 @@ describe('registerCpaProvider', () => {
         registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
         const config = registeredProviders[0].config;
-        expect(config.name).toBe('CLIProxyAPI (local)');
+        expect(config.name).toBe('CLIProxyAPI');
         expect(config.baseUrl).toBe('http://localhost:8317/v1');
         expect(config.api).toBe('openai-completions');
         expect(config.apiKey).toBe(getCliproxyApiKey());

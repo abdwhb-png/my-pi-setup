@@ -67,6 +67,33 @@ pi
 
 `check` verifies managed files, the Pi package graph, resolved package versions and commits, Zerobox integrity, and local tool bindings. It reports remaining host configuration instead of silently widening permissions. It does not establish provider connectivity, provider quality, or native sandbox execution qualification.
 
+## Configure provider and compression endpoints
+
+The Pi distribution contains the CPA client and save-tokens adapters. It does not deploy CLIProxyAPI, Headroom or Edgee. Run those services separately or make them reachable through your private tunnel.
+
+| Service | Default base URL | Configuration key | Environment override |
+| --- | --- | --- | --- |
+| CPA | `http://localhost:8317/v1` | `cpa.baseUrl` | `CLIPROXY_BASE_URL` |
+| Headroom | `http://127.0.0.1:8787` | `compressor.backends.headroom.baseUrl` | `HEADROOM_COMPRESSOR_BASE_URL` |
+| Edgee | `http://127.0.0.1:8320` | `compressor.backends.edgee.baseUrl` | `EDGEE_COMPRESSOR_BASE_URL` |
+
+CPA settings belong in `~/.pi/agent/config/ai-providers.json`; compression settings belong in `~/.pi/agent/config/save-tokens.json`. Trusted projects can override them in the corresponding `<cwd>/.pi/config/` files. Precedence is exported environment, trusted project configuration, global configuration, then the defaults above. Empty environment overrides are ignored. Save-tokens uses only its selected backend; no automatic switch to another service occurs.
+
+For example, if a tunnel exposes the services on these VPS-side ports, start Pi with the matching addresses:
+
+```sh
+export CLIPROXY_BASE_URL="http://127.0.0.1:18317/v1"
+export HEADROOM_COMPRESSOR_BASE_URL="http://127.0.0.1:18787"
+export EDGEE_COMPRESSOR_BASE_URL="http://127.0.0.1:18320"
+pi
+```
+
+These commands configure clients; they do not open the tunnel. Set only the variables for the services you use, and persist them in your shell configuration or use the JSON settings for subsequent launches. Keep `/v1` in the CPA base URL; compression URLs are service roots. CPA accepts absolute HTTP(S) URLs without embedded credentials, query parameters or fragments. Configure its access key separately through `CLIPROXY_API_KEY` in the environment or `~/.pi/agent/.env`; credentials remain excluded from distributions.
+
+After editing endpoint configuration files, run `/reload` or restart Pi. Changes to the exported launch environment require restarting Pi. CPA uses the resolved address for model requests, model discovery and catalog cache identity, so a different server cannot inherit another endpoint's cached dynamic models. See the [save-tokens compression guide](../agent/extensions/save-tokens/README.COMPRESSION.md) for backend selection and timeouts.
+
+## Configure host tools
+
 For tools installed at different host prefixes, use the existing sandbox setup workflow:
 
 ```sh

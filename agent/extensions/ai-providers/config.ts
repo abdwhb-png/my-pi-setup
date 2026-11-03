@@ -19,6 +19,7 @@ export interface AiProvidersConfig {
     /** Provider-agnostic model rules. Globs apply before exact model IDs. */
     modelRules?: ModelRule[];
     cpa: {
+        baseUrl?: string;
         /** Refresh TTL for the CPA catalog guard. Defaults to 30 seconds. */
         refreshTtlMs?: number;
         /** Suppresses CPA catalog drift warnings when true. */
@@ -75,6 +76,9 @@ export function normalizeAiProvidersConfig(
     }
 
     const cpa: Partial<AiProvidersConfig["cpa"]> = {};
+    if (typeof rawCpa.baseUrl === "string" && rawCpa.baseUrl.trim()) {
+        cpa.baseUrl = rawCpa.baseUrl.trim();
+    }
     if (isPositiveInteger(rawCpa.refreshTtlMs)) {
         cpa.refreshTtlMs = rawCpa.refreshTtlMs;
     }
@@ -105,6 +109,7 @@ export function mergeAiProvidersConfig(
             ...(overrides.modelRules ?? []),
         ],
         cpa: {
+            baseUrl: overrideCpa.baseUrl ?? baseCpa.baseUrl,
             refreshTtlMs:
                 overrideCpa.refreshTtlMs ?? baseCpa.refreshTtlMs ?? 30_000,
             silentCatalogDiff:

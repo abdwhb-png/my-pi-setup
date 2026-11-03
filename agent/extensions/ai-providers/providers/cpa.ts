@@ -40,8 +40,8 @@ import type { CpaCatalogLookup, CpaModelEntry } from "./cpa-models.ts";
 // ── Constants ──
 
 const PROVIDER_NAME = "cpa";
-const PROVIDER_DISPLAY = "CLIProxyAPI (local)";
-const PROVIDER_BASE_URL = "http://localhost:8317/v1";
+const PROVIDER_DISPLAY = "CLIProxyAPI";
+const DEFAULT_BASE_URL = "http://localhost:8317/v1";
 const PROVIDER_API = "openai-completions" as const;
 
 // ── Lifecycle event context shape ──
@@ -190,10 +190,10 @@ export function getCliproxyApiKey(): string {
 
 // ── Provider config helpers ──
 
-function buildProviderConfig(models: ChatModelConfig[]) {
+function buildProviderConfig(models: ChatModelConfig[], baseUrl: string) {
     return {
         name: PROVIDER_DISPLAY,
-        baseUrl: PROVIDER_BASE_URL,
+        baseUrl,
         api: PROVIDER_API,
         apiKey: getCliproxyApiKey(),
         models,
@@ -234,6 +234,25 @@ export function registerCpaProvider(
 ): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
     const getCatalog = options?.getCatalog ?? getModelsDevCatalog;
+    const cpaConfig = loadAiProvidersConfig().cpa;
+    const baseUrl = (
+        process.env.CLIPROXY_BASE_URL?.trim() ||
+        cpaConfig.baseUrl ||
+        DEFAULT_BASE_URL
+    ).replace(/\/+$/, "");
+    const endpoint = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
+    if (
+        !endpoint ||
+        !["http:", "https:"].includes(endpoint.protocol) ||
+        endpoint.username ||
+        endpoint.password ||
+        baseUrl.includes("?") ||
+        baseUrl.includes("#")
+    ) {
+        throw new Error(
+            "Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.",
+        );
+    }
     const catalogCache = createCpaCatalogCache({
         cachePath: extensionPath(
             { scope: "global" },
@@ -242,7 +261,7 @@ export function registerCpaProvider(
             "ai-providers",
             "cpa-catalog.v1.json",
         ),
-        endpoint: PROVIDER_BASE_URL,
+        endpoint: baseUrl,
     });
     const loadCachedEntries =
         options?.loadCachedEntries ?? (() => catalogCache.load());
@@ -255,7 +274,6 @@ export function registerCpaProvider(
         options?.exitProcess ?? ((code: number) => process.exit(code));
     const saveHeadlessCatalogDrift =
         options?.saveHeadlessCatalogDrift ?? persistHeadlessCatalogDrift;
-    const cpaConfig = loadAiProvidersConfig().cpa;
     const catalogGuard = createCpaCatalogGuard({
         refreshTtlMs: cpaConfig?.refreshTtlMs ?? 30_000,
     });
@@ -297,7 +315,7 @@ export function registerCpaProvider(
                 ? { provider: ctx.model.provider, id: ctx.model.id }
                 : undefined,
             loadCatalog: async () => {
-                const catalog = await buildModels(PROVIDER_BASE_URL, apiKey);
+                const catalog = await buildModels(baseUrl, apiKey);
                 // ponytail: snapshot raw entries and enriched models for metadata-only reprojection.
                 if (catalog.source === "live") {
                     // Mutate const array in-place — entries discovered from CPA.
@@ -315,7 +333,10 @@ export function registerCpaProvider(
                 return catalog;
             },
             registerModels: (models) => {
-                pi.registerProvider(PROVIDER_NAME, buildProviderConfig(models));
+                pi.registerProvider(
+                    PROVIDER_NAME,
+                    buildProviderConfig(models, baseUrl),
+                );
                 reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
                     silent: silentCatalogDiff,
                     reported: reportedCatalogDrift,
@@ -396,7 +417,7 @@ export function registerCpaProvider(
                 if (models.length > 0) {
                     pi.registerProvider(
                         PROVIDER_NAME,
-                        buildProviderConfig(models),
+                        buildProviderConfig(models, baseUrl),
                     );
                 }
             }
@@ -418,7 +439,7 @@ export function registerCpaProvider(
     lastEnrichedModels = startupModels;
     pi.registerProvider(
         PROVIDER_NAME,
-        buildProviderConfig(mergeStartupModels(startupModels)),
+        buildProviderConfig(mergeStartupModels(startupModels), baseUrl),
     );
 
     pi.on("model_select", async (event, ctx) => {

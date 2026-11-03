@@ -2,7 +2,7 @@
  * ai-providers — General-purpose Pi extension for subscription-based model providers.
  *
  * Currently supports:
- * - CLIProxyAPI (cpa) — local proxy with dynamic model discovery
+ * - CLIProxyAPI (cpa) — configurable proxy with dynamic model discovery
  *
  * Future providers can be added under providers/ without restructuring.
  *

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadSaveTokensConfig, mergeConfig, normalizeConfig } from './config';
+import { CompressionBackendRegistry } from './tool-results/registry';
 import type {
     CompressionBackend,
     CompressionBackendId,
@@ -199,6 +200,40 @@ describe('resolveCompressorConfig', () => {
     });
 
     // --- env overrides ---
+
+    it.each(['headroom', 'edgee'] as const)('routes %s requests through configured and environment endpoints', async (backend) => {
+        const originalFetch = globalThis.fetch;
+        const urls: string[] = [];
+        try {
+            globalThis.fetch = Object.assign(async (input: RequestInfo | URL) => {
+                urls.push(String(input));
+                return new Response(null, { status: 503 });
+            }, { preconnect: originalFetch.preconnect });
+            const envKey = backend === 'headroom' ? 'HEADROOM_COMPRESSOR_BASE_URL' : 'EDGEE_COMPRESSOR_BASE_URL';
+            const suffix = backend === 'headroom' ? '/v1/compress' : '/compress';
+            for (const source of ['configuration', 'environment']) {
+                if (source === 'environment') process.env[envKey] = ' https://tunnel.example.test/compression/ ';
+                const config = resolveCompressorConfig({
+                    backend,
+                    backends: { [backend]: { baseUrl: 'http://127.0.0.1:18787/compression/' } },
+                });
+                const selected = new CompressionBackendRegistry(config).getBackend();
+                if (!selected) throw new Error('Expected a configured backend');
+                const result = await selected.compress({
+                    toolCallId: 'endpoint-test', toolName: 'read', arguments: { path: 'fixture.txt' },
+                    output: 'original tool output',
+                    model: { provider: 'fixture', id: 'fixture-model', contextWindow: 128000 },
+                });
+                expect(result.output).toBeNull();
+            }
+            expect(urls).toEqual([
+                `http://127.0.0.1:18787/compression${suffix}`,
+                `https://tunnel.example.test/compression${suffix}`,
+            ]);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
 
     it('overrides headroom baseUrl from env', () => {
         process.env.HEADROOM_COMPRESSOR_BASE_URL = 'http://env:1111';
