@@ -18,7 +18,7 @@ import {
 import { createSandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
 import { localMachineId } from "../capabilities/authority.ts";
-import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
+import { candidateBackendOptions, candidateRuntimeFixture, hasCandidateRuntime } from "./integration-fixtures.ts";
 import { PRIVATE_BASH } from "./shell-baseline.ts";
 
 function createCandidateBackend(leaseRoot: string) {
@@ -34,12 +34,40 @@ function createTemporaryLeaseOptions(rootDir: string) {
     };
 }
 
+test.skipIf(!hasCandidateRuntime()).each([
+    ["missing manifest", "bundle", "read runtime manifest"],
+    ["missing component", "component", "must be used together"],
+    ["missing bundle", "root", "must be used together"],
+] as const)("invalid runtime selection: %s never executes the target", async (_name, missing, diagnostic) => {
+    const candidate = candidateRuntimeFixture()!;
+    const root = await mkdtemp("/var/tmp/pi-bundle-invalid-");
+    try {
+        const flags = missing === "bundle"
+            ? [`--runtime-bundle=${root}`, "--runtime-component=shell"]
+            : missing === "component"
+              ? [`--runtime-bundle=${candidate.runtimeBundlePath}`]
+              : ["--runtime-component=shell"];
+        const child = Bun.spawn([candidate.binaryPath, ...flags, "--strict-sandbox", "-C", root, "--", "/bin/sh", "-c", "printf target-must-not-run"], {
+            cwd: root, env: { ZEROBOX_HOME: root, PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe",
+        });
+        const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+        expect(exit).not.toBe(0);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(diagnostic);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test.skipIf(
     !hasCandidateRuntime(),
-).each(["lease-private", "host"] as const)("Bash tmp %s preserves strict Think isolation and sibling leases", async namespace => {
+).each([
+    ["lease-private", "/tmp"], ["lease-private", "/var/tmp"],
+    ["host", "/tmp"], ["host", "/var/tmp"],
+] as const)("Bash tmp %s with leases in %s preserves strict Think isolation and sibling leases", async (namespace, leaseParent) => {
     const cwd = await mkdtemp(join(import.meta.dir, ".tmp-profiles-"));
     const hostTmp = await mkdtemp("/tmp/pi-host-contract-");
-    const leaseRoot = await mkdtemp("/var/tmp/z-");
+    const leaseRoot = await mkdtemp(`${leaseParent}/z-`);
     const siblingRoot = await mkdtemp("/var/tmp/z-");
     const sibling = await createPrivateTempLease({ rootDir: siblingRoot });
     const service = createSandboxService({
@@ -70,10 +98,11 @@ test.skipIf(
                 ? `test "$(cat ${quote(join(hostTmp, "from-host"))})" = 'from host' && printf 'from shell' > ${quote(join(hostTmp, "from-shell"))}`
                 : `test "$TMPDIR" = /tmp && test ! -e ${quote(join(hostTmp, "from-host"))} && test ! -e ${quote(sibling.markerPath)} && printf private > /tmp/own && test "$(cat /tmp/own)" = private`;
             let output = "";
-            const result = await operations.exec(command, cwd, {
+            const result = await operations.exec(`${command} && printf profile-isolated`, cwd, {
                 onData: (chunk) => { output += chunk.toString(); }, timeout: 10,
             });
             expect(result.exitCode, `${profile}: ${output}`).toBe(0);
+            expect(output, profile).toBe("profile-isolated");
             expect(events.at(-1)).toMatchObject({
                 status: "sandboxed", profile, backend: "zerobox", outcome: "succeeded", exitCode: 0,
                 tmpNamespace: profile === "bash-general" ? namespace : "lease-private",

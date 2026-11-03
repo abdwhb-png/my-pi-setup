@@ -181,6 +181,7 @@ test.skipIf(
                     helperSha256: runtime.helperSha256,
                 });
                 expect(result?.text).toContain("installed-private");
+                expect(result?.text).not.toContain("proceeding without Linux sandbox helper alias");
             }
             expect(errorSpy.mock.calls).toEqual([]);
         } finally {
