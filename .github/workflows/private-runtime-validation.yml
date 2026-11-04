@@ -22,21 +22,6 @@ jobs:
           repository: abdwhb-png/zerobox
           ref: bf98c8dcd55eeac063e0ec3df3104e677d748993
           path: projects/zerobox
-      - uses: actions/checkout@v4
-        with:
-          repository: abdwhb-png/pi-fancy-footer
-          ref: 53e304c7695b5b3e9e1d01ac456ed342432b9169
-          path: engineering/pi-integrations/pi-fancy-footer
-      - uses: actions/checkout@v4
-        with:
-          repository: abdwhb-png/pi-mcp-adapter
-          ref: 53733d3d7b052618896d691fe5bfb4b917f979da
-          path: engineering/pi-integrations/pi-mcp-adapter
-      - uses: actions/checkout@v4
-        with:
-          repository: abdwhb-png/pi-subagents
-          ref: cf4b3ede3294f55420c0d6cf39bf6d110833c034
-          path: engineering/pi-integrations/pi-subagents
       - uses: actions/setup-node@v4
         with:
           node-version: "24.18.0"
@@ -85,35 +70,7 @@ jobs:
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-          npm install --global --ignore-scripts --no-audit --no-fund sfw@2.0.6
-          sfw --version
-      - name: Restore the frozen daily Pi packages
-        env:
-          npm_config_ignore_scripts: "true"
-          npm_config_allow_git: none
-        run: |
-          set -euo pipefail
-          python3 .pi/.github/scripts/restore-pi-runtime.py --agent-root .pi/agent --fixture-root .pi/.github/fixtures/pi-core-1.1.0
-          cd engineering/pi-integrations/pi-fancy-footer
-          sfw npm ci --ignore-scripts --no-audit --no-fund
-          cd ../pi-mcp-adapter
-          sfw npm ci --ignore-scripts --no-audit --no-fund
-          cd ../pi-subagents
-          sfw npm ci --ignore-scripts --no-audit --no-fund
-          cd ../../../.pi/agent
-          sfw bun install --frozen-lockfile --ignore-scripts
-          sfw bun install --cwd extensions/markdown-links --frozen-lockfile --ignore-scripts
-          sfw bun install --cwd extensions/session-cron --frozen-lockfile --ignore-scripts
-          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-subagents" node_modules/pi-subagents
-          cd extensions/sandbox
-          sfw bun install --frozen-lockfile --ignore-scripts
-          sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
-          mkdir -p ../../node_modules/@gotgenes
-          ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
-          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
-          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
-          mkdir -p ../../npm/node_modules/@gotgenes
-          ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
+      - uses: ./.pi/.github/actions/prepare-agent
       - name: Verify installed integration imports before compiling
         working-directory: .pi/agent
         run: |

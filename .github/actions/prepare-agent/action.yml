@@ -1,0 +1,54 @@
+name: Prepare frozen Pi agent dependencies
+description: Restore the repository's locked runtime and integration sources on a disposable runner.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: abdwhb-png/pi-fancy-footer
+        ref: 53e304c7695b5b3e9e1d01ac456ed342432b9169
+        path: engineering/pi-integrations/pi-fancy-footer
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: abdwhb-png/pi-mcp-adapter
+        ref: 53733d3d7b052618896d691fe5bfb4b917f979da
+        path: engineering/pi-integrations/pi-mcp-adapter
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: abdwhb-png/pi-subagents
+        ref: cf4b3ede3294f55420c0d6cf39bf6d110833c034
+        path: engineering/pi-integrations/pi-subagents
+    - name: Restore frozen runtime and integration dependencies
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        npm_config_ignore_scripts: 'true'
+        npm_config_allow_git: none
+      run: |
+        set -euo pipefail
+        npm view sfw@2.0.6 version | grep -Fx 2.0.6
+        npm install --global --ignore-scripts --no-audit --no-fund sfw@2.0.6
+        sfw --version
+        python3 .pi/.github/scripts/restore-pi-runtime.py --agent-root .pi/agent --fixture-root .pi/.github/fixtures/pi-core-1.1.0
+        cd engineering/pi-integrations/pi-fancy-footer
+        sfw npm ci --ignore-scripts --no-audit --no-fund
+        cd ../pi-mcp-adapter
+        sfw npm ci --ignore-scripts --no-audit --no-fund
+        cd ../pi-subagents
+        sfw npm ci --ignore-scripts --no-audit --no-fund
+        cd ../../../.pi/agent
+        sfw bun install --frozen-lockfile --ignore-scripts
+        sfw bun install --cwd extensions/markdown-links --frozen-lockfile --ignore-scripts
+        sfw bun install --cwd extensions/session-cron --frozen-lockfile --ignore-scripts
+        ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-subagents" node_modules/pi-subagents
+        cd extensions/sandbox
+        sfw bun install --frozen-lockfile --ignore-scripts
+        npm view @gotgenes/pi-permission-system@33.0.0 version | grep -Fx 33.0.0
+        sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
+        mkdir -p ../../node_modules/@gotgenes
+        ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
+        ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
+        ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
+        mkdir -p ../../npm/node_modules/@gotgenes
+        ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
