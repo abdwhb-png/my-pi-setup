@@ -6,7 +6,7 @@ import {
     chmodSync,
     readFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { inventory, json, writeJson } from './files.ts';
@@ -129,11 +129,11 @@ test('installation relocates every bundled profile and seeds the runtime changel
             expect(json(join(root, 'agent', name))).toEqual({
                 mcpServers: {
                     fixture: {
-                        command: join(homedir(), 'bin/fixture-server'),
-                        cwd: join(root, 'agent'),
+                        command: '~/bin/fixture-server',
+                        cwd: '~/.pi/agent',
                         args: [
-                            join(root, 'agent/assets/fixture.json'),
-                            join(homedir(), 'fixtures/data'),
+                            '~/.pi/agent/assets/fixture.json',
+                            '~/fixtures/data',
                             '${FIXTURE_ARGUMENT}',
                         ],
                         env: { FIXTURE_API_KEY: '${FIXTURE_API_KEY}' },

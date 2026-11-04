@@ -10,9 +10,9 @@ import {
     writeFileSync,
     lstatSync,
 } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
-import { validateBundle } from './distribution.ts';
+import { LOCAL_CONNECTION_FILES, validateBundle } from './distribution.ts';
 import {
     assertInventory,
     child,
@@ -67,10 +67,12 @@ export function readInstallation(root: string): InstallationState {
     if (value.schemaVersion !== 1 || typeof value.release !== 'string')
         throw new Error('Unmanaged or invalid Pi installation');
     const managed = object(value.managed);
+    const retained: Record<string, string> = {};
     for (const [path, hash] of Object.entries(managed)) {
         child(root, path);
         if (typeof hash !== 'string')
             throw new Error('Invalid managed file fingerprint');
+        if (!LOCAL_CONNECTION_FILES.has(path)) retained[path] = hash;
     }
     if (
         value.previousId !== undefined &&
@@ -78,7 +80,14 @@ export function readInstallation(root: string): InstallationState {
             !/^[a-f0-9-]{36}$/.test(value.previousId))
     )
         throw new Error('Invalid previous release reference');
-    return value as unknown as InstallationState;
+    return {
+        schemaVersion: 1,
+        release: value.release,
+        managed: retained,
+        ...(typeof value.previousId === 'string'
+            ? { previousId: value.previousId }
+            : {}),
+    };
 }
 export async function installBundle(
     options: InstallationOptions,
@@ -97,8 +106,10 @@ export async function installBundle(
         );
     if (previous) assertInventory(root, previous.managed);
     if (previous?.release === options.release) return 'Already installed';
-    for (const path of Object.keys(manifest.files).filter((entry) =>
-        entry.startsWith('setup/'),
+    for (const path of Object.keys(manifest.files).filter(
+        (entry) =>
+            entry.startsWith('setup/') &&
+            !LOCAL_CONNECTION_FILES.has(entry.slice(6)),
     )) {
         const local = path.slice(6);
         if (previous) safeParents(root, local);
@@ -167,7 +178,7 @@ export async function installBundle(
         }
     }
     if (options.dryRun)
-        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files\nDestination: ${root}${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + (options.details ? '\nRead-only installations: ' + JSON.stringify(discovery.installations, null, 2) : `\nRead-only access: ${Object.keys(discovery.installations).length} tool groups. Use --dry-run --details to inspect all installation roots and files.`) : ''}\nPreview complete; no installation was created or changed.`;
+        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files\nDestination: ${root}\n${[...LOCAL_CONNECTION_FILES.keys()].map((path) => `Keep local: ${path} (preserved, never created or managed)`).join('\n')}${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + (options.details ? '\nRead-only installations: ' + JSON.stringify(discovery.installations, null, 2) : `\nRead-only access: ${Object.keys(discovery.installations).length} tool groups. Use --dry-run --details to inspect all installation roots and files.`) : ''}\nPreview complete; no installation was created or changed.`;
     return await transact(
         root,
         options.release,
@@ -175,6 +186,10 @@ export async function installBundle(
             cpSync(join(options.bundle, 'setup'), candidate, {
                 recursive: true,
                 verbatimSymlinks: true,
+                filter: (source) =>
+                    !LOCAL_CONNECTION_FILES.has(
+                        relative(join(options.bundle, 'setup'), source),
+                    ),
             });
         },
         async (id) => {
@@ -206,6 +221,7 @@ function localState(path: string): boolean {
         return false;
     return (
         path === STATE ||
+        LOCAL_CONNECTION_FILES.has(path) ||
         /(^|\/)(auth\.json|trust\.json|.*\.secrets\.json|\.env[^/]*)$/.test(
             path,
         ) ||

@@ -36,21 +36,25 @@ One [profile policy](../agent/bin/setup/distribution.ts) controls capture, archi
 | --- | --- |
 | `agent/settings.json`, `agent/keybindings.json`, `agent/hermes-memory-config.json` | Preserve preferences, with the existing package pinning and resource-selection rules. |
 | `agent/fancy-footer.json`, `agent/fancy-footer.local.json`, `agent/pi-session-recall.json` | Preserve package preferences, including local footer layout and status visibility. “Local” in the footer filename does not make these preferences machine authority. |
-| `agent/models.json`, `agent/mcp.json`, `agent/mcp-adapter.json` | Preserve model and MCP declarations after credential validation. |
+| `agent/models.json`, `agent/mcp.json`, `agent/mcp-adapter.json` | Machine-local connections: never captured, created, replaced or managed by setup. Configure them explicitly on each machine, including OAuth where supported. |
 | Registered `agent/config/` preferences | Preserve them except for machine authority and generated bindings. |
 | Credentials, trust, permission grants, sandbox authority, generated catalogs and MCP caches | Keep them local; do not distribute them. Legacy configuration locations remain excluded in favor of their current owners. |
 
-Before collecting runtime artifacts, `pack` inspects configuration candidates directly under `agent/` and `agent/config/` with JSON, JSONC, YAML or TOML suffixes. Each must have a declared policy as code, a template, a portable preference or an explicit exclusion. An unknown file fails with its relative path, rather than disappearing from the archive. This audit does not recursively classify arbitrary package data or backup files. See the policy source for the exact exclusions.
+Every versioned file must have an explicit distribution disposition: code, portable profile, local state or development-only resource. `pack` and the early GitHub Actions resource-policy job reject unknown resources with their path. Existing code roots include `agent/roles/` recursively, along with agents, extensions, prompts, skills and themes; new files beneath those roots follow the same rule. A new top-level resource directory needs a deliberate policy in [distribution.ts](../agent/bin/setup/distribution.ts). Development documentation and tooling remain explicitly excluded. Before collecting runtime artifacts, `pack` also inspects unversioned configuration candidates directly under `agent/` and `agent/config/` with JSON, JSONC, YAML or TOML suffixes. Unknown configuration fails instead of silently disappearing.
 
-Connection credentials must use a complete `${VARIABLE_NAME}` reference; `Authorization` headers can also use `Bearer ${VARIABLE_NAME}`. Ordinary nonsecret values such as transport names and `NODE_ENV` remain literal. Recognized inline keys, credential-bearing environment entries and arguments, embedded URL credentials and credential commands such as `!print-key` are refused. Diagnostics identify the file and field without printing the rejected value. Packaging and admission never resolve the variables or execute credential commands. Configure the corresponding secrets securely on each destination; `auth.json`, MCP authentication stores and `*.secrets.json` remain excluded.
+Portable preferences still undergo credential checks. Admission also validates model and MCP declarations in legacy archives: credential fields must use complete `${VARIABLE_NAME}` references, and `Authorization` can use `Bearer ${VARIABLE_NAME}`. Ordinary nonsecret values such as transport names and `NODE_ENV` remain literal. Recognized inline credentials, embedded URL credentials and credential commands are refused without printing their values. Admission never resolves variables or executes commands. These legacy connection files are verified but skipped during installation. Current machine-local connection files are neither read nor validated by packaging; their configuration belongs to the user and the consuming extension. Authentication stores and `*.secrets.json` remain excluded.
 
-Home paths are stored as `~/…`, and references to `~/.pi` are rebound to a custom installation root during provisioning. MCP `command`, `cwd` and standalone path arguments are expanded for the destination because process launchers do not perform shell tilde expansion. This does not install MCP server binaries, create tunnels or make external services reachable. Existing package filters and the opt-in global skill behavior are unchanged.
+Portable home paths are stored as `~/…`, and references to `~/.pi` are rebound to a custom installation root during provisioning. Local MCP and model files retain their exact content, paths and symlinks. Configure executable paths according to the consuming extension; setup does not rewrite them, install server binaries or create tunnels. Existing package filters and the opt-in global skill behavior are unchanged.
 
-The manifest remains version 1 and updated operators still accept older archives that omit these optional files. Older bootstrap code rejects the newly admitted filenames. Refresh the bootstrap from `main` before installing a release that includes them:
+The manifest and installation state remain version 1. Updated operators accept legacy archives while treating their connection files as local. Before an update, setup transfers ownership of these three paths out of the managed inventory, so modified, deleted and symlinked files survive both update and rollback. Preview lists each path as `Keep local`. No automatic backup, restoration or merge of these connection files takes place.
+
+Refresh the external bootstrap from `main` before installation, update or rollback:
 
 ```sh
 git -C ~/pi-bootstrap pull --ff-only
 ```
+
+Use `bun ~/pi-bootstrap/bin/pi-setup update --release RELEASE_TAG` and `bun ~/pi-bootstrap/bin/pi-setup rollback` for these operations. A rollback can restore an older installed operator; the refreshed external bootstrap retains the current preservation policy. Older operators do not provide this guarantee.
 
 During an update, a newly portable file can collide with an unmanaged destination file from an older installation. The operator reports the collision and leaves the installation unchanged. Back up and reconcile that file deliberately before retrying; no automatic merge or adoption occurs. Modified managed files retain the existing integrity checks.
 
@@ -102,6 +106,12 @@ pi
 ```
 
 `check` verifies managed files, the Pi package graph, resolved package versions and commits, Zerobox integrity, and local tool bindings. It reports remaining host configuration instead of silently widening permissions. It does not establish provider connectivity, provider quality, or native sandbox execution qualification.
+
+## Notifications on different machines
+
+Notification selection uses session capabilities automatically. With a TTY, setup's notify extension prefers an available desktop backend: SnoreToast on Windows/WSL, terminal-notifier on macOS, or notify-send on Linux with a desktop display. Without one, it uses OSC 9 for positively identified Ghostty, iTerm2, Kitty or WezTerm sessions, then terminal BEL. Unknown terminal multiplexers use BEL instead of assuming escape-sequence passthrough. Non-TTY sessions send nothing. No host notification package is installed automatically.
+
+`/notify` retains its on/off toggle and `PI_NO_NOTIFY=1` starts disabled. `/notify status` reports enabled state, selected channel, skip reasons and any failed transports without sending a notification or changing the toggle. Missing capabilities are quiet; unexpected transport failures are reported once per channel, disable that channel for this Pi process, and fall back to the next available channel. Each event has one successful delivery path. Terminal payloads strip control characters. Desktop permissions and terminal settings can still suppress visible or audible notifications; CI verifies selection and output bytes, not the operating system's final display.
 
 ## Configure provider and compression endpoints
 

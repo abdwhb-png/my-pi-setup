@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import notifier from "node-notifier";
 import {
@@ -42,6 +44,9 @@ export interface NotificationTransportDeps {
     platform: NodeJS.Platform;
     isWsl: boolean;
     isTTY: boolean;
+    env: NodeJS.ProcessEnv;
+    hasExecutable(path: string): boolean;
+    nativeExecutable?: string;
     write(value: string): void;
     nativeNotify(
         options: NativeNotificationOptions,
@@ -58,6 +63,10 @@ export interface NotificationTransportDeps {
 
 export interface NotificationTransport {
     send(event: PiNotificationEvent): void;
+    getStatus(): {
+        channel: "native" | "osc9" | "bell" | "none";
+        reasons: string[];
+    };
 }
 
 const PROMPT_LABELS = {
@@ -96,6 +105,17 @@ function defaultDeps(): NotificationTransportDeps {
         platform: process.platform,
         isWsl,
         isTTY: process.stdout.isTTY,
+        env: process.env,
+        hasExecutable: (path) => Bun.which(path) !== null,
+        nativeExecutable: join(
+            dirname(
+                fileURLToPath(
+                    import.meta.resolve("node-notifier/package.json"),
+                ),
+            ),
+            "vendor/mac.noindex/terminal-notifier.app/Contents/MacOS/terminal-notifier",
+        ),
+        snoreToastPath: getSnoreToastExecutablePath(getAgentDir()),
         write: (value) => process.stdout.write(value),
         warn: (message) => console.warn(message),
         nativeNotify(options, callback) {
@@ -103,7 +123,6 @@ function defaultDeps(): NotificationTransportDeps {
         },
         ...(isWsl
             ? {
-                  snoreToastPath: getSnoreToastExecutablePath(getAgentDir()),
                   launchSnoreToast(
                       executablePath: string,
                       args: string[],
@@ -137,64 +156,128 @@ function toSnoreToastArgs(options: NativeNotificationOptions): string[] {
 export function createNotificationTransport(
     deps: NotificationTransportDeps = defaultDeps(),
 ): NotificationTransport {
-    let warnedNativeFailure = false;
-
-    return {
-        send(event) {
-            let rang = false;
-            const ring = () => {
-                if (rang || !deps.isTTY) return;
-                rang = true;
-                try {
-                    deps.write("\x07");
-                } catch {
-                    // Terminal fallback is best-effort.
-                }
-            };
-            const reportNativeFailure = (error: unknown) => {
-                ring();
-                if (warnedNativeFailure || deps.warn === undefined) return;
-                warnedNativeFailure = true;
-                deps.warn(
-                    `[notify] Native notification failed: ${error instanceof Error ? error.message : String(error)}`,
+    const reasons: string[] = [];
+    let native = false;
+    if (deps.isWsl || deps.platform === "win32") {
+        native = Boolean(
+            deps.snoreToastPath && deps.hasExecutable(deps.snoreToastPath),
+        );
+        if (!native)
+            reasons.push(
+                "Native skipped: SnoreToast executable is unavailable.",
+            );
+    } else if (deps.platform === "darwin") {
+        native = Boolean(
+            deps.nativeExecutable && deps.hasExecutable(deps.nativeExecutable),
+        );
+        if (!native)
+            reasons.push(
+                "Native skipped: terminal-notifier executable is unavailable.",
+            );
+    } else if (deps.platform === "linux") {
+        if (!deps.env.DISPLAY && !deps.env.WAYLAND_DISPLAY) {
+            reasons.push("Native skipped: no desktop display in this session.");
+        } else {
+            native = deps.hasExecutable("notify-send");
+            if (!native)
+                reasons.push(
+                    "Native skipped: notify-send is unavailable on PATH.",
                 );
-            };
+        }
+    } else reasons.push("Native skipped: unsupported platform.");
+    const multiplexed = Boolean(
+        deps.env.TMUX ||
+        deps.env.STY ||
+        deps.env.TERM?.startsWith("screen") ||
+        deps.env.TERM?.startsWith("tmux"),
+    );
+    let osc =
+        !multiplexed &&
+        (Boolean(deps.env.KITTY_WINDOW_ID) ||
+            /^(ghostty|iterm\.app|wezterm)$/i.test(
+                deps.env.TERM_PROGRAM ?? "",
+            ) ||
+            /^(xterm-ghostty|xterm-kitty)$/.test(deps.env.TERM ?? ""));
+    let bell = true;
+    if (!deps.isTTY) reasons.push("Terminal skipped: output is not a TTY.");
+    else if (!osc)
+        reasons.push(
+            multiplexed
+                ? "OSC 9 skipped: terminal multiplexer passthrough is not confirmed."
+                : "OSC 9 skipped: terminal support is not confirmed.",
+        );
 
+    const getStatus: NotificationTransport["getStatus"] = () => ({
+        channel: !deps.isTTY
+            ? "none"
+            : native
+              ? "native"
+              : osc
+                ? "osc9"
+                : bell
+                  ? "bell"
+                  : "none",
+        reasons: [...reasons],
+    });
+    function failed(channel: "native" | "osc9" | "bell", error: unknown): void {
+        if (channel === "native") native = false;
+        else if (channel === "osc9") osc = false;
+        else bell = false;
+        const message = `${channel === "native" ? "Native notification" : channel + " notification"} failed: ${error instanceof Error ? error.message : String(error)}`;
+        reasons.push(message);
+        deps.warn?.(`[notify] ${message}`);
+    }
+    function send(event: PiNotificationEvent): void {
+        const channel = getStatus().channel;
+        if (channel === "none") return;
+        if (channel === "native") {
             const options: NativeNotificationOptions = {
                 title: `Pi · ${event.project}`,
                 message: formatMessage(event),
                 sound: true,
                 wait: false,
             };
-
-            if (
-                deps.isWsl &&
-                deps.snoreToastPath !== undefined &&
-                deps.launchSnoreToast !== undefined
-            ) {
-                try {
+            let settled = false;
+            const delivered = (error?: Error | null) => {
+                if (settled) return;
+                settled = true;
+                if (error) {
+                    failed("native", error);
+                    send(event);
+                }
+            };
+            try {
+                if (
+                    deps.isWsl &&
+                    deps.snoreToastPath &&
+                    deps.launchSnoreToast
+                ) {
                     deps.launchSnoreToast(
                         deps.snoreToastPath,
                         toSnoreToastArgs(options),
-                        (error) => {
-                            if (error) reportNativeFailure(error);
-                        },
+                        delivered,
                     );
-                } catch (error) {
-                    reportNativeFailure(error);
-                }
-                return;
-            }
-
-            if (deps.platform === "linux" && !deps.isWsl) ring();
-
-            try {
-                deps.nativeNotify(options, (error) => {
-                    if (error) reportNativeFailure(error);
-                });
+                } else deps.nativeNotify(options, delivered);
             } catch (error) {
-                reportNativeFailure(error);
+                delivered(
+                    error instanceof Error ? error : new Error(String(error)),
+                );
             }
-        },
-    };
+        } else {
+            try {
+                const text =
+                    `Pi · ${event.project} · ${formatMessage(event)}`.replace(
+                        /\p{Cc}/gu,
+                        " ",
+                    );
+                deps.write(
+                    channel === "osc9" ? `\x1b]9;${text}\x1b\\` : "\x07",
+                );
+            } catch (error) {
+                failed(channel, error);
+                send(event);
+            }
+        }
+    }
+    return { send, getStatus };
 }

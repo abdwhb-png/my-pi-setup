@@ -33,66 +33,65 @@ import {
 import { setupStep, type SetupProgress } from './progress.ts';
 
 export const DISTRIBUTION_REPOSITORY = 'abdwhb-png/my-pi-distribution';
-const PROFILE_EXCLUSIONS = {
-    'agent/config/sandbox.json': 'Machine-local sandbox authority',
-    'agent/config/package-finalizer.json': 'Machine-local package trust',
-    'agent/config/pi-dangerous-mode.json':
-        'Machine-local execution permissions',
-    'agent/config/pi-permission-system-addons.json':
-        'Machine-local execution permissions',
-    'agent/config/setup-bindings.json': 'Generated machine-local tool bindings',
-    'agent/trust.json': 'Machine-local project trust',
-    'agent/mcp-project-approvals.json': 'Machine-local MCP approvals',
-    'agent/mcp-auth.json': 'Machine-local MCP credentials',
-    'agent/models-store.json': 'Generated model catalog',
-    'agent/mcp-cache.json': 'Generated MCP catalog',
-    'agent/mcp-npx-cache.json': 'Generated MCP installation cache',
-    'agent/mcp-onboarding.json': 'Machine-local onboarding state',
-    'agent/skills-lock.json': 'External skill synchronization state',
-    'agent/pi-yolo.json': 'Unused legacy execution configuration',
-    'agent/.fallowrc.json': 'Development tooling configuration',
-    'agent/settings.example.json': 'Development configuration template',
-    'agent/ai-providers.secrets.example.json':
-        'Development credential template',
+const PROFILE_EXCLUSIONS: Readonly<Record<string, 'local' | 'development'>> = {
+    'agent/config/sandbox.json': 'local',
+    'agent/config/package-finalizer.json': 'local',
+    'agent/config/pi-dangerous-mode.json': 'local',
+    'agent/config/pi-permission-system-addons.json': 'local',
+    'agent/config/setup-bindings.json': 'local',
+    'agent/trust.json': 'local',
+    'agent/mcp-project-approvals.json': 'local',
+    'agent/mcp-auth.json': 'local',
+    'agent/models-store.json': 'local',
+    'agent/mcp-cache.json': 'local',
+    'agent/mcp-npx-cache.json': 'local',
+    'agent/mcp-onboarding.json': 'local',
+    'agent/skills-lock.json': 'local',
+    'agent/pi-yolo.json': 'development',
+    'agent/.fallowrc.json': 'development',
+    'agent/settings.example.json': 'development',
+    'agent/ai-providers.secrets.example.json': 'development',
     ...Object.fromEntries(
         Object.values(CONFIG_OWNERS).flatMap((owner) =>
             'legacyFile' in owner
-                ? [
-                      [
-                          `agent/${owner.legacyFile}`,
-                          'Legacy location; migrate to the configuration owner',
-                      ],
-                  ]
+                ? [[`agent/${owner.legacyFile}`, 'local']]
                 : [],
         ),
     ),
 };
 
 type ProfileKind = 'preferences' | 'models' | 'mcp';
-export const PORTABLE_PROFILE_FILES: ReadonlyMap<string, ProfileKind> = new Map(
+export const LOCAL_CONNECTION_FILES: ReadonlyMap<string, ProfileKind> = new Map(
     [
-        ...[
-            'agent/settings.json',
-            'agent/hermes-memory-config.json',
-            'agent/keybindings.json',
-            'agent/fancy-footer.json',
-            'agent/fancy-footer.local.json',
-            'agent/pi-session-recall.json',
-            ...Object.values(CONFIG_OWNERS).map(
-                (owner) => `agent/config/${owner.file}`,
-            ),
-        ]
-            .filter((path) => !Object.hasOwn(PROFILE_EXCLUSIONS, path))
-            .map((path): [string, ProfileKind] => [path, 'preferences']),
         ['agent/models.json', 'models'],
         ['agent/mcp.json', 'mcp'],
         ['agent/mcp-adapter.json', 'mcp'],
     ],
 );
+export const PORTABLE_PROFILE_FILES: ReadonlyMap<string, ProfileKind> = new Map(
+    [
+        'agent/settings.json',
+        'agent/hermes-memory-config.json',
+        'agent/keybindings.json',
+        'agent/fancy-footer.json',
+        'agent/fancy-footer.local.json',
+        'agent/pi-session-recall.json',
+        ...Object.values(CONFIG_OWNERS).map(
+            (owner) => `agent/config/${owner.file}`,
+        ),
+    ]
+        .filter((path) => !Object.hasOwn(PROFILE_EXCLUSIONS, path))
+        .map((path): [string, ProfileKind] => [path, 'preferences']),
+);
+// Legacy archives remain admissible, but their connection files are never installed.
+const ADMITTED_PROFILE_FILES = new Map([
+    ...PORTABLE_PROFILE_FILES,
+    ...LOCAL_CONNECTION_FILES,
+]);
 const CREDENTIAL_FILE = /(^|\/)(auth\.json|\.env[^/]*|.*\.secrets\.json)$/;
 function allowedProfilePath(path: string): boolean {
     return (
-        PORTABLE_PROFILE_FILES.has(path) ||
+        ADMITTED_PROFILE_FILES.has(path) ||
         path.startsWith('agent/portable-skills/')
     );
 }
@@ -106,13 +105,7 @@ function assertClassifiedProfileConfigurations(root: string): void {
             if (!entry.isFile() && !entry.isSymbolicLink()) continue;
             if (!/\.(?:jsonc?|ya?ml|toml)$/i.test(entry.name)) continue;
             const path = `${directory}/${entry.name}`;
-            if (
-                allowedCodePath(path) ||
-                PORTABLE_PROFILE_FILES.has(path) ||
-                Object.hasOwn(PROFILE_EXCLUSIONS, path) ||
-                CREDENTIAL_FILE.test(path)
-            )
-                continue;
+            if (resourceDisposition(path) !== undefined) continue;
             unclassified.push(path);
         }
     }
@@ -138,7 +131,7 @@ function assertPortableProfileValue(
     path: string,
     value: Record<string, unknown>,
 ): void {
-    const kind = PORTABLE_PROFILE_FILES.get(path);
+    const kind = ADMITTED_PROFILE_FILES.get(path);
     const connectionProfile = kind === 'models' || kind === 'mcp';
     const reference = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
     const authorizationReference = /^Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
@@ -317,7 +310,7 @@ export function validateBundle(root: string): SetupManifest {
     for (const path of Object.keys(files)) {
         if (
             path.startsWith('setup/') &&
-            PORTABLE_PROFILE_FILES.has(path.slice(6))
+            ADMITTED_PROFILE_FILES.has(path.slice(6))
         )
             assertPortableProfileValue(
                 path.slice(6),
@@ -327,24 +320,68 @@ export function validateBundle(root: string): SetupManifest {
     return manifest;
 }
 
-export function allowedCodePath(path: string): boolean {
-    if (path === 'bin/zerobox') return false;
+export type ResourceDisposition = 'code' | 'profile' | 'local' | 'development';
+
+function resourceDisposition(path: string): ResourceDisposition | undefined {
     if (
         /(^|\/)(node_modules|sessions|artifacts|cache|git|npm|\.git|\.aws)(\/|$)/.test(
             path,
         ) ||
-        CREDENTIAL_FILE.test(path)
+        CREDENTIAL_FILE.test(path) ||
+        LOCAL_CONNECTION_FILES.has(path) ||
+        path === 'MEMORY.md' ||
+        path === 'bin/zerobox' ||
+        path === 'agent/pi-subagents/last-seen-version.json'
     )
-        return false;
-    return (
-        /^(bin\/|agent\/(bin|extensions|scripts|tooling|agents|prompts|skills|themes|assets)\/|\.agents\/skills\/)/.test(
+        return 'local';
+    if (Object.hasOwn(PROFILE_EXCLUSIONS, path))
+        return PROFILE_EXCLUSIONS[path];
+    if (
+        PORTABLE_PROFILE_FILES.has(path) ||
+        path.startsWith('agent/portable-skills/')
+    )
+        return 'profile';
+    if (
+        /^(bin\/|agent\/(bin|extensions|scripts|tooling|agents|roles|prompts|skills|themes|assets)\/|\.agents\/skills\/)/.test(
             path,
         ) ||
         /^agent\/config\/[^/]+\.example\.json$/.test(path) ||
         /^(AGENTS\.md|agent\/(AGENTS\.md|APPEND_SYSTEM\.md|package\.json|bun\.lock|bunfig\.toml|tsconfig[^/]*\.json|\.ox[^/]*\.json))$/.test(
             path,
         )
-    );
+    )
+        return 'code';
+    if (
+        /^(docs\/|\.github\/|\.agents\/prompts\/|pi-prompts\/|agent\/extensions-legacy\/)/.test(
+            path,
+        ) ||
+        [
+            '.fallowrc.json',
+            '.gitignore',
+            '.pi-lens.json',
+            'bunfig.toml',
+            'probe-runtime-agent.ts',
+            'agent/.gitignore',
+            'agent/.probe-runtime-agent.ts',
+            'agent/intercom-bridge.md',
+            'agent/progress.md',
+        ].includes(path)
+    )
+        return 'development';
+    return undefined;
+}
+
+export function classifySetupResource(path: string): ResourceDisposition {
+    const disposition = resourceDisposition(path);
+    if (disposition === undefined)
+        throw new Error(
+            `Unclassified setup resource: ${path}. Declare its distribution policy before packaging.`,
+        );
+    return disposition;
+}
+
+export function allowedCodePath(path: string): boolean {
+    return classifySetupResource(path) === 'code';
 }
 
 export function resolveMainCommit(root: string, requested?: string): string {
@@ -391,31 +428,34 @@ function gitFile(root: string, commit: string, path: string): Buffer {
     return result.stdout;
 }
 
-function codeFiles(
-    root: string,
-    commit: string,
-): { path: string; mode: number }[] {
+export function auditDistributionResources(root: string, commit: string) {
     const result = spawnSync('git', ['ls-tree', '-rz', commit], {
         cwd: root,
         maxBuffer: 64 * 1024 * 1024,
     });
     if (result.status !== 0)
         throw new Error('Cannot enumerate committed source files');
-    return result.stdout
-        .toString()
-        .split('\0')
-        .filter(Boolean)
-        .flatMap((line) => {
-            const tab = line.indexOf('\t');
-            const [mode, type] = line.slice(0, tab).split(' ');
-            const path = line.slice(tab + 1);
-            if (!allowedCodePath(path)) return [];
-            if (type !== 'blob' || !['100644', '100755'].includes(mode!))
-                throw new Error(
-                    `Code resources must be regular tracked files: ${path}`,
-                );
-            return [{ path, mode: mode === '100755' ? 0o755 : 0o644 }];
-        });
+    const counts: Record<ResourceDisposition, number> = {
+        code: 0,
+        profile: 0,
+        local: 0,
+        development: 0,
+    };
+    const codeFiles: { path: string; mode: number }[] = [];
+    for (const line of result.stdout.toString().split('\0').filter(Boolean)) {
+        const tab = line.indexOf('\t');
+        const [mode, type] = line.slice(0, tab).split(' ');
+        const path = line.slice(tab + 1);
+        const disposition = classifySetupResource(path);
+        counts[disposition]++;
+        if (disposition !== 'code') continue;
+        if (type !== 'blob' || !['100644', '100755'].includes(mode))
+            throw new Error(
+                `Code resources must be regular tracked files: ${path}`,
+            );
+        codeFiles.push({ path, mode: mode === '100755' ? 0o755 : 0o644 });
+    }
+    return { counts, codeFiles };
 }
 
 async function pinnedRuntimes(root: string, commit: string) {
@@ -545,7 +585,7 @@ async function packDistributionLocked(
     if (!/^[a-f0-9]{40}$/.test(sourceCommit))
         throw new Error('Invalid source commit');
     assertClassifiedProfileConfigurations(sourceRoot);
-    const code = codeFiles(sourceRoot, sourceCommit);
+    const code = auditDistributionResources(sourceRoot, sourceCommit).codeFiles;
     if (existsSync(output)) throw new Error('Output directory already exists');
     options.progress?.({ stage: 'runtimes', state: 'start' });
     const selected = await pinnedRuntimes(sourceRoot, sourceCommit);
@@ -875,7 +915,7 @@ async function validateReleaseSourceLocked(
     const manifest = validateBundle(bundle);
     if (manifest.sourceCommit !== expectedCommit)
         throw new Error('Candidate and qualification source commits disagree');
-    const expected = codeFiles(root, expectedCommit);
+    const expected = auditDistributionResources(root, expectedCommit).codeFiles;
     const actual = Object.keys(manifest.files)
         .filter(
             (path) =>
