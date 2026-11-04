@@ -106,7 +106,8 @@ def main():
         "-v", f"{tools}:/build:ro", lock["image"], "sleep", "infinity")
     try:
         run("docker", "start", container)
-        run("docker", "exec", container, "apt-get", "--snapshot", snapshot, "update")
+        run("docker", "exec", container, "apt-get", "--snapshot", snapshot,
+            "-o", "Acquire::Retries=5", "-o", "APT::Update::Error-Mode=any", "update")
         run("docker", "exec", "-w", "/inputs/build-inputs", container,
             *package_download)
         for package in packages:

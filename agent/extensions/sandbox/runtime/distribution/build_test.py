@@ -65,7 +65,9 @@ class RuntimeRelocationTests(unittest.TestCase):
             create = next(command for command in commands if command[:2] == ("docker", "create"))
             self.assertIn("/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro", create)
             self.assertFalse(any("ca-certificates" in command for command in commands))
-            self.assertTrue(any("--snapshot" in command and "update" in command for command in commands))
+            update = next(command for command in commands if "--snapshot" in command and "update" in command)
+            self.assertIn("APT::Update::Error-Mode=any", update)
+            self.assertIn("Acquire::Retries=5", update)
 
     def test_native_package_download_uses_the_locked_archive_snapshot(self):
         command = native_ci.package_download_command(
