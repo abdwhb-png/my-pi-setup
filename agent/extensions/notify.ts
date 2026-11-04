@@ -51,8 +51,21 @@ export default function notify(pi: ExtensionAPI): void {
     });
 
     pi.registerCommand("notify", {
-        description: "Toggle desktop notifications on/off",
-        handler: async (_args, ctx) => {
+        description:
+            "Toggle notifications, or inspect the selected transport with status",
+        handler: async (args, ctx) => {
+            if (args.trim() === "status") {
+                const status = transport.getStatus();
+                ctx.ui.notify(
+                    `Notifications ${enabled ? "enabled" : "disabled"}\nTransport: ${status.channel}\n${status.reasons.join("\n")}`,
+                    "info",
+                );
+                return;
+            }
+            if (args.trim()) {
+                ctx.ui.notify("Usage: /notify [status]", "warning");
+                return;
+            }
             enabled = !enabled;
             updateStatus(ctx);
             ctx.ui.notify(

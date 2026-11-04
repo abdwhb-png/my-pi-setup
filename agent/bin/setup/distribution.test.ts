@@ -23,7 +23,7 @@ import {
     resolveMainCommit,
 } from './distribution.ts';
 import * as distribution from './distribution.ts';
-import { run, writeJson, digest, archive, inventory } from './files.ts';
+import { run, writeJson, digest, archive, inventory, json } from './files.ts';
 test('packing cannot race runtime garbage collection', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-pack-lock-'));
     const lock = acquireRuntimeStorageLock(root);
@@ -55,6 +55,82 @@ test('distribution code selection excludes credentials and runtime user state', 
     ])
         expect(allowedCodePath(path)).toBe(true);
     expect(() => releaseTag('--latest')).toThrow('Invalid release tag');
+});
+
+test('versioned roles and new files under portable roots are distribution code', () => {
+    expect(allowedCodePath('agent/roles/fixture.md')).toBe(true);
+    expect(allowedCodePath('agent/roles/nested/fixture.md')).toBe(true);
+    expect(allowedCodePath('agent/extensions/fixture/new/resource.txt')).toBe(
+        true,
+    );
+});
+
+test('machine authority and development exclusions have explicit dispositions', () => {
+    expect(
+        distribution.classifySetupResource('agent/config/sandbox.json'),
+    ).toBe('local');
+    expect(
+        distribution.classifySetupResource('agent/settings.example.json'),
+    ).toBe('development');
+    expect(distribution.classifySetupResource('docs/new-guide.md')).toBe(
+        'development',
+    );
+});
+
+test('unclassified versioned resources cannot be silently excluded', () => {
+    expect(() => allowedCodePath('agent/workflows/fixture.md')).toThrow(
+        'Unclassified setup resource: agent/workflows/fixture.md',
+    );
+});
+
+test('pack rejects a new versioned resource root before inspecting runtimes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-resource-policy-'));
+    try {
+        mkdirSync(join(root, 'agent/workflows'), { recursive: true });
+        writeFileSync(
+            join(root, 'agent/workflows/fixture.md'),
+            '# Fixture workflow',
+        );
+        run('git', ['init', '--quiet'], root);
+        run('git', ['add', 'agent/workflows/fixture.md'], root);
+        run(
+            'git',
+            [
+                '-c',
+                'user.name=Fixture',
+                '-c',
+                'user.email=fixture@example.invalid',
+                'commit',
+                '-qm',
+                'Fixture resource',
+            ],
+            root,
+        );
+        await expect(
+            packDistribution(
+                root,
+                join(root, 'output'),
+                run('git', ['rev-parse', 'HEAD'], root),
+            ),
+        ).rejects.toThrow(
+            'Unclassified setup resource: agent/workflows/fixture.md',
+        );
+        expect(existsSync(join(root, 'output'))).toBe(false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(`${root}.runtime.lock`, { force: true });
+    }
+});
+
+test('connection files remain local instead of joining the portable profile', () => {
+    for (const path of [
+        'agent/mcp.json',
+        'agent/mcp-adapter.json',
+        'agent/models.json',
+    ]) {
+        expect(distribution.PORTABLE_PROFILE_FILES.has(path)).toBe(false);
+        expect(distribution.classifySetupResource(path)).toBe('local');
+    }
 });
 
 test.each([
@@ -93,6 +169,10 @@ test('pack snapshots main and publish requests qualification without finalizing 
         write(join(root, 'bin/pi'), '#!/bin/sh\n');
         write(join(root, 'bin/pi-setup'), '#!/bin/sh\n');
         write(
+            join(root, 'agent/roles/nested/fixture.md'),
+            '# Fixture role\nUse inspect tools.',
+        );
+        write(
             join(root, 'agent/skills/bundled/SKILL.md'),
             '# Bundled skill\nRepository resource.',
         );
@@ -110,7 +190,11 @@ test('pack snapshots main and publish requests qualification without finalizing 
             'export const approved = true;',
         );
         run('git', ['init', '--quiet'], root);
-        run('git', ['add', 'bin', 'agent/extensions', 'agent/skills'], root);
+        run(
+            'git',
+            ['add', 'bin', 'agent/extensions', 'agent/skills', 'agent/roles'],
+            root,
+        );
         run(
             'git',
             [
@@ -315,7 +399,7 @@ test('pack snapshots main and publish requests qualification without finalizing 
                 providers: {
                     fixture: {
                         baseUrl: 'https://fixture.invalid/v1',
-                        apiKey: '${FIXTURE_KEY}',
+                        apiKey: 'fixture-local-credential',
                         models: [],
                     },
                 },
@@ -339,7 +423,15 @@ test('pack snapshots main and publish requests qualification without finalizing 
         const manifest = validateBundle(join(home, 'unpacked'));
         for (const path of excluded)
             expect(manifest.files[`setup/${path}`]).toBeUndefined();
+        expect(
+            manifest.files['setup/agent/roles/nested/fixture.md'],
+        ).toBeDefined();
         for (const [name, value] of Object.entries(preferences)) {
+            if (distribution.LOCAL_CONNECTION_FILES.has(`agent/${name}`)) {
+                expect(manifest.files[`setup/agent/${name}`]).toBeUndefined();
+                expect(json(join(root, 'agent', name))).toEqual(value);
+                continue;
+            }
             expect(manifest.files[`setup/agent/${name}`]).toBeDefined();
             expect(
                 JSON.parse(
@@ -377,32 +469,6 @@ test('pack snapshots main and publish requests qualification without finalizing 
         );
         expect(existsSync(join(home, 'unknown-profile-output'))).toBe(false);
         rmSync(join(root, 'agent/unclassified-preferences.json'));
-        writeJson(join(root, 'agent/models.json'), {
-            providers: { fixture: { apiKey: 'fixture-clear-credential' } },
-        });
-        const unsafeOutput = join(home, 'unsafe-profile-output');
-        const unsafe = Bun.spawnSync(
-            [process.execPath, script, root, unsafeOutput],
-            {
-                cwd: root,
-                env: {
-                    ...process.env,
-                    HOME: home,
-                    PI_CODING_AGENT_DIR: join(root, 'agent'),
-                },
-                stdout: 'pipe',
-                stderr: 'pipe',
-            },
-        );
-        expect(unsafe.exitCode).not.toBe(0);
-        expect(new TextDecoder().decode(unsafe.stderr)).toContain(
-            'agent/models.json:providers.fixture.apiKey',
-        );
-        expect(new TextDecoder().decode(unsafe.stderr)).not.toContain(
-            'fixture-clear-credential',
-        );
-        expect(existsSync(unsafeOutput)).toBe(false);
-        writeJson(join(root, 'agent/models.json'), preferences['models.json']);
         const footerPath = join(root, 'agent/fancy-footer.json');
         rmSync(footerPath);
         symlinkSync('missing-preferences.json', footerPath);

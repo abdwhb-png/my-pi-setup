@@ -33,7 +33,10 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
         try {
             const { DefaultPackageManager, SettingsManager, Theme } =
                 await import('@earendil-works/pi-coding-agent');
-            const { TuiMainScreen } = await import('@earendil-works/pi-tui');
+            const { TuiMainScreen, visibleWidth } =
+                await import('@earendil-works/pi-tui');
+            const { createWidget } =
+                await import('../../extensions/_shared/fancy-footer.ts');
             const { createTestSession } =
                 await import('@abdwhb-png/pi-test-harness');
             const manager = new DefaultPackageManager({
@@ -69,6 +72,17 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
             const harness = await createTestSession({
                 cwd,
                 extensions: [entries[0]!.path],
+                extensionFactories: [
+                    (pi) => {
+                        createWidget(pi, {
+                            id: 'local-compressor',
+                            label: 'Compressor',
+                            row: 0,
+                            order: 12,
+                            render: () => 'COMPRESSOR_PREF',
+                        });
+                    },
+                ],
             });
             closeSession = () => harness.close();
             const factory = harness.events.uiCallsFor('setFooter').at(-1)
@@ -138,8 +152,8 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
                 'truecolor',
             );
             const tui = new TuiMainScreen({
-                columns: 120,
-                rows: 40,
+                columns: 145,
+                rows: 31,
                 kittyProtocolActive: false,
                 start() {},
                 stop() {},
@@ -163,7 +177,9 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
                 getExtensionStatuses: () =>
                     new Map([
                         ['fixture-hidden', 'HIDDEN_PREF'],
-                        ['fixture-visible', 'VISIBLE_PREF'],
+                        ['fixture-visible', 'VISIBLE_PREF ' + 'x'.repeat(160)],
+                        ['fixture-second', 'SECOND_PREF'],
+                        ['fixture-third', 'THIRD_PREF'],
                     ]),
                 getAvailableProviderCount: () => 1,
                 onBranchChange: () => () => {},
@@ -185,8 +201,18 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
                 ?.args[1];
             assert(typeof widgetFactory === 'function');
             const widget: Component = widgetFactory(tui, theme);
-            const above = widget.render(120).join('\n');
+            const aboveLines = widget.render(145);
+            const above = aboveLines.join('\n');
             expect(above).toContain('VISIBLE_PREF');
+            expect(above).toContain('SECOND_PREF');
+            expect(above).toContain('THIRD_PREF');
+            expect(above).toContain('COMPRESSOR_PREF');
+            expect(above.indexOf('COMPRESSOR_PREF')).toBeGreaterThan(
+                above.indexOf('THIRD_PREF'),
+            );
+            expect(aboveLines.every((line) => visibleWidth(line) <= 145)).toBe(
+                true,
+            );
             expect(above).not.toContain('HIDDEN_PREF');
             expect(networkAttempts).toBe(0);
         } finally {
@@ -197,6 +223,55 @@ test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
                 globalThis.fetch = originalFetch;
                 rmSync(cwd, { recursive: true, force: true });
             }
+        }
+    },
+);
+
+test.skipIf(process.env.PI_PORTABLE_PROFILE_CONTRACT !== '1')(
+    'the installed role command completes every committed user role',
+    async () => {
+        assert.equal(
+            process.env.GITHUB_ACTIONS,
+            'true',
+            'Installed runtime checks require disposable CI hosts',
+        );
+        const agentDir = process.env.PI_CODING_AGENT_DIR;
+        assert(agentDir);
+        const roleFiles: string[] = JSON.parse(
+            process.env.PI_PORTABLE_ROLE_FILES ?? '[]',
+        );
+        assert(
+            roleFiles.length > 0,
+            'Expected role paths from the committed source tree',
+        );
+        const cwd = mkdtempSync(join(tmpdir(), 'pi-installed-roles-'));
+        const { createTestSession } =
+            await import('@abdwhb-png/pi-test-harness');
+        const { loadRoleFile } =
+            await import('../../extensions/pi-roles/core/roles.ts');
+        const harness = await createTestSession({
+            cwd,
+            extensions: [join(agentDir, 'extensions/pi-roles/index.ts')],
+        });
+        try {
+            const command = harness.session.extensionRunner.getCommand('role');
+            assert(command?.getArgumentCompletions);
+            const names =
+                (await command.getArgumentCompletions(''))?.map(
+                    (item) => item.value,
+                ) ?? [];
+            for (const path of roleFiles.filter((path) =>
+                /^agent\/roles\/[^/]+\.md$/.test(path),
+            )) {
+                const role = loadRoleFile(
+                    join(agentDir, path.slice('agent/'.length)),
+                    'user',
+                );
+                expect(names).toContain(role.frontmatter.name);
+            }
+        } finally {
+            await harness.close();
+            rmSync(cwd, { recursive: true, force: true });
         }
     },
 );

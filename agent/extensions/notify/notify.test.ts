@@ -1,9 +1,20 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 
 const sendNotification = mock((_event: unknown) => undefined);
+const originalNoNotify = process.env.PI_NO_NOTIFY;
+afterAll(() => {
+    if (originalNoNotify === undefined) delete process.env.PI_NO_NOTIFY;
+    else process.env.PI_NO_NOTIFY = originalNoNotify;
+});
 
 mock.module("./transport.ts", () => ({
-    createNotificationTransport: () => ({ send: sendNotification }),
+    createNotificationTransport: () => ({
+        send: sendNotification,
+        getStatus: () => ({
+            channel: "bell",
+            reasons: ["Native skipped: fixture unavailable."],
+        }),
+    }),
 }));
 
 const { default: notifyExtension } = await import("../notify.ts");
@@ -20,20 +31,14 @@ interface TestContext {
     };
 }
 
-type Handler = (
-    event: unknown,
-    context: TestContext,
-) => void | Promise<void>;
+type Handler = (event: unknown, context: TestContext) => void | Promise<void>;
 
 interface ExtensionFixture {
     handlers: Map<string, Handler[]>;
     commands: Map<
         string,
         {
-            handler(
-                args: string,
-                context: TestContext,
-            ): void | Promise<void>;
+            handler(args: string, context: TestContext): void | Promise<void>;
         }
     >;
 }
@@ -43,10 +48,7 @@ function setup(): ExtensionFixture {
     const commands = new Map<
         string,
         {
-            handler(
-                args: string,
-                context: TestContext,
-            ): void | Promise<void>;
+            handler(args: string, context: TestContext): void | Promise<void>;
         }
     >();
 
@@ -110,13 +112,53 @@ beforeEach(() => {
 });
 
 describe("notify extension", () => {
-	it("subscribes to the public UI prompt lifecycle", () => {
-		const fixture = setup();
+    it("rejects an unknown subcommand without toggling notifications", async () => {
+        const fixture = setup();
+        const context = createContext();
+        const messages = mock((_message: string, _level: string) => undefined);
+        context.ui.notify = messages;
+        await emit(fixture, "session_start", {}, context);
+        await fixture.commands.get("notify")!.handler("unknown", context);
+        expect(messages).toHaveBeenCalledWith(
+            "Usage: /notify [status]",
+            "warning",
+        );
+        await emit(fixture, "agent_start", {}, context);
+        await emit(fixture, "ui_prompt_start", { kind: "input" }, context);
+        expect(sendNotification).toHaveBeenCalledTimes(1);
+    });
+    it.each([false, true])(
+        "status reports capabilities without toggling notifications (disabled=%s)",
+        async (disabled) => {
+            if (disabled) process.env.PI_NO_NOTIFY = "1";
+            const fixture = setup();
+            const context = createContext();
+            const messages = mock(
+                (_message: string, _level: string) => undefined,
+            );
+            context.ui.notify = messages;
+            await emit(fixture, "session_start", {}, context);
+            await fixture.commands.get("notify")!.handler("status", context);
+            expect(messages.mock.calls[0]?.[0]).toContain(
+                disabled ? "disabled" : "enabled",
+            );
+            expect(messages.mock.calls[0]?.[0]).toContain("bell");
+            expect(messages.mock.calls[0]?.[0]).toContain(
+                "fixture unavailable",
+            );
+            expect(sendNotification).not.toHaveBeenCalled();
+            await emit(fixture, "agent_start", {}, context);
+            await emit(fixture, "ui_prompt_start", { kind: "input" }, context);
+            expect(sendNotification).toHaveBeenCalledTimes(disabled ? 0 : 1);
+        },
+    );
+    it("subscribes to the public UI prompt lifecycle", () => {
+        const fixture = setup();
 
-		expect(fixture.handlers.has("ui_prompt_start")).toBe(true);
-	});
+        expect(fixture.handlers.has("ui_prompt_start")).toBe(true);
+    });
 
-	it("uses agent_settled rather than intermediate agent_end for completion", () => {
+    it("uses agent_settled rather than intermediate agent_end for completion", () => {
         const fixture = setup();
 
         expect(fixture.handlers.has("agent_end")).toBe(false);

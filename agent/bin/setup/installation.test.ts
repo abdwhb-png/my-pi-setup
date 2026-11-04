@@ -47,9 +47,6 @@ test.each([
     'fancy-footer.json',
     'fancy-footer.local.json',
     'pi-session-recall.json',
-    'models.json',
-    'mcp.json',
-    'mcp-adapter.json',
 ])(
     'a legacy installation refuses to replace unmanaged %s during an update',
     async (name) => {
@@ -88,6 +85,108 @@ test.each([
                 personal: true,
             });
             expect(readInstallation(root).release).toBe('old');
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    },
+);
+
+test.each(
+    ['mcp.json', 'mcp-adapter.json', 'models.json'].flatMap((name) =>
+        ['unchanged', 'edited', 'deleted', 'symlink'].map((change) => ({
+            name,
+            change,
+        })),
+    ),
+)(
+    'legacy $name becomes local through update and rollback ($change)',
+    async ({ name, change }) => {
+        const home = mkdtempSync(join(tmpdir(), 'pi-connection-migration-'));
+        const root = join(home, '.pi');
+        const path = `agent/${name}`;
+        const file = join(root, path);
+        const provision = async () => {};
+        try {
+            await installBundle({
+                root,
+                bundle: bundle(home, 'old'),
+                release: 'old',
+                provision,
+            });
+            writeJson(file, { original: true });
+            const state = readInstallation(root);
+            writeJson(join(root, '.pi-setup-state.json'), {
+                ...state,
+                managed: { ...state.managed, [path]: inventory(root)[path] },
+            });
+            if (change === 'edited') writeJson(file, { personal: true });
+            if (change === 'deleted') rmSync(file);
+            if (change === 'symlink') {
+                writeJson(join(home, 'personal.json'), { personal: true });
+                rmSync(file);
+                symlinkSync(join(home, 'personal.json'), file);
+            }
+            const before = inventory(root)[path];
+            const preview = await installBundle({
+                root,
+                bundle: bundle(home, 'preview'),
+                release: 'new',
+                update: true,
+                dryRun: true,
+                provision,
+            });
+            expect(preview).toContain(`Keep local: ${path}`);
+            await installBundle({
+                root,
+                bundle: bundle(home, 'new'),
+                release: 'new',
+                update: true,
+                provision,
+            });
+            expect(inventory(root)[path]).toBe(before);
+            expect(readInstallation(root).managed[path]).toBeUndefined();
+            expect(
+                JSON.parse(
+                    readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+                ).managed[path],
+            ).toBeUndefined();
+            await rollbackInstallation(root);
+            expect(inventory(root)[path]).toBe(before);
+            expect(readInstallation(root).managed[path]).toBeUndefined();
+            expect(
+                JSON.parse(
+                    readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+                ).managed[path],
+            ).toBeUndefined();
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    },
+);
+
+test.each(['mcp.json', 'mcp-adapter.json', 'models.json'])(
+    'fresh legacy archive does not install %s',
+    async (name) => {
+        const home = mkdtempSync(join(tmpdir(), 'pi-legacy-connection-'));
+        const root = join(home, '.pi');
+        try {
+            const archive = bundle(home, 'legacy');
+            writeJson(join(archive, 'setup/agent', name), {});
+            rmSync(join(archive, 'manifest.json'));
+            writeJson(join(archive, 'manifest.json'), {
+                schemaVersion: 1,
+                platform: 'linux-x64',
+                sourceCommit: 'a'.repeat(40),
+                files: inventory(archive),
+                packages: [],
+            });
+            await installBundle({
+                root,
+                bundle: archive,
+                release: 'legacy',
+                provision: async () => {},
+            });
+            expect(existsSync(join(root, 'agent', name))).toBe(false);
         } finally {
             rmSync(home, { recursive: true, force: true });
         }

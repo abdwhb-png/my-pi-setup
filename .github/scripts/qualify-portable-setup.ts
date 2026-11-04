@@ -21,12 +21,14 @@ import {
     downloadDraftDistribution,
     DISTRIBUTION_REPOSITORY,
     validateBundle,
+    LOCAL_CONNECTION_FILES,
 } from '../../agent/bin/setup/distribution.ts';
 import {
     archive,
     digest,
     inventory,
     json,
+    object,
     run,
     writeJson,
 } from '../../agent/bin/setup/files.ts';
@@ -51,7 +53,7 @@ const evidence = join(work, 'evidence');
 const sources = [
     'npm:pi-hermes-memory@0.9.10',
     'npm:@gotgenes/pi-permission-system@33.0.0',
-    'git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9',
+    'git:github.com/abdwhb-png/pi-fancy-footer@14c979fad9a93aa58c7c38fed736fc03a04a429e',
     './extensions/tool-groups',
 ];
 const profilePreferences = {
@@ -60,12 +62,25 @@ const profilePreferences = {
             model: { enabled: false },
             'provider-status': { enabled: false },
         },
+        extensionWidgets: {
+            'extension-statuses': { row: 1 },
+            'local-compressor': { row: 0 },
+        },
     },
-    'fancy-footer.local.json': { extensionStatusHiddenIds: ['fixture-hidden'] },
+    'fancy-footer.local.json': {
+        extensionStatusHiddenIds: ['fixture-hidden'],
+        responsive: { enabled: false },
+        widgets: {
+            'extension-statuses': { placement: 'aboveEditor', twoLine: true },
+        },
+        extensionWidgets: { 'local-compressor': { placement: 'aboveEditor' } },
+    },
     'pi-session-recall.json': {
         queryModel: { provider: 'fixture', id: 'query' },
         'fallback-models': [],
     },
+};
+const localConnections = {
     'models.json': { providers: {} },
     'mcp.json': {
         mcpServers: {
@@ -169,7 +184,10 @@ if (privateProfile) {
         themes: [],
         enableSkillCommands: false,
     });
-    for (const [name, value] of Object.entries(profilePreferences))
+    for (const [name, value] of Object.entries({
+        ...profilePreferences,
+        ...localConnections,
+    }))
         writeJson(join(source, 'agent', name), value);
     for (const packageSource of sources) {
         run(
@@ -248,6 +266,7 @@ if (privateProfile) {
         [
             'bin/setup',
             'extensions/ai-providers',
+            'extensions/notify',
             'bin/pi-cpa-startup.integration.test.ts',
             'bin/pi-fork-cli.test.ts',
             'bin/pi-fork-release.test.ts',
@@ -288,6 +307,29 @@ if (privateProfile) {
     bundle = join(work, 'bundle-one');
 }
 const manifest = validateBundle(bundle);
+const roleFiles = run(
+    'git',
+    [
+        'ls-tree',
+        '-r',
+        '-z',
+        '--name-only',
+        manifest.sourceCommit,
+        '--',
+        'agent/roles',
+    ],
+    source,
+)
+    .split('\0')
+    .filter(Boolean);
+assert(roleFiles.length > 0, 'Expected a committed role catalog');
+for (const path of roleFiles)
+    assert(manifest.files[`setup/${path}`], `Missing committed role: ${path}`);
+for (const path of LOCAL_CONNECTION_FILES.keys())
+    assert(
+        !manifest.files[`setup/${path}`],
+        `Machine-local connection file was packaged: ${path}`,
+    );
 assert(
     !Object.keys(manifest.files).some((path) =>
         /auth\.json|sessions\/|pi-hermes-memory\//.test(path),
@@ -387,6 +429,11 @@ run(process.execPath, [join(target, 'bin/pi-fork'), 'verify'], home);
 run(process.execPath, [join(target, 'bin/pi'), '--version'], home);
 run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
+for (const path of LOCAL_CONNECTION_FILES.keys())
+    assert(
+        !existsSync(join(target, path)),
+        `Fresh installation created a local connection file: ${path}`,
+    );
 
 if (!privateProfile) {
     for (const [name, expected] of Object.entries(profilePreferences))
@@ -428,6 +475,7 @@ runTests(
         ...process.env,
         PI_SANDBOX_INSTALLED_CONTRACT: '1',
         PI_PORTABLE_PROFILE_CONTRACT: privateProfile ? undefined : '1',
+        PI_PORTABLE_ROLE_FILES: JSON.stringify(roleFiles),
     },
 );
 passed('real bash and safe_bash through the installed native sandbox');
@@ -499,6 +547,46 @@ if (!privateProfile) {
 }
 
 if (!profileOnly) {
+    for (const [name, value] of Object.entries(localConnections))
+        writeJson(join(target, 'agent', name), value);
+    // Reproduce an older operator's ownership before personal changes.
+    const legacyState = json(join(target, '.pi-setup-state.json'));
+    const legacyFiles = inventory(target);
+    legacyState.managed = {
+        ...object(legacyState.managed),
+        ...Object.fromEntries(
+            [...LOCAL_CONNECTION_FILES.keys()].map((path) => [
+                path,
+                legacyFiles[path],
+            ]),
+        ),
+    };
+    writeJson(join(target, '.pi-setup-state.json'), legacyState);
+    writeJson(join(target, 'agent/mcp.json'), {
+        mcpServers: {},
+        personal: true,
+    });
+    rmSync(join(target, 'agent/models.json'));
+    const adapter = join(work, 'local-mcp-adapter.json');
+    writeJson(adapter, localConnections['mcp-adapter.json']);
+    rmSync(join(target, 'agent/mcp-adapter.json'));
+    symlinkSync(adapter, join(target, 'agent/mcp-adapter.json'));
+    const localBeforeUpdate = inventory(target);
+    const assertLocalConnections = () => {
+        const current = inventory(target);
+        for (const path of LOCAL_CONNECTION_FILES.keys()) {
+            assert.equal(
+                current[path],
+                localBeforeUpdate[path],
+                `Changed local connection file: ${path}`,
+            );
+            assert.equal(
+                readInstallation(target).managed[path],
+                undefined,
+                `Managed a local connection file: ${path}`,
+            );
+        }
+    };
     writeJson(join(target, 'agent/auth.json'), {});
     mkdirSync(join(target, 'agent/sessions'), { recursive: true });
     writeFileSync(
@@ -524,6 +612,7 @@ if (!profileOnly) {
         bindings,
     });
     assert(existsSync(join(target, 'agent/prompts/qualification-version.md')));
+    assertLocalConnections();
     assert.equal(
         await installBundle({
             root: target,
@@ -536,6 +625,10 @@ if (!profileOnly) {
     );
     await rollbackInstallation(target);
     assert.equal(readInstallation(target).release, 'qualification-one');
+    assertLocalConnections();
+    passed(
+        'edited, deleted and linked local connection files survive real update and rollback',
+    );
     assert(!existsSync(join(target, 'agent/prompts/qualification-version.md')));
     assert.equal(
         readFileSync(join(target, 'agent/sessions/ci-marker'), 'utf8'),
