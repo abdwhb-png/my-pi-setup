@@ -1,5 +1,7 @@
 """Run in the pinned builder: python3 -m unittest build_test.py."""
 import importlib.util
+import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -8,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 spec = importlib.util.spec_from_file_location("runtime_build", Path(__file__).with_name("build.py"))
 builder = importlib.util.module_from_spec(spec)
@@ -19,7 +22,62 @@ native_spec.loader.exec_module(native_ci)
 
 
 class RuntimeRelocationTests(unittest.TestCase):
-    def test_native_builder_uses_transport_certificates_without_upgrading_the_pinned_image(self):
+    def test_native_download_retries_a_transient_failure_without_changing_the_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = b"locked input"
+            item = {"file": "fixture.deb", "url": "https://archive.ubuntu.com/fixture.deb",
+                    "sha256": hashlib.sha256(payload).hexdigest()}
+            failure = HTTPError(item["url"], 503, "Service Unavailable", None, None)
+            with patch.object(native_ci.urllib.request, "urlopen", side_effect=[failure, io.BytesIO(payload)]), patch("time.sleep"):
+                native_ci.download_input(item, root)
+            self.assertEqual((root / item["file"]).read_bytes(), payload)
+            self.assertEqual(list(root.iterdir()), [root / item["file"]])
+
+    def test_native_download_rejects_corruption_and_preserves_existing_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            item = {"file": "fixture.deb", "url": "https://archive.ubuntu.com/fixture.deb",
+                    "sha256": hashlib.sha256(b"locked input").hexdigest()}
+            with patch.object(native_ci.urllib.request, "urlopen", return_value=io.BytesIO(b"corrupted input")):
+                with self.assertRaisesRegex(RuntimeError, "digest mismatch: fixture.deb"):
+                    native_ci.download_input(item, root)
+            self.assertEqual(list(root.iterdir()), [])
+            existing = root / item["file"]
+            existing.write_bytes(b"preserved")
+            with patch.object(native_ci.urllib.request, "urlopen", return_value=io.BytesIO(b"locked input")):
+                with self.assertRaises(FileExistsError):
+                    native_ci.download_input(item, root)
+            self.assertEqual(existing.read_bytes(), b"preserved")
+            self.assertEqual(list(root.iterdir()), [existing])
+
+    def test_native_download_failures_are_bounded_and_do_not_leave_partial_files(self):
+        for status in [503, 404]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                item = {"file": "fixture.deb", "url": "https://archive.ubuntu.com/fixture.deb",
+                        "sha256": hashlib.sha256(b"locked input").hexdigest()}
+                failure = HTTPError(item["url"], status, "Fixture failure", None, None)
+                with patch.object(native_ci.urllib.request, "urlopen", side_effect=failure) as request, patch("time.sleep"):
+                    with self.assertRaises(HTTPError):
+                        native_ci.download_input(item, root)
+                self.assertEqual(request.call_count, 3 if status == 503 else 1)
+                self.assertEqual(list(root.iterdir()), [])
+
+    def test_native_downloads_remain_readable_by_the_offline_package_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            item = {"file": "fixture.deb", "url": "https://archive.ubuntu.com/fixture.deb",
+                    "sha256": hashlib.sha256(b"locked input").hexdigest()}
+            previous_umask = native_ci.os.umask(0o077)
+            try:
+                with patch.object(native_ci.urllib.request, "urlopen", return_value=io.BytesIO(b"locked input")):
+                    native_ci.download_input(item, root)
+            finally:
+                native_ci.os.umask(previous_umask)
+            self.assertEqual((root / item["file"]).stat().st_mode & 0o777, 0o644)
+
+    def test_native_builder_downloads_locked_packages_without_snapshot_indexes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tools = root / "tools"
@@ -27,8 +85,14 @@ class RuntimeRelocationTests(unittest.TestCase):
             (tools / "input-lock.json").write_text(json.dumps({
                 "snapshot": "20260912T120000Z", "image": "ubuntu@sha256:fixture",
             }))
-            for name in ["packages", "assets"]:
-                (tools / f"inputs/{name}.json").write_text("[]")
+            package_bytes = b"locked Ubuntu package"
+            package_file = "gawk_1%3a5.2.1-2ubuntu0.1_amd64.deb"
+            package_url = "https://launchpadlibrarian.net/12345/gawk_5.2.1-2ubuntu0.1_amd64.deb"
+            (tools / "inputs/packages.json").write_text(json.dumps([{
+                "package": "gawk", "version": "1:5.2.1-2ubuntu0.1", "file": package_file,
+                "sha256": hashlib.sha256(package_bytes).hexdigest(), "url": package_url,
+            }]))
+            (tools / "inputs/assets.json").write_text("[]")
             engine = root / "engine-source"
             binary = engine / "target/x86_64-unknown-linux-gnu/release/zerobox"
             binary.parent.mkdir(parents=True)
@@ -36,9 +100,17 @@ class RuntimeRelocationTests(unittest.TestCase):
             (engine / "UPSTREAM_VERSION").write_text("fixture")
             inputs = root / "inputs"
             commands = []
+            requests = []
+
+            def download(url, **kwargs):
+                requests.append(url)
+                self.assertEqual(url, package_url)
+                return io.BytesIO(package_bytes)
 
             def run(*args, **kwargs):
                 commands.append(args)
+                if "download" in args:
+                    (inputs / "build-inputs" / package_file).write_bytes(package_bytes)
                 if "assemble" in args:
                     target = inputs / "candidate/bin/zerobox"
                     target.parent.mkdir(parents=True)
@@ -54,6 +126,7 @@ class RuntimeRelocationTests(unittest.TestCase):
                 patch.object(native_ci, "require_native_linux"),
                 patch.object(native_ci, "run", side_effect=run),
                 patch.object(native_ci, "output", side_effect=output),
+                patch.object(native_ci.urllib.request, "urlopen", side_effect=download),
                 patch("sys.argv", [
                     "native-ci.py", "--engine-root", str(engine),
                     "--agent-root", str(root / "agent"),
@@ -65,25 +138,12 @@ class RuntimeRelocationTests(unittest.TestCase):
             create = next(command for command in commands if command[:2] == ("docker", "create"))
             self.assertIn("/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro", create)
             self.assertFalse(any("ca-certificates" in command for command in commands))
-            update = next(command for command in commands if "--snapshot" in command and "update" in command)
-            self.assertIn("APT::Update::Error-Mode=any", update)
-            self.assertIn("Acquire::Retries=5", update)
-
-    def test_native_package_download_uses_the_locked_archive_snapshot(self):
-        command = native_ci.package_download_command(
-            {"snapshot": "20260912T120000Z"},
-            [{"package": "libexpat1", "version": "2.6.1-2ubuntu0.4"}],
-        )
-        self.assertEqual(
-            command,
-            [
-                "apt-get",
-                "--snapshot",
-                "20260912T120000Z",
-                "download",
-                "libexpat1=2.6.1-2ubuntu0.4",
-            ],
-        )
+            self.assertEqual(requests, [package_url])
+            self.assertEqual((inputs / "build-inputs" / package_file).read_bytes(), package_bytes)
+            self.assertFalse(any("update" in command or "download" in command for command in commands))
+            disconnect = next(index for index, command in enumerate(commands) if command[:3] == ("docker", "network", "disconnect"))
+            install = next(index for index, command in enumerate(commands) if "install" in command)
+            self.assertLess(disconnect, install)
 
     def test_analysis_closure_does_not_depend_on_installer_dependency_layout(self):
         with tempfile.TemporaryDirectory() as directory:

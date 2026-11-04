@@ -5,7 +5,7 @@
   "metadata": {
     "packages": {
       "path": "inputs/packages.json",
-      "sha256": "476664103c93b9fe1df77326febb4cbbf73cfce2f3047b77ab6b9114a8f5757b"
+      "sha256": "5c8658851f47cd2376798c91505e22c1ce3aea4c708a54e0009eeb96871ca788"
     },
     "sha256sums": {
       "path": "inputs/SHA256SUMS",
