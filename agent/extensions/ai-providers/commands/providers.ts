@@ -1,14 +1,23 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, type Component, matchesKey } from "@earendil-works/pi-tui";
+import {
+    Container,
+    type Component,
+    matchesKey,
+    wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import {
     createUiColors,
     type UiColorsCreation,
 } from "../../_shared/ui/ui-colors.ts";
 import { loadAiProvidersConfig } from "../config.ts";
+import type { CpaProviderAvailability } from "../providers/cpa.ts";
 
-export function registerProvidersCommand(pi: ExtensionAPI): void {
+export function registerProvidersCommand(
+    pi: ExtensionAPI,
+    getCpaAvailability?: () => Readonly<CpaProviderAvailability> | undefined,
+): void {
     pi.registerCommand("providers", {
         description:
             "View AI providers and models (auth status, enablement, details)",
@@ -70,6 +79,8 @@ export function registerProvidersCommand(pi: ExtensionAPI): void {
                     modelCount,
                     isEnabledInConfig,
                     isExtensionManaged,
+                    availability:
+                        provider === "cpa" ? getCpaAvailability?.() : undefined,
                 });
 
                 if (isExtensionManaged) {
@@ -172,6 +183,7 @@ interface ProviderStatus {
     modelCount: number;
     isEnabledInConfig: boolean | undefined;
     isExtensionManaged: boolean;
+    availability?: Readonly<CpaProviderAvailability>;
 }
 
 class ProviderDashboard implements Component {
@@ -318,6 +330,17 @@ class ProviderDashboard implements Component {
     render(width: number): string[] {
         const leftWidth = Math.floor(width * 0.4) - 1;
         const rightWidth = width - leftWidth - 3;
+        const selected = this.leftPaneRows[this.leftIndex];
+        const availability =
+            selected?.type === "provider"
+                ? this.providerStatusMap.get(selected.id)?.availability
+                : undefined;
+        const emptyLines = wrapTextWithAnsi(
+            this.uiColors.subtle(
+                `  ${availability?.diagnostic ?? "No models registered"}`,
+            ),
+            Math.max(1, rightWidth),
+        );
 
         const lines: string[] = [];
         const maxVisible = this.maxVisible;
@@ -436,7 +459,9 @@ class ProviderDashboard implements Component {
                     }
 
                     const authStr =
-                        s.authStatus === "Ready"
+                        s.authStatus === "Ready" &&
+                        (!s.availability ||
+                            s.availability.state === "available")
                             ? this.uiColors.success("✓")
                             : this.uiColors.danger("✗");
 
@@ -501,12 +526,9 @@ class ProviderDashboard implements Component {
                     } else {
                         rightContent = text;
                     }
-                } else if (
-                    iRight === 0 &&
-                    this.currentProviderModels.length === 0
-                ) {
+                } else if (this.currentProviderModels.length === 0) {
                     rightContent = this.padToWidth(
-                        this.uiColors.subtle("  No models registered"),
+                        emptyLines[offset] ?? "",
                         rightWidth,
                     );
                 }

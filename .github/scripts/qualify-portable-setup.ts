@@ -54,6 +54,38 @@ const sources = [
     'git:github.com/abdwhb-png/pi-fancy-footer@98da1a46df80d88ad9842c967676d80a99e275d9',
     './extensions/tool-groups',
 ];
+const profilePreferences = {
+    'fancy-footer.json': {
+        widgets: {
+            model: { enabled: false },
+            'provider-status': { enabled: false },
+        },
+    },
+    'fancy-footer.local.json': { extensionStatusHiddenIds: ['fixture-hidden'] },
+    'pi-session-recall.json': {
+        queryModel: { provider: 'fixture', id: 'query' },
+        'fallback-models': [],
+    },
+    'models.json': { providers: {} },
+    'mcp.json': {
+        mcpServers: {
+            fixture: {
+                url: 'https://fixture.invalid/mcp',
+                headers: { Authorization: 'Bearer ${FIXTURE_MCP_TOKEN}' },
+                enabled: false,
+            },
+        },
+    },
+    'mcp-adapter.json': {
+        mcpServers: {
+            fixture: {
+                command: 'fixture-unavailable',
+                env: { FIXTURE_API_KEY: '${FIXTURE_API_KEY}' },
+                enabled: false,
+            },
+        },
+    },
+};
 const milestones: string[] = [];
 function passed(name: string) {
     milestones.push(name);
@@ -137,6 +169,8 @@ if (privateProfile) {
         themes: [],
         enableSkillCommands: false,
     });
+    for (const [name, value] of Object.entries(profilePreferences))
+        writeJson(join(source, 'agent', name), value);
     for (const packageSource of sources) {
         run(
             process.execPath,
@@ -213,6 +247,8 @@ if (privateProfile) {
         'operator-regressions',
         [
             'bin/setup',
+            'extensions/ai-providers',
+            'bin/pi-cpa-startup.integration.test.ts',
             'bin/pi-fork-cli.test.ts',
             'bin/pi-fork-release.test.ts',
             'bin/pi-runtime-store.test.ts',
@@ -231,7 +267,11 @@ if (privateProfile) {
             'extensions/sandbox/preparation.test.ts',
         ],
         join(source, 'agent'),
-        { ...process.env, PI_PHP_DISCOVERY_CONTRACT: '1' },
+        {
+            ...process.env,
+            PI_PHP_DISCOVERY_CONTRACT: '1',
+            PI_CPA_AVAILABILITY_CONTRACT: '1',
+        },
     );
     passed('operator and launcher regression suites');
 
@@ -348,6 +388,15 @@ run(process.execPath, [join(target, 'bin/pi'), '--version'], home);
 run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
 
+if (!privateProfile) {
+    for (const [name, expected] of Object.entries(profilePreferences))
+        assert.deepEqual(
+            json(join(target, 'agent', name)),
+            expected,
+            `Restored ${name} differs from the synthetic profile`,
+        );
+}
+
 if (logicalTools)
     runTests(
         'installed-development-tools',
@@ -370,11 +419,22 @@ if (logicalTools)
 
 runTests(
     'installed-sandbox',
-    ['extensions/sandbox/runtime/installed-runtime.integration.test.ts'],
+    [
+        'extensions/sandbox/runtime/installed-runtime.integration.test.ts',
+        ...(!privateProfile ? ['bin/setup/profile.runtime.test.ts'] : []),
+    ],
     join(target, 'agent'),
-    { ...process.env, PI_SANDBOX_INSTALLED_CONTRACT: '1' },
+    {
+        ...process.env,
+        PI_SANDBOX_INSTALLED_CONTRACT: '1',
+        PI_PORTABLE_PROFILE_CONTRACT: privateProfile ? undefined : '1',
+    },
 );
 passed('real bash and safe_bash through the installed native sandbox');
+if (!privateProfile)
+    passed(
+        'installed profile preferences and real footer rendering preserve the exported configuration',
+    );
 
 if (!privateProfile) {
     const sourceMemory = join(source, 'agent/pi-hermes-memory');

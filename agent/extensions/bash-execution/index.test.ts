@@ -4,7 +4,9 @@ import type {
     BashOperations,
     ExtensionAPI,
     ExtensionContext,
+    EntryRenderer,
 } from "@earendil-works/pi-coding-agent";
+import { getThemeByName } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 import {
     claimSandboxRuntime,
@@ -75,10 +77,12 @@ function register(): {
     tools: Map<string, RegisteredTool>;
     registrations: string[];
     hooks: Map<string, Hook[]>;
+    entryRenderers: Map<string, EntryRenderer>;
 } {
     const tools = new Map<string, RegisteredTool>();
     const registrations: string[] = [];
     const hooks = new Map<string, Hook[]>();
+    const entryRenderers = new Map<string, EntryRenderer>();
     const pi = {
         registerTool: (tool: RegisteredTool) => {
             registrations.push(tool.name);
@@ -86,6 +90,8 @@ function register(): {
         },
         registerCommand: () => undefined,
         appendEntry: () => undefined,
+        getSettings: () => ({}),
+        registerEntryRenderer: (kind: string, renderer: EntryRenderer) => entryRenderers.set(kind, renderer),
         on: (event: string, hook: Hook) => {
             hooks.set(event, [...(hooks.get(event) ?? []), hook]);
         },
@@ -94,7 +100,7 @@ function register(): {
         sendUserMessage: () => undefined,
     } as unknown as ExtensionAPI;
     bashExecutionExtension(pi);
-    return { tools, registrations, hooks };
+    return { tools, registrations, hooks, entryRenderers };
 }
 
 afterEach(() => {
@@ -102,6 +108,61 @@ afterEach(() => {
 });
 
 describe("bash-execution ownership", () => {
+    test("manual execution metadata renders the host route without changing process output", () => {
+        const registered = register();
+        const renderer = registered.entryRenderers.get("pi.execution.user-bash.v1");
+        expect(renderer).toBeFunction();
+        const theme = getThemeByName("dark");
+        if (!renderer || !theme) throw new Error("Missing receipt renderer or built-in theme");
+        const view = renderer({
+            type: "custom", id: "receipt", parentId: null, timestamp: new Date(0).toISOString(),
+            customType: "pi.execution.user-bash.v1",
+            data: { command: "printf host", execution: {
+                status: "unsandboxed", mode: "host", backend: "local", profile: "none", tmpNamespace: "host", phase: "process", outcome: "succeeded", exitCode: 0,
+            } },
+        }, { expanded: false }, theme);
+        expect(view?.render(80).join("\n")).toContain("Host");
+        expect(view?.render(80).join("\n")).toContain("exit 0");
+    });
+    test("manual commands keep a literal s command and Pi's prepared shell prefix", async () => {
+        publish({ state: "error" });
+        const registered = register();
+        const command = "s printf untouched";
+        const userBash = registered.hooks.get("user_bash")![0];
+        const response = userBash({ command, excludeFromContext: false }, executionContext()) as { operations: BashOperations };
+        const chunks: string[] = [];
+        const result = await response.operations.exec(`s() { printf '%s' "$*"; }; ${command}`, process.cwd(), {
+            onData: chunk => chunks.push(chunk.toString()),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(chunks.join("")).toBe("printf untouched");
+    });
+    test.each(["enabled", "error", "uninitialized"] as const)(
+        "manual commands use native host execution when Sandbox is %s",
+        async (state) => {
+            let sandboxRuns = 0;
+            publish(state === "enabled" ? {
+                state,
+                createBashOperations: () => ({ exec: async () => {
+                    sandboxRuns++;
+                    return { exitCode: 93 };
+                } }),
+                analysis: { run: async () => { throw new Error("unused"); }, shutdown: async () => undefined },
+            } : { state });
+            const registered = register();
+            const userBash = registered.hooks.get("user_bash")![0];
+            for (const excludeFromContext of [false, true]) {
+                const response = userBash({ command: "printf manual-native", excludeFromContext }, executionContext()) as { operations: BashOperations };
+                const chunks: string[] = [];
+                const result = await response.operations.exec("printf manual-native", process.cwd(), {
+                    onData: chunk => chunks.push(chunk.toString()),
+                });
+                expect(result.exitCode).toBe(0);
+                expect(chunks.join("")).toBe("manual-native");
+            }
+            expect(sandboxRuns).toBe(0);
+        },
+    );
     test("Bash and safe_bash wait for the new sandbox policy", async () => {
         const owner = Symbol("reconfiguration");
         owners.push(owner);
@@ -175,7 +236,7 @@ describe("bash-execution ownership", () => {
 
     });
 
-    test("routes bash and safe_bash through Sandbox, and !s and !!s explicitly through Sandbox", async () => {
+    test("routes agent bash and safe_bash through Sandbox", async () => {
         const commands: string[] = [];
         const operations: BashOperations = {
             exec: async (command, _cwd, options) => {
@@ -210,25 +271,9 @@ describe("bash-execution ownership", () => {
                 context,
             );
         }
-        const userBash = registered.hooks.get("user_bash")?.[0];
-        const response = userBash?.({ command: "s printf user_bash" }, context) as {
-            operations: BashOperations;
-        };
-        await response.operations.exec("s printf user_bash", process.cwd(), {
-            onData: () => undefined,
-        });
-        const hiddenResponse = userBash?.({ command: "s printf hidden", excludeFromContext: true }, context) as {
-            operations: BashOperations;
-        };
-        await hiddenResponse.operations.exec("s printf hidden", process.cwd(), {
-            onData: () => undefined,
-        });
-
         expect(commands).toEqual([
             "printf bash",
             "printf safe_bash",
-            "printf user_bash",
-            "printf hidden",
         ]);
     });
 
@@ -236,19 +281,6 @@ describe("bash-execution ownership", () => {
         for (const state of ["uninitialized", "error"] as const) {
             publish({ state });
             const registered = register();
-            const userBash = registered.hooks.get("user_bash")?.[0];
-            const response = userBash?.({ command: "s true" }, {} as ExtensionContext) as {
-                operations: BashOperations;
-            };
-            await expect(
-                response.operations.exec("s true", process.cwd(), {
-                    onData: () => undefined,
-                }),
-            ).rejects.toThrow(
-                state === "error"
-                    ? "Sandbox execution unavailable: initialization failed"
-                    : "Sandbox execution unavailable: uninitialized",
-            );
             for (const toolName of ["bash", "safe_bash"] as const) {
                 await expect(
                     registered.tools.get(toolName)!.execute(
@@ -267,65 +299,4 @@ describe("bash-execution ownership", () => {
         }
     });
 
-    test("rejects !s without a command without falling back to the host", async () => {
-        publish({ state: "disabled" });
-        const registered = register();
-        const userBash = registered.hooks.get("user_bash")?.[0];
-        const response = userBash?.({ command: "s" }, executionContext()) as {
-            operations: BashOperations;
-        };
-
-        await expect(
-            response.operations.exec("s", process.cwd(), { onData() {} }),
-        ).rejects.toThrow("Usage: !s <command>");
-    });
-
-    test("refreshes the shell authority before dispatching !s", async () => {
-        let sandboxRuns = 0;
-        publish({
-            state: "enabled",
-            createBashOperations: () => ({
-                exec: async () => {
-                    sandboxRuns += 1;
-                    return { exitCode: 0 };
-                },
-            }),
-            analysis: {
-                run: async () => ({ output: "", stderr: "", runtime: "quickjs", durationMs: 0, truncated: false }),
-                shutdown: async () => undefined,
-            },
-        });
-        let prepared = 0;
-        publishShellRuntime(
-            owners.at(-1)!,
-            () => ({
-                state: "ready" as const,
-                mode: "sandbox" as const,
-                requestedMode: "sandbox" as const,
-                profile: "default" as const,
-                requestedProfile: "default" as const,
-                projectRoot: process.cwd(),
-                grants: emptyGrants(),
-                requestedGrants: emptyGrants(),
-                authorityPath: "/unused",
-            }),
-            async () => {
-                prepared += 1;
-                throw new Error("invalid active sandbox config");
-            },
-        );
-        const registered = register();
-        const userBash = registered.hooks.get("user_bash")?.[0];
-        const response = userBash?.({ command: "s printf blocked" }, executionContext()) as {
-            operations: BashOperations;
-        };
-
-        await expect(
-            response.operations.exec("s printf blocked", process.cwd(), {
-                onData: () => undefined,
-            }),
-        ).rejects.toThrow("invalid active sandbox config");
-        expect(prepared).toBe(1);
-        expect(sandboxRuns).toBe(0);
-    });
 });

@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import {
     allowedCodePath,
     releaseTag,
@@ -23,12 +24,18 @@ import {
 } from './distribution.ts';
 import * as distribution from './distribution.ts';
 import { run, writeJson, digest, archive, inventory } from './files.ts';
-import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 test('packing cannot race runtime garbage collection', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-pack-lock-'));
     const lock = acquireRuntimeStorageLock(root);
-    try { await expect(packDistribution(root, join(root, 'output'), 'a'.repeat(40))).rejects.toThrow('Runtime storage is busy'); }
-    finally { lock.release(); rmSync(root, { recursive: true, force: true }); rmSync(`${root}.runtime.lock`, { force: true }); }
+    try {
+        await expect(
+            packDistribution(root, join(root, 'output'), 'a'.repeat(40)),
+        ).rejects.toThrow('Runtime storage is busy');
+    } finally {
+        lock.release();
+        rmSync(root, { recursive: true, force: true });
+        rmSync(`${root}.runtime.lock`, { force: true });
+    }
 });
 test('distribution code selection excludes credentials and runtime user state', () => {
     for (const path of [
@@ -50,6 +57,30 @@ test('distribution code selection excludes credentials and runtime user state', 
     expect(() => releaseTag('--latest')).toThrow('Invalid release tag');
 });
 
+test.each([
+    'agent/unknown.json',
+    'agent/unknown.jsonc',
+    'agent/unknown.toml',
+    'agent/config/unknown.yaml',
+    'agent/config/unknown.yml',
+])(
+    'pack refuses unclassified configuration %s before preparing runtime copies',
+    async (path) => {
+        const root = mkdtempSync(join(tmpdir(), 'pi-profile-policy-'));
+        const output = join(root, 'output');
+        try {
+            writeJson(join(root, path), {});
+            await expect(
+                packDistribution(root, output, 'a'.repeat(40)),
+            ).rejects.toThrow(`Unclassified profile configuration: ${path}`);
+            expect(existsSync(output)).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+            rmSync(`${root}.runtime.lock`, { force: true });
+        }
+    },
+);
+
 test('pack snapshots main and publish requests qualification without finalizing the draft', async () => {
     const home = mkdtempSync(join(tmpdir(), 'pi-setup-distribution-'));
     const root = join(home, '.pi');
@@ -61,6 +92,10 @@ test('pack snapshots main and publish requests qualification without finalizing 
         };
         write(join(root, 'bin/pi'), '#!/bin/sh\n');
         write(join(root, 'bin/pi-setup'), '#!/bin/sh\n');
+        write(
+            join(root, 'agent/skills/bundled/SKILL.md'),
+            '# Bundled skill\nRepository resource.',
+        );
         writeJson(join(root, 'agent/extensions/tool-groups/package.json'), {
             name: 'fixture-tool-groups',
             version: '1.0.0',
@@ -75,7 +110,7 @@ test('pack snapshots main and publish requests qualification without finalizing 
             'export const approved = true;',
         );
         run('git', ['init', '--quiet'], root);
-        run('git', ['add', 'bin', 'agent/extensions'], root);
+        run('git', ['add', 'bin', 'agent/extensions', 'agent/skills'], root);
         run(
             'git',
             [
@@ -93,10 +128,26 @@ test('pack snapshots main and publish requests qualification without finalizing 
             packages: ['extensions/tool-groups'],
             defaultProvider: 'fixture',
             defaultModel: 'fixture-model',
+            skills: [
+                '!agent-browser',
+                '~/.agents/skills',
+                '~/.pi/agent/portable-skills',
+            ],
         });
         writeJson(join(root, 'agent/auth.json'), {
             credential: 'EXCLUDED_FIXTURE_CREDENTIAL',
         });
+        const excluded = [
+            'agent/trust.json',
+            'agent/mcp-auth.json',
+            'agent/mcp-cache.json',
+            'agent/config/setup-bindings.json',
+            'agent/ai-providers.secrets.example.json',
+        ];
+        for (const path of excluded)
+            writeJson(join(root, path), {
+                token: 'EXCLUDED_FIXTURE_CREDENTIAL',
+            });
         write(
             join(home, '.agents/skills/example/SKILL.md'),
             '# Example skill\nUse deterministic checks.',
@@ -233,10 +284,49 @@ test('pack snapshots main and publish requests qualification without finalizing 
         );
         write(join(root, 'bin/pi'), 'uncommitted version');
         write(join(root, 'agent/extensions/work-in-progress.ts'), 'unfinished');
+        const preferences = {
+            'fancy-footer.json': { gaugeWidth: 12 },
+            'fancy-footer.local.json': {
+                extensionStatusHiddenIds: ['fixture-status'],
+            },
+            'pi-session-recall.json': {
+                queryModel: { provider: 'fixture', id: 'query' },
+                'fallback-models': [],
+            },
+            'mcp.json': {
+                mcpServers: {
+                    fixture: {
+                        url: 'https://fixture.invalid/mcp',
+                        headers: { Authorization: 'Bearer ${FIXTURE_TOKEN}' },
+                        enabled: false,
+                    },
+                },
+            },
+            'mcp-adapter.json': {
+                mcpServers: {
+                    fixture: {
+                        command: 'fixture',
+                        auth: 'bearer',
+                        env: { FIXTURE_API_KEY: '${FIXTURE_API_KEY}' },
+                    },
+                },
+            },
+            'models.json': {
+                providers: {
+                    fixture: {
+                        baseUrl: 'https://fixture.invalid/v1',
+                        apiKey: '${FIXTURE_KEY}',
+                        models: [],
+                    },
+                },
+            },
+        };
+        for (const [name, value] of Object.entries(preferences))
+            writeJson(join(root, 'agent', name), value);
         const script = join(home, 'pack.ts');
         write(
             script,
-            `process.umask(0o077); const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3]);`,
+            `process.umask(0o077); const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3], undefined, {includeGlobalSkills:process.argv[4]==='include-global-skills'});`,
         );
         const output = join(home, 'output');
         chmodSync(join(runtime, 'packed/tarballs'), 0o555);
@@ -247,6 +337,96 @@ test('pack snapshots main and publish requests qualification without finalizing 
         });
         archive('extract', join(output, 'setup.tgz'), join(home, 'unpacked'));
         const manifest = validateBundle(join(home, 'unpacked'));
+        for (const path of excluded)
+            expect(manifest.files[`setup/${path}`]).toBeUndefined();
+        for (const [name, value] of Object.entries(preferences)) {
+            expect(manifest.files[`setup/agent/${name}`]).toBeDefined();
+            expect(
+                JSON.parse(
+                    readFileSync(
+                        join(home, 'unpacked/setup/agent', name),
+                        'utf8',
+                    ),
+                ),
+            ).toEqual(value);
+        }
+        writeJson(join(root, 'agent/unclassified-preferences.json'), {
+            layout: 'fixture',
+        });
+        const refused = Bun.spawnSync(
+            [
+                process.execPath,
+                script,
+                root,
+                join(home, 'unknown-profile-output'),
+            ],
+            {
+                cwd: root,
+                env: {
+                    ...process.env,
+                    HOME: home,
+                    PI_CODING_AGENT_DIR: join(root, 'agent'),
+                },
+                stdout: 'pipe',
+                stderr: 'pipe',
+            },
+        );
+        expect(refused.exitCode).not.toBe(0);
+        expect(new TextDecoder().decode(refused.stderr)).toContain(
+            'Unclassified profile configuration: agent/unclassified-preferences.json',
+        );
+        expect(existsSync(join(home, 'unknown-profile-output'))).toBe(false);
+        rmSync(join(root, 'agent/unclassified-preferences.json'));
+        writeJson(join(root, 'agent/models.json'), {
+            providers: { fixture: { apiKey: 'fixture-clear-credential' } },
+        });
+        const unsafeOutput = join(home, 'unsafe-profile-output');
+        const unsafe = Bun.spawnSync(
+            [process.execPath, script, root, unsafeOutput],
+            {
+                cwd: root,
+                env: {
+                    ...process.env,
+                    HOME: home,
+                    PI_CODING_AGENT_DIR: join(root, 'agent'),
+                },
+                stdout: 'pipe',
+                stderr: 'pipe',
+            },
+        );
+        expect(unsafe.exitCode).not.toBe(0);
+        expect(new TextDecoder().decode(unsafe.stderr)).toContain(
+            'agent/models.json:providers.fixture.apiKey',
+        );
+        expect(new TextDecoder().decode(unsafe.stderr)).not.toContain(
+            'fixture-clear-credential',
+        );
+        expect(existsSync(unsafeOutput)).toBe(false);
+        writeJson(join(root, 'agent/models.json'), preferences['models.json']);
+        const footerPath = join(root, 'agent/fancy-footer.json');
+        rmSync(footerPath);
+        symlinkSync('missing-preferences.json', footerPath);
+        const danglingOutput = join(home, 'dangling-profile-output');
+        const dangling = Bun.spawnSync(
+            [process.execPath, script, root, danglingOutput],
+            {
+                cwd: root,
+                env: {
+                    ...process.env,
+                    HOME: home,
+                    PI_CODING_AGENT_DIR: join(root, 'agent'),
+                },
+                stdout: 'pipe',
+                stderr: 'pipe',
+            },
+        );
+        expect(dangling.exitCode).not.toBe(0);
+        expect(new TextDecoder().decode(dangling.stderr)).toContain(
+            'Profile must be a regular file: agent/fancy-footer.json',
+        );
+        expect(existsSync(danglingOutput)).toBe(false);
+        rmSync(footerPath);
+        writeJson(footerPath, preferences['fancy-footer.json']);
         expect(manifest.sourceCommit).toBe(mainCommit);
         expect(manifest.files['setup/bin/pi']?.split(':')[0]).toBe(
             String(0o755),
@@ -297,14 +477,58 @@ test('pack snapshots main and publish requests qualification without finalizing 
             ),
         ).toContain('fixture-model');
         expect(
+            existsSync(join(home, 'unpacked/setup/agent/portable-skills')),
+        ).toBe(false);
+        expect(
+            JSON.parse(
+                readFileSync(
+                    join(home, 'unpacked/setup/agent/settings.json'),
+                    'utf8',
+                ),
+            ).skills,
+        ).toEqual(['!agent-browser']);
+        expect(
+            readFileSync(
+                join(home, 'unpacked/setup/agent/skills/bundled/SKILL.md'),
+                'utf8',
+            ),
+        ).toContain('Repository resource');
+        const withSkills = join(home, 'with-skills');
+        run(
+            process.execPath,
+            [script, root, withSkills, 'include-global-skills'],
+            root,
+            {
+                ...process.env,
+                HOME: home,
+                PI_CODING_AGENT_DIR: join(root, 'agent'),
+            },
+        );
+        archive(
+            'extract',
+            join(withSkills, 'setup.tgz'),
+            join(home, 'with-skills-unpacked'),
+        );
+        expect(
             readFileSync(
                 join(
                     home,
-                    'unpacked/setup/agent/portable-skills/example/SKILL.md',
+                    'with-skills-unpacked/setup/agent/portable-skills/example/SKILL.md',
                 ),
                 'utf8',
             ),
         ).toContain('deterministic');
+        expect(
+            JSON.parse(
+                readFileSync(
+                    join(
+                        home,
+                        'with-skills-unpacked/setup/agent/settings.json',
+                    ),
+                    'utf8',
+                ),
+            ).skills,
+        ).toEqual(['!agent-browser', '~/.pi/agent/portable-skills']);
         // GitHub is the external boundary; archive admission and extraction stay real.
         const fakeTools = join(home, 'tools');
         mkdirSync(fakeTools);
@@ -463,7 +687,7 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
             await finalize();
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_DELAY_ATTESTATION;
-            const downloaded = downloadDistribution(
+            const downloaded = await downloadDistribution(
                 'fixture-release',
                 join(home, 'download'),
             );
@@ -478,40 +702,40 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
                 calls.filter((args) => args[1] === 'verify-asset'),
             ).toHaveLength(4);
             process.env.GH_FIXTURE_BAD_ASSET = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'fixture-release',
                     join(home, 'bad-asset'),
                 ),
-            ).toThrow('Command failed');
+            ).rejects.toThrow('Command failed');
             expect(() =>
                 readFileSync(join(home, 'bad-asset/bundle/manifest.json')),
             ).toThrow();
             process.env.GH_FIXTURE_INVALID_ATTESTATION = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'invalid-signature',
                     join(home, 'invalid-signature'),
                 ),
-            ).toThrow('invalid signature');
+            ).rejects.toThrow('invalid signature');
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_INVALID_ATTESTATION;
             process.env.GH_FIXTURE_MISSING_ATTESTATION = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'missing-attestation',
                     join(home, 'missing-attestation'),
                 ),
-            ).toThrow('no attestations for tag');
+            ).rejects.toThrow('no attestations for tag');
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_MISSING_ATTESTATION;
             process.env.GH_FIXTURE_PUBLIC = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'public-refused',
                     join(home, 'public-refused'),
                 ),
-            ).toThrow('must be private');
+            ).rejects.toThrow('must be private');
         } finally {
             process.env = originalEnv;
             sleep.mockRestore();

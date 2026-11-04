@@ -43,6 +43,113 @@ function bundle(root: string, version: string) {
     return dir;
 }
 
+test.each([
+    'fancy-footer.json',
+    'fancy-footer.local.json',
+    'pi-session-recall.json',
+    'models.json',
+    'mcp.json',
+    'mcp-adapter.json',
+])(
+    'a legacy installation refuses to replace unmanaged %s during an update',
+    async (name) => {
+        const home = mkdtempSync(join(tmpdir(), 'pi-profile-upgrade-'));
+        const root = join(home, '.pi');
+        const provision = async () => {};
+        try {
+            await installBundle({
+                root,
+                bundle: bundle(home, 'old'),
+                release: 'old',
+                provision,
+            });
+            const personal = join(root, 'agent', name);
+            writeJson(personal, { personal: true });
+            const next = bundle(home, 'new');
+            writeJson(join(next, 'setup/agent', name), {});
+            rmSync(join(next, 'manifest.json'));
+            writeJson(join(next, 'manifest.json'), {
+                schemaVersion: 1,
+                platform: 'linux-x64',
+                sourceCommit: 'b'.repeat(40),
+                packages: [],
+                files: inventory(next),
+            });
+            await expect(
+                installBundle({
+                    root,
+                    bundle: next,
+                    release: 'new',
+                    update: true,
+                    provision,
+                }),
+            ).rejects.toThrow(`Unmanaged file collision: agent/${name}`);
+            expect(JSON.parse(readFileSync(personal, 'utf8'))).toEqual({
+                personal: true,
+            });
+            expect(readInstallation(root).release).toBe('old');
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    },
+);
+
+test('upgrading a legacy portable skills snapshot removes only its managed copies', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-skills-upgrade-'));
+    const root = join(home, '.pi');
+    try {
+        const old = bundle(home, 'old-skills');
+        mkdirSync(join(old, 'setup/agent/portable-skills/global'), {
+            recursive: true,
+        });
+        writeFileSync(
+            join(old, 'setup/agent/portable-skills/global/SKILL.md'),
+            'Legacy managed skill',
+        );
+        writeJson(join(old, 'setup/agent/settings.json'), {
+            skills: ['~/.pi/agent/portable-skills'],
+        });
+        rmSync(join(old, 'manifest.json'));
+        writeJson(join(old, 'manifest.json'), {
+            schemaVersion: 1,
+            platform: 'linux-x64',
+            sourceCommit: 'a'.repeat(40),
+            files: inventory(old),
+            packages: [],
+        });
+        const provision = async () => {};
+        await installBundle({ root, bundle: old, release: 'old', provision });
+        mkdirSync(join(root, 'agent/portable-skills/personal'));
+        writeFileSync(
+            join(root, 'agent/portable-skills/personal/SKILL.md'),
+            'Unmanaged personal skill',
+        );
+        const next = bundle(home, 'without-global-skills');
+        await installBundle({
+            root,
+            bundle: next,
+            release: 'new',
+            update: true,
+            provision,
+        });
+        expect(
+            existsSync(join(root, 'agent/portable-skills/global/SKILL.md')),
+        ).toBe(false);
+        expect(
+            readFileSync(
+                join(root, 'agent/portable-skills/personal/SKILL.md'),
+                'utf8',
+            ),
+        ).toBe('Unmanaged personal skill');
+        expect(
+            JSON.parse(readFileSync(join(root, 'agent/settings.json'), 'utf8'))
+                .skills,
+        ).toBeUndefined();
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
 test('dependency environment templates are managed while local environment files block replacement', async () => {
     const home = mkdtempSync(join(tmpdir(), 'pi-setup-template-'));
     const root = join(home, '.pi');
@@ -353,6 +460,15 @@ test('discovered bindings stay local across updates and rollback, and redirected
         };
         const preview = await installBundle({ ...options, dryRun: true });
         expect(preview).toContain(executable);
+        expect(preview).toContain('Read-only access:');
+        expect(preview).not.toContain('Read-only installations:');
+        const details = await installBundle({
+            ...options,
+            dryRun: true,
+            details: true,
+        });
+        expect(details).toContain('Read-only installations:');
+        expect(details).toContain(bin);
         expect(existsSync(root)).toBe(false);
         await installBundle(options);
         const saved = readFileSync(

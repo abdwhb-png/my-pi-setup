@@ -1,9 +1,11 @@
 import {
     createBashToolDefinition,
+    createLocalBashOperations,
     defineTool,
     type BashToolDetails,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 import {
     bashWithStdinSchema,
@@ -17,16 +19,16 @@ import {
 import { appendCompressionFooter } from "../_shared/compression-render.ts";
 import {
     recordExecution,
+    hostExecution,
+    executionFromDetails,
+    formatShellExecutionLabel,
     unknownExecution,
 } from "../_shared/execution-provenance/index.ts";
 import { recordSandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
 import { getSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import { CapabilityError } from "../_shared/shell-capability-error.ts";
 import { shellToolPresentation } from "../_shared/shell-presentation/index.ts";
-import {
-    resolveBashOperations,
-    resolveForcedSandboxOperations,
-} from "../_shared/shell-runtime/operations.ts";
+import { resolveBashOperations } from "../_shared/shell-runtime/operations.ts";
 
 export { resolveBashOperations } from "../_shared/shell-runtime/operations.ts";
 
@@ -41,6 +43,19 @@ export function registerBuiltinBash(
     let projectCwd = process.cwd();
     let bashDefinition = createBashToolDefinition(projectCwd);
     let rewriteRules = loadBashRewrites(projectCwd).rules;
+    pi.registerEntryRenderer("pi.execution.user-bash.v1", (entry) => {
+        const execution = executionFromDetails(entry.data);
+        return execution
+            ? new Text(
+                  formatShellExecutionLabel(
+                      execution,
+                      execution.mode ?? "host",
+                  ),
+                  0,
+                  0,
+              )
+            : undefined;
+    });
     pi.registerTool(
         defineTool<typeof bashWithStdinSchema, BashToolDetails | undefined>({
             ...bashDefinition,
@@ -99,39 +114,41 @@ export function registerBuiltinBash(
 
     pi.on("user_bash", (event) => {
         let execution = unknownExecution();
-        const sandboxPrefix = /^s(?:\s|$)/.test(event.command);
-        const command = sandboxPrefix
-            ? event.command.slice(1).trimStart()
-            : event.command;
-        const operationOptions = {
-            onExecution: (value: typeof execution) => {
-                execution = value;
-            },
-        };
-        const operations =
-            sandboxPrefix && command.length > 0
-                ? resolveForcedSandboxOperations(operationOptions)
-                : sandboxPrefix
-                  ? undefined
-                  : resolveBashOperations(
-                        options.localSupervisor,
-                        operationOptions,
-                    );
+        const operations = createLocalBashOperations({
+            shellPath: pi.getSettings().shellPath,
+        });
         return {
             operations: {
-                exec: async (_command, cwd, executionOptions) => {
+                exec: async (command, cwd, executionOptions) => {
                     try {
-                        if (sandboxPrefix && command.length === 0) {
-                            throw new Error("Usage: !s <command>");
-                        }
-                        if (!operations) {
-                            throw new Error("Usage: !s <command>");
-                        }
-                        return await operations.exec(
-                            sandboxPrefix ? command : _command,
+                        const result = await operations.exec(
+                            command,
                             cwd,
                             executionOptions,
                         );
+                        execution = {
+                            ...hostExecution("process"),
+                            backend: "local",
+                            outcome: executionOptions.signal?.aborted
+                                ? "aborted"
+                                : result.exitCode === 0
+                                  ? "succeeded"
+                                  : "failed",
+                            ...(result.exitCode !== null
+                                ? { exitCode: result.exitCode }
+                                : {}),
+                        };
+                        return result;
+                    } catch (error) {
+                        execution = {
+                            ...execution,
+                            mode: "host",
+                            phase: "process",
+                            outcome: executionOptions.signal?.aborted
+                                ? "aborted"
+                                : "failed",
+                        };
+                        throw error;
                     } finally {
                         pi.appendEntry("pi.execution.user-bash.v1", {
                             command: event.command,

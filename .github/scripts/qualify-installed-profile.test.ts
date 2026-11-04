@@ -38,9 +38,13 @@ export const SessionManager = { inMemory: () => ({}) };
 export const SettingsManager = { create: () => ({ getTheme: () => 'fixture-theme' }) };
 let themeReady = false;
 export function initTheme(name, watcher) { if (name !== 'fixture-theme' || watcher !== false) throw Error('Incorrect theme setup'); themeReady = true; }
+export class DefaultResourceLoader {
+ constructor(options) { if (JSON.stringify(options.disabledBuiltinExtensions) !== '["mcp"]') throw Error('MCP connectivity must be disabled during profile qualification'); }
+ async reload() { this.ready = true; }
+}
 let report;
 const failure = { extensionPath: ${JSON.stringify(join(target, 'agent/extensions/fixture/index.ts'))}, event: ${JSON.stringify(phase === 'startup' ? 'session_start' : 'session_shutdown')}, error: "Cannot find module 'PRIVATE_FIXTURE_SENTINEL'", stack: ${JSON.stringify(`at fixture (${target}/agent/extensions/fixture/index.ts:12:3)`)} };
-export async function createAgentSession() { return {
+export async function createAgentSession(options) { if (!options.resourceLoader?.ready) throw Error('Expected the isolated resource loader'); return {
  extensionsResult: { errors: [], extensions: [] },
  session: {
   bindExtensions: async ({onError}) => { if (!themeReady) throw Error('Theme not initialized. Call initTheme() first.'); report=onError; if (${JSON.stringify(phase)} === 'startup') report(failure); },

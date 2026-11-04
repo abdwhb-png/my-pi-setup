@@ -10,7 +10,7 @@ Vite compiles configuration into `node_modules/.vite-temp`; changing `TMPDIR` do
 
 ### Unexposed paths in shell errors
 
-After an admitted shell process exits with a nonzero code, `bash`, `safe_bash`, and `!s` can append a `Sandbox: <path> is outside the admitted read scope.` diagnostic to an absolute-path Bash `cd` or Node `Cannot find module` error. The original output and exit code are preserved. This reports a permission boundary, not proof that the path exists on the host or that the sandbox caused every error in the command.
+After an admitted shell process exits with a nonzero code, `bash`, `safe_bash`, and `/sandbox run` can append a `Sandbox: <path> is outside the admitted read scope.` diagnostic to an absolute-path Bash `cd` or Node `Cannot find module` error. The original output and exit code are preserved. This reports a permission boundary, not proof that the path exists on the host or that the sandbox caused every error in the command.
 
 The diagnostic requires a validated admission report and confirmed process startup for that execution. It is absent for host execution, setup/protocol failures, older or missing admission contexts, successful commands, and paths covered by admitted mounts or aliases. Relative, ambiguous, and unsupported error formats remain unchanged. The diagnostic scans only the final 64 KiB of output and reports at most three paths. It does not inspect host files, grant access, retry commands, or add persistent model instructions.
 

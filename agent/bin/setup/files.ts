@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
     readFileSync,
@@ -12,9 +12,14 @@ import {
     chmodSync,
 } from 'node:fs';
 import { dirname, resolve, relative, isAbsolute, join } from 'node:path';
-import { redactTextPreservingContext } from '../../extensions/_shared/secret-redaction.ts';
+import { StringDecoder } from 'node:string_decoder';
 import { runtimeChildStdio } from '../../extensions/_shared/runtime-storage.ts';
-export { asJsonObject as object, readJsonObject as json } from '../../extensions/_shared/json-object.ts';
+import { redactTextPreservingContext } from '../../extensions/_shared/secret-redaction.ts';
+import { readSetupProgress, type SetupProgress } from './progress.ts';
+export {
+    asJsonObject as object,
+    readJsonObject as json,
+} from '../../extensions/_shared/json-object.ts';
 
 export function run(
     command: string,
@@ -30,22 +35,110 @@ export function run(
         stdio: runtimeChildStdio('pipe'),
     });
     if (result.error || result.status !== 0) {
-        // Redact before taking each stream's tail, so truncation cannot split a secret.
-        const detail =
-            [result.stdout, result.stderr, result.error?.message]
-                .filter((output): output is string => Boolean(output?.trim()))
-                .map((output) =>
-                    redactTextPreservingContext(output.trim(), {
-                        maxLength: Infinity,
-                    }).slice(-2000),
-                )
-                .join('\n') || 'No diagnostic output';
-        throw new Error(
-            `Command failed: ${command} (exit ${result.status ?? 'unavailable'}). ${detail}`,
-            { cause: result.error },
+        throw commandFailure(
+            command,
+            result.status,
+            result.stdout,
+            result.stderr,
+            result.error,
         );
     }
     return result.stdout.trim();
+}
+
+function commandFailure(
+    command: string,
+    status: number | null,
+    stdout: string | null,
+    stderr: string | null,
+    error?: Error,
+): Error {
+    // Redact before taking each stream's tail, so truncation cannot split a secret.
+    const detail =
+        [stdout, stderr, error?.message]
+            .filter((output): output is string => Boolean(output?.trim()))
+            .map((output) =>
+                redactTextPreservingContext(output.trim(), {
+                    maxLength: Infinity,
+                }).slice(-2000),
+            )
+            .join('\n') || 'No diagnostic output';
+    return new Error(
+        `Command failed: ${command} (exit ${status ?? 'unavailable'}). ${detail}`,
+        { cause: error },
+    );
+}
+
+export function runAsync(
+    command: string,
+    args: string[],
+    cwd?: string,
+    env = process.env,
+    progress?: SetupProgress,
+): Promise<string> {
+    return new Promise((resolvePromise, reject) => {
+        const child = spawn(command, args, {
+            cwd,
+            env,
+            stdio: runtimeChildStdio('pipe'),
+        });
+        const decoder = new StringDecoder('utf8');
+        const stdout: Buffer[] = [],
+            stderr: Buffer[] = [];
+        let size = 0,
+            pending = '',
+            failure: Error | undefined;
+        child.stdin?.end();
+        const capture = (target: Buffer[], chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 64 * 1024 * 1024) {
+                failure ??= new Error(
+                    'Command output exceeded the 64 MiB limit',
+                );
+                child.kill();
+                return false;
+            }
+            target.push(chunk);
+            return true;
+        };
+        child.stdout?.on('data', (chunk: Buffer) => {
+            capture(stdout, chunk);
+        });
+        child.stderr?.on('data', (chunk: Buffer) => {
+            if (!capture(stderr, chunk) || !progress) return;
+            pending += decoder.write(chunk);
+            const lines = pending.split('\n');
+            pending = lines.pop() ?? '';
+            if (pending.length > 1024) pending = '';
+            try {
+                for (const line of lines) readSetupProgress(line, progress);
+            } catch (error) {
+                failure =
+                    error instanceof Error ? error : new Error(String(error));
+                child.kill();
+            }
+        });
+        child.on('error', (error) => {
+            failure = error;
+        });
+        child.on('close', (status, signal) => {
+            const out = Buffer.concat(stdout).toString('utf8');
+            if (failure || status !== 0) {
+                reject(
+                    commandFailure(
+                        command,
+                        status,
+                        out,
+                        Buffer.concat(stderr).toString('utf8'),
+                        failure ??
+                            (signal
+                                ? new Error(`Command interrupted by ${signal}`)
+                                : undefined),
+                    ),
+                );
+            } else resolvePromise(out.trim());
+        });
+    });
 }
 export function writeJson(path: string, value: unknown): void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -109,17 +202,22 @@ export function assertInventory(
             throw new Error(`Local change or damaged file: ${path}`);
     }
 }
+const ARCHIVE_SCRIPT = join(import.meta.dir, 'archive.py');
+
 export function archive(
     mode: 'pack' | 'extract',
     source: string,
     destination: string,
 ): void {
-    run('python3', [
-        join(import.meta.dir, 'archive.py'),
-        mode,
-        source,
-        destination,
-    ]);
+    run('python3', [ARCHIVE_SCRIPT, mode, source, destination]);
+}
+
+export async function archiveAsync(
+    mode: 'pack' | 'extract',
+    source: string,
+    destination: string,
+): Promise<void> {
+    await runAsync('python3', [ARCHIVE_SCRIPT, mode, source, destination]);
 }
 
 export function writableDirectories(root: string): void {

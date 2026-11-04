@@ -8,6 +8,25 @@ mock.module("../config.ts", () => ({
 import { loadAiProvidersConfig } from "../config.ts";
 
 describe("registerProvidersCommand", () => {
+    test('shows CPA unavailability separately from configured credentials', async () => {
+        let handler: Parameters<ExtensionAPI['registerCommand']>[1]['handler'] | undefined;
+        const pi = { registerCommand: (_name: string, config: Parameters<ExtensionAPI['registerCommand']>[1]) => { handler = config.handler; } } as ExtensionAPI;
+        const unavailable = { state: 'unavailable' as const, diagnostic: 'CPA unavailable (HTTP 401). Check credentials and run /cpa-refresh.' };
+        registerProvidersCommand(pi, () => unavailable);
+        (loadAiProvidersConfig as ReturnType<typeof mock>).mockReturnValue({ providers: { cpa: true }, widgets: {}, maxVisibleRows: 10 });
+        let rendered = '';
+        await handler!('', {
+            mode: 'tui',
+            modelRegistry: { getAll: () => [], getProviderDisplayName: () => 'CPA', getProviderAuthStatus: () => ({ configured: true }) },
+            ui: { custom: async (factory: (tui: unknown, theme: unknown, bindings: unknown, done: () => void) => { render(width: number): string[] }) => {
+                const component = factory({ requestRender: () => {} }, { fg: (_role: string, text: string) => text }, undefined, () => {});
+                rendered = component.render(140).join('\n');
+            } },
+        } as never);
+        expect(rendered).toContain('HTTP 401');
+        expect(rendered).toContain('/cpa-refresh');
+        expect(rendered).not.toContain('No models registered');
+    });
 	test("registers the /providers command", () => {
 		const registeredCommands: { name: string; options: any }[] = [];
 		const pi = {

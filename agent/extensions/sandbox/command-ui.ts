@@ -269,12 +269,16 @@ class SandboxDashboard implements Component {
             };
             const facts: Fact[] = [
                 {
-                    label: "Shell mode",
+                    label: "Agent shell mode",
                     value:
                         shell.mode === "host"
                             ? "Host · unsandboxed"
                             : "Sandbox",
                     tone: shell.mode === "host" ? "warning" : "text",
+                },
+                {
+                    label: "Manual commands",
+                    value: "! / !!: host · /sandbox run: sandbox",
                 },
                 {
                     label: "Runtime",

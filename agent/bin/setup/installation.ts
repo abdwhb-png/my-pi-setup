@@ -19,10 +19,11 @@ import {
     inventory,
     json,
     object,
-    run,
+    runAsync,
     writeJson,
     writableDirectories,
 } from './files.ts';
+import { setupStep, type SetupProgress } from './progress.ts';
 
 const STATE = '.pi-setup-state.json';
 const GENERATED_DIRECTORIES = [
@@ -44,6 +45,8 @@ export interface InstallationOptions {
     release: string;
     update?: boolean;
     dryRun?: boolean;
+    details?: boolean;
+    progress?: SetupProgress;
     bindings?: string;
     provision?: (
         root: string,
@@ -52,6 +55,10 @@ export interface InstallationOptions {
     ) => Promise<void>;
 }
 export function readInstallation(root: string): InstallationState {
+    if (!existsSync(root))
+        throw new Error(
+            `No managed Pi installation at ${root}. Install an explicitly selected release first.`,
+        );
     if (!existsSync(join(root, STATE)))
         throw new Error(
             'Unmanaged Pi installation; automatic adoption is not supported',
@@ -78,7 +85,9 @@ export async function installBundle(
 ): Promise<string> {
     const root = resolve(options.root);
     assertSetupIdle(root);
-    const manifest = validateBundle(options.bundle);
+    const manifest = await setupStep(options.progress, 'files', () =>
+        validateBundle(options.bundle),
+    );
     const previous = existsSync(root) ? readInstallation(root) : undefined;
     if (Boolean(previous) !== Boolean(options.update))
         throw new Error(
@@ -133,11 +142,13 @@ export async function installBundle(
             const declarations = object(
                 object(profile.environment ?? {}).installations ?? {},
             );
-            discovery = resolveDevelopmentTools(profile.tools, {
-                variables: object(profile.environment ?? {}).variables,
-                existing: stored,
-                overrides: { ...declarations, ...supplied },
-            });
+            discovery = await setupStep(options.progress, 'tools', () =>
+                resolveDevelopmentTools(profile.tools, {
+                    variables: object(profile.environment ?? {}).variables,
+                    existing: stored,
+                    overrides: { ...declarations, ...supplied },
+                }),
+            );
             if (discovery.unavailable.length)
                 throw new Error(
                     discovery.unavailable
@@ -156,7 +167,7 @@ export async function installBundle(
         }
     }
     if (options.dryRun)
-        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + '\nRead-only installations: ' + JSON.stringify(discovery.installations) : ''}`;
+        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files\nDestination: ${root}${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + (options.details ? '\nRead-only installations: ' + JSON.stringify(discovery.installations, null, 2) : `\nRead-only access: ${Object.keys(discovery.installations).length} tool groups. Use --dry-run --details to inspect all installation roots and files.`) : ''}\nPreview complete; no installation was created or changed.`;
     return await transact(
         root,
         options.release,
@@ -178,9 +189,12 @@ export async function installBundle(
                     options.bundle,
                     id,
                     resolvedBindings ? generated : options.bindings,
+                    options.progress,
                 );
             discovery?.assertUnchanged();
         },
+        options.progress,
+        options.update ? 'Updated' : 'Installed',
     );
 }
 
@@ -243,6 +257,8 @@ async function transact(
     release: string,
     prepare: (candidate: string) => Promise<void>,
     provision: (id: string) => Promise<void>,
+    progress?: SetupProgress,
+    action = 'Installed',
 ): Promise<string> {
     if (existsSync(root) && lstatSync(root).isSymbolicLink())
         throw new Error('Installation root must not be a symbolic link');
@@ -262,87 +278,125 @@ async function transact(
         hadTarget = existsSync(root);
         old = hadTarget ? readInstallation(root) : undefined;
         baseline = hadTarget ? inventory(root) : {};
-        writeFileSync(journal, JSON.stringify({
-            schemaVersion: 1, id, pid: process.pid, hadTarget, phase: 'preparing',
-        }), { flag: 'wx', mode: 0o600 });
+        writeFileSync(
+            journal,
+            JSON.stringify({
+                schemaVersion: 1,
+                id,
+                pid: process.pid,
+                hadTarget,
+                phase: 'preparing',
+            }),
+            { flag: 'wx', mode: 0o600 },
+        );
     } finally {
         storageLock.release();
     }
     try {
-        mkdirSync(workspace, { mode: 0o700 });
-        if (hadTarget)
-            cpSync(root, candidate, {
-                recursive: true,
-                verbatimSymlinks: true,
-            });
-        else mkdirSync(candidate, { mode: 0o700 });
-        writableDirectories(candidate);
-        if (old) {
-            for (const path of Object.keys(old.managed)) {
-                safeParents(candidate, path);
-                rmSync(child(candidate, path), { force: true });
-            }
-            // These roots are generated installations, never personal resource owners.
-            for (const path of GENERATED_DIRECTORIES) {
-                const entries = Object.keys(baseline).filter((name) =>
-                    name.startsWith(`${path}/`),
-                );
-                const unmanaged = entries.filter((name) => !old.managed[name]);
-                if (unmanaged.length)
-                    throw new Error(
-                        `Unmanaged files in generated installation: ${path}: ${unmanaged.slice(0, 20).join(', ')}${unmanaged.length > 20 ? ` (${unmanaged.length} total)` : ''}`,
+        const personal = await setupStep(progress, 'prepare', async () => {
+            mkdirSync(workspace, { mode: 0o700 });
+            if (hadTarget)
+                cpSync(root, candidate, {
+                    recursive: true,
+                    verbatimSymlinks: true,
+                });
+            else mkdirSync(candidate, { mode: 0o700 });
+            writableDirectories(candidate);
+            if (old) {
+                for (const path of Object.keys(old.managed)) {
+                    safeParents(candidate, path);
+                    rmSync(child(candidate, path), { force: true });
+                }
+                // These roots are generated installations, never personal resource owners.
+                for (const path of GENERATED_DIRECTORIES) {
+                    const entries = Object.keys(baseline).filter((name) =>
+                        name.startsWith(`${path}/`),
                     );
-                rmSync(join(candidate, path), { recursive: true, force: true });
+                    const unmanaged = entries.filter(
+                        (name) => !old.managed[name],
+                    );
+                    if (unmanaged.length)
+                        throw new Error(
+                            `Unmanaged files in generated installation: ${path}: ${unmanaged.slice(0, 20).join(', ')}${unmanaged.length > 20 ? ` (${unmanaged.length} total)` : ''}`,
+                        );
+                    rmSync(join(candidate, path), {
+                        recursive: true,
+                        force: true,
+                    });
+                }
+                rmSync(join(candidate, STATE), { force: true });
             }
-            rmSync(join(candidate, STATE), { force: true });
-        }
-        const personal = inventory(candidate);
-        await prepare(candidate);
-        if (
-            hadTarget &&
-            JSON.stringify(inventory(root)) !== JSON.stringify(baseline)
-        )
-            throw new Error(
-                'Installation changed during preparation; retry while Pi is stopped',
-            );
-        assertStopped(root);
-        if (hadTarget) renameSync(root, backup);
-        writeJson(journal, {
-            schemaVersion: 1,
-            id,
-            pid: process.pid,
-            hadTarget,
-            phase: 'activating',
+            const personal = inventory(candidate);
+            await prepare(candidate);
+            if (
+                hadTarget &&
+                JSON.stringify(inventory(root)) !== JSON.stringify(baseline)
+            )
+                throw new Error(
+                    'Installation changed during preparation; retry while Pi is stopped',
+                );
+            return personal;
         });
-        renameSync(candidate, root);
-        await provision(id);
-        const current = inventory(root);
-        const managed = Object.fromEntries(
-            Object.entries(current).filter(
-                ([path, hash]) => !localState(path) && personal[path] !== hash,
-            ),
-        );
-        writeJson(join(root, STATE), {
-            schemaVersion: 1,
-            release,
-            managed,
-            ...(hadTarget ? { previousId: id } : {}),
+        await setupStep(progress, 'activate', () => {
+            assertStopped(root);
+            if (hadTarget) renameSync(root, backup);
+            writeJson(journal, {
+                schemaVersion: 1,
+                id,
+                pid: process.pid,
+                hadTarget,
+                phase: 'activating',
+            });
+            renameSync(candidate, root);
+        });
+        await setupStep(progress, 'provision', () => provision(id));
+        await setupStep(progress, 'verify', () => {
+            const current = inventory(root);
+            const managed = Object.fromEntries(
+                Object.entries(current).filter(
+                    ([path, hash]) =>
+                        !localState(path) && personal[path] !== hash,
+                ),
+            );
+            writeJson(join(root, STATE), {
+                schemaVersion: 1,
+                release,
+                managed,
+                ...(hadTarget ? { previousId: id } : {}),
+            });
         });
         rmSync(journal);
         if (!hadTarget) rmSync(workspace, { recursive: true, force: true });
         const { cleanupRuntimes } = await import('./cleanup.ts');
-        try { await cleanupRuntimes(root); }
-        catch (error) { console.warn(`Setup completed, but runtime cleanup failed: ${error instanceof Error ? error.message : String(error)}`); }
-        return `Installed ${release}`;
+        try {
+            await setupStep(progress, 'cleanup', () => cleanupRuntimes(root));
+        } catch (error) {
+            console.warn(
+                `Setup completed, but runtime cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+        return `${action} ${release}`;
     } catch (error) {
-        recoverInstallation(root, true);
-        throw error;
+        try {
+            await setupStep(progress, 'recover', () =>
+                recoverInstallation(root, true),
+            );
+        } catch (recovery) {
+            throw new Error(
+                `Setup failed and automatic recovery failed. Use the bootstrap pi-setup recover --root ${JSON.stringify(root)}. Original failure: ${error instanceof Error ? error.message : String(error)}. Recovery failure: ${recovery instanceof Error ? recovery.message : String(recovery)}`,
+            );
+        }
+        throw new Error(
+            `Setup failed; ${hadTarget ? 'previous installation restored' : 'incomplete installation removed'}. ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+        );
     }
 }
 
-export function recoverInstallation(root: string, owned = false): void {
+export function recoverInstallation(root: string, owned = false): boolean {
     root = resolve(root);
     const journalPath = `${root}.setup-journal.json`;
+    if (!existsSync(journalPath)) return false;
     const journal = json(journalPath);
     if (
         journal.schemaVersion !== 1 ||
@@ -379,11 +433,13 @@ export function recoverInstallation(root: string, owned = false): void {
     writableDirectories(workspace);
     rmSync(workspace, { recursive: true, force: true });
     rmSync(journalPath);
+    return true;
 }
 
 export async function rollbackInstallation(
     root: string,
     dryRun = false,
+    progress?: SetupProgress,
 ): Promise<string> {
     root = resolve(root);
     assertSetupIdle(root);
@@ -412,6 +468,8 @@ export async function rollbackInstallation(
             }
         },
         async () => {},
+        progress,
+        'Restored',
     );
 }
 
@@ -420,8 +478,9 @@ async function provisionInstallation(
     bundle: string,
     transactionId: string,
     bindings?: string,
+    progress?: SetupProgress,
 ): Promise<void> {
-    run(
+    await runAsync(
         process.execPath,
         [join(root, 'agent/bin/setup/provision.ts'), root, bundle],
         root,
@@ -430,7 +489,9 @@ async function provisionInstallation(
             PI_CODING_AGENT_DIR: join(root, 'agent'),
             PI_SETUP_TRANSACTION_ID: transactionId,
             PI_SETUP_BINDINGS: bindings,
+            PI_SETUP_PROGRESS: progress ? '1' : undefined,
         },
+        progress,
     );
 }
 

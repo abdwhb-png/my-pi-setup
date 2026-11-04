@@ -16,13 +16,43 @@ The required private repository is `abdwhb-png/my-pi-distribution`. Create it se
 
 Use the repository's [Pi setup release skill](../.agents/skills/pi-setup-release/SKILL.md) for the complete promotion, preparation, qualification and publication procedure. `develop` is for development; published code must come from an approved commit on `main`.
 
-`pi-setup pack --output DIR [--source-sha FULL_SHA]` reads committed code from the selected main revision while separately capturing the current personal profile and exact installed package versions. It selects the Pi and Zerobox artifacts pinned by that source, not whichever runtime is currently active. Development edits are excluded without changing the checkout. The output directory must not exist; review its private `inventory.json` before uploading anything.
+`pi-setup pack --output DIR [--source-sha FULL_SHA] [--include-global-skills]` reads committed code from the selected main revision while separately capturing the current personal profile and exact installed package versions. It selects the Pi and Zerobox artifacts pinned by that source, not whichever runtime is currently active. Development edits are excluded without changing the checkout. The output directory must not exist; review its private `inventory.json` before uploading anything.
 
 `pi-setup publish --from DIR --tag TAG` creates one private draft and requests qualification. It does not immediately publish a release. The private Actions workflow qualifies that exact package and publishes the same files only when explicitly dispatched with `publish=true` and every required check passes. `publish=false` leaves it in draft. Published tags and assets must never be replaced.
 
-The package contains source resources, the personal profile, pinned packages, shared skills, the packed Pi runtime and the validated Zerobox bundle. Authentication, sessions, caches, memory and machine-specific authority remain excluded. Review prose and skills for private content; automatic redaction is not a complete privacy audit. Optional global memory transfer remains separate.
+The package contains source resources, the personal profile, pinned packages, repository-owned skills, the packed Pi runtime and the validated Zerobox bundle. Authentication, sessions, caches, memory and machine-specific authority remain excluded. Review prose and skills for private content; automatic redaction is not a complete privacy audit. Optional global memory transfer remains separate.
+
+Global skills under `~/.agents/skills` are excluded by default. Versioned resources under `agent/skills` and skills supplied by installed Pi packages retain their normal selection rules. Manage external skills separately with your existing `~/engineering/agent-tools` synchronization. Pi discovers the destination's `~/.agents/skills` through its normal resource loader; pi-setup does not copy or reconfigure that synchronization. To deliberately snapshot the producer's global skills, pass `pack --include-global-skills`. This copies them into `agent/portable-skills` and adds that resource path to the exported profile, retaining the existing credential and symbolic-link rejection checks. Review the resulting inventory before publication.
+
+When an older managed installation is updated to a release without global skill copies, its managed `agent/portable-skills` files and generated profile reference are removed through the normal update transaction. Unmanaged additions are preserved; edited managed files still block the update. The source profile is never rewritten by packaging, and old immutable archives are never modified.
 
 Release preparation includes storage cleanup before the next package and after verified publication, following the release skill. Downloaded archives and expanded delivery candidates are disposable once their remote or installed copy has been verified. Retain compact source/digest and qualification receipts; keep active/previous runtimes and migration backups separate from disposable build outputs. Local build caches and historical delivery directories are not included in the portable package.
+
+## Portable profile configuration
+
+One [profile policy](../agent/bin/setup/distribution.ts) controls capture, archive admission and restoration. Optional files are included only when present; packaging never creates them in the source profile.
+
+| Configuration | Distribution behavior |
+| --- | --- |
+| `agent/settings.json`, `agent/keybindings.json`, `agent/hermes-memory-config.json` | Preserve preferences, with the existing package pinning and resource-selection rules. |
+| `agent/fancy-footer.json`, `agent/fancy-footer.local.json`, `agent/pi-session-recall.json` | Preserve package preferences, including local footer layout and status visibility. “Local” in the footer filename does not make these preferences machine authority. |
+| `agent/models.json`, `agent/mcp.json`, `agent/mcp-adapter.json` | Preserve model and MCP declarations after credential validation. |
+| Registered `agent/config/` preferences | Preserve them except for machine authority and generated bindings. |
+| Credentials, trust, permission grants, sandbox authority, generated catalogs and MCP caches | Keep them local; do not distribute them. Legacy configuration locations remain excluded in favor of their current owners. |
+
+Before collecting runtime artifacts, `pack` inspects configuration candidates directly under `agent/` and `agent/config/` with JSON, JSONC, YAML or TOML suffixes. Each must have a declared policy as code, a template, a portable preference or an explicit exclusion. An unknown file fails with its relative path, rather than disappearing from the archive. This audit does not recursively classify arbitrary package data or backup files. See the policy source for the exact exclusions.
+
+Connection credentials must use a complete `${VARIABLE_NAME}` reference; `Authorization` headers can also use `Bearer ${VARIABLE_NAME}`. Ordinary nonsecret values such as transport names and `NODE_ENV` remain literal. Recognized inline keys, credential-bearing environment entries and arguments, embedded URL credentials and credential commands such as `!print-key` are refused. Diagnostics identify the file and field without printing the rejected value. Packaging and admission never resolve the variables or execute credential commands. Configure the corresponding secrets securely on each destination; `auth.json`, MCP authentication stores and `*.secrets.json` remain excluded.
+
+Home paths are stored as `~/…`, and references to `~/.pi` are rebound to a custom installation root during provisioning. MCP `command`, `cwd` and standalone path arguments are expanded for the destination because process launchers do not perform shell tilde expansion. This does not install MCP server binaries, create tunnels or make external services reachable. Existing package filters and the opt-in global skill behavior are unchanged.
+
+The manifest remains version 1 and updated operators still accept older archives that omit these optional files. Older bootstrap code rejects the newly admitted filenames. Refresh the bootstrap from `main` before installing a release that includes them:
+
+```sh
+git -C ~/pi-bootstrap pull --ff-only
+```
+
+During an update, a newly portable file can collide with an unmanaged destination file from an older installation. The operator reports the collision and leaves the installation unchanged. Back up and reconcile that file deliberately before retrying; no automatic merge or adoption occurs. Modified managed files retain the existing integrity checks.
 
 ## Install on another machine
 
@@ -37,6 +67,10 @@ bun ~/pi-bootstrap/bin/pi-setup install --release RELEASE_TAG
 The default target is `~/.pi`; `--root DIR` selects a different installation directory. An existing unmanaged installation is refused. In particular, this command does not adopt or overwrite the maintained source checkout. Dry runs can download verified assets into a temporary directory but do not change the target installation.
 
 The installer verifies the complete archive before activation. At the final installation path, it imports the packed Pi release, installs the declared packages through the local daily launcher, runs the package finalizer, stages Zerobox, and generates sandbox authority with the existing development setup command. Bundled local extensions with dependencies must include their Bun lockfiles; provisioning verifies the exact locked direct package versions and restores them with `sfw bun install --frozen-lockfile --ignore-scripts`. It never copies installed `node_modules` from the producer. Host package downloads still require Internet access and retain Socket Firewall protection. This is not an offline installer.
+
+Setup commands report their active stages and elapsed time on stderr, including periodic feedback during long subprocess waits. Package installation reports real package counts. Stdout contains the final result; `cleanup` retains its JSON report for scripts. No persistent setup log is created automatically. Every command supports contextual `--help`; usage errors return exit code 2, operational failures return 1, and successful no-ops return 0. `recover` with no pending operation is an explicit no-op.
+
+The default install/update preview summarizes the destination, verified files, discovered tools and read-only access groups. Use `install --release RELEASE_TAG --dry-run --details` or the corresponding `update` command to inspect every proposed installation root and file. A preview can download verified assets temporarily but does not activate an installation. Completion prints commands using the actual installation root, including a custom `--root`.
 
 To run `pi` directly from any directory, permanently add the installation's `bin` directory to your shell's `PATH`. The installer does not edit shell startup files. For the default `~/.pi` target, run the appropriate block once; if you used `--root DIR`, substitute that target's `bin` directory.
 
@@ -93,6 +127,12 @@ pi
 These commands configure clients; they do not open the tunnel. Set only the variables for the services you use, and persist them in your shell configuration or use the JSON settings for subsequent launches. Keep `/v1` in the CPA base URL; compression URLs are service roots. CPA accepts absolute HTTP(S) URLs without embedded credentials, query parameters or fragments. Configure its access key separately through `CLIPROXY_API_KEY` in the environment or `~/.pi/agent/.env`; credentials remain excluded from distributions.
 
 After editing endpoint configuration files, run `/reload` or restart Pi. Changes to the exported launch environment require restarting Pi. CPA uses the resolved address for model requests, model discovery and catalog cache identity, so a different server cannot inherit another endpoint's cached dynamic models. See the [save-tokens compression guide](../agent/extensions/save-tokens/README.COMPRESSION.md) for backend selection and timeouts.
+
+CPA publishes models only after a live catalog verification. The async extension factory loads cached models.dev metadata and awaits CPA verification before returning, so Pi can resolve an explicit `--provider cpa --model <id>` or `--model cpa/<id>:<thinking>` in a fresh subagent without a pre-existing CPA cache. The later `session_start` verification reuses the result within the configured TTL. Missing credentials, refused authentication, timeouts, network failures and invalid responses withdraw CPA models instead of advertising static fallbacks. A valid empty catalog is authoritative. The last verified catalog remains on disk as metadata during an outage; refreshing models.dev metadata cannot make it available again. Pi's native catalog refresh, including the refresh performed by `/model`, uses the provider's public `refreshModels` callback. The provider stays registered with zero models during an outage so a later refresh can discover its recovery. Checks retain the configured refresh TTL (30 seconds by default); `/cpa-refresh` forces verification and restores models after recovery. Offline/cache-only native refresh callbacks never query CPA or promote an unverified disk catalog; the extension's initial verification remains an explicit request to its configured CPA endpoint. Availability is the last verification result, not continuous endpoint monitoring.
+
+`/providers` and status diagnostics distinguish CPA availability from the presence of credentials. HTTP 401 means the endpoint responded but rejected authentication: check the destination's secure key configuration, then run `/cpa-refresh`. A previously active CPA model cannot accept new prompts or compaction while unavailable; choose another provider with `/model` or restore CPA. Pi's native initial model fallback remains unchanged. No generation request is made by catalog verification.
+
+`ai-providers` uses public Pi extension APIs and leaves scoped model preferences unchanged. Pi's native selector can retain a previously scoped CPA model after it disappears from the available registry; that row is not evidence of availability. Use the `all` view to inspect the available registry and `/providers` for the last CPA verification result. The extension does not modify Pi core or reach into the selector's private state.
 
 ## Configure host tools
 
@@ -187,6 +227,8 @@ Export checks that every SQLite global memory is represented by the canonical Ma
 ## Verification boundaries
 
 The automated setup tests use temporary homes, real filesystem transactions, real archive handling, the installed Hermes modules and isolated SQLite databases. Dependency installation is substituted only in transaction tests; those tests do not establish network installation or sandbox execution on a second host. Release admission additionally requires actual installation on native Ubuntu 24.04 x86_64 and WSL2 x86_64, and the existing native Zerobox qualification. Record those results with the release before treating it as qualified for both platforms.
+
+The portable workflow also restores synthetic footer, session-recall, model and MCP configurations and checks their semantic contents. A CI-only contract resolves the pinned installed footer through Pi's package manager, loads its declared extension entrypoint and renders it through the real Pi test harness. It checks model-widget visibility and locally hidden extension statuses while forbidding fetch requests; it makes no generation call. Terminal fonts, glyph support and interactive terminal behavior remain outside this contract. Private profile qualification disables the built-in MCP extension for that process so it cannot connect to the transported personal servers; MCP connectivity and authentication remain separate host checks. These prepared checks require a successful Actions run before being treated as runtime evidence.
 
 Related documents: [Personal Pi setup overview](ABOUT-MY-PI.md), [sandbox configuration](../agent/extensions/sandbox/docs/configuration.md), [runtime distribution](../agent/extensions/sandbox/runtime/distribution/README.md), [implementation verification](verification/2026-10-31-portable-pi-setup.md), [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 

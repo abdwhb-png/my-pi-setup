@@ -18,10 +18,7 @@ import type { ModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { resolveCpaModelsDevRefs } from "../../_shared/models-dev/mapping";
 import { loadAiProvidersConfig, type ModelRule } from "../config.ts";
-import {
-    STATIC_FALLBACK_MODELS,
-    NO_DEV_ROLE_COMPAT,
-} from "../constants/cpa-static-models";
+import { NO_DEV_ROLE_COMPAT } from "../constants/cpa-static-models";
 import type { ChatModelConfig } from "../rules/model-rules.ts";
 import { applyModelRules } from "../rules/model-rules.ts";
 
@@ -36,12 +33,27 @@ export interface CpaModelEntry {
     inputModalities?: Array<"text" | "image">;
 }
 
-export interface CpaCatalogResult {
+export type CpaCatalogFailure =
+    | {
+          kind:
+              | "missing-credentials"
+              | "timeout"
+              | "network"
+              | "invalid-response";
+      }
+    | { kind: "http"; status: number };
+
+type CpaDiscoveryResult =
+    | { source: "live"; entries: CpaModelEntry[] }
+    | {
+          source: "unavailable";
+          entries: CpaModelEntry[];
+          failure: CpaCatalogFailure;
+      };
+
+export type CpaCatalogResult = CpaDiscoveryResult & {
     models: ChatModelConfig[];
-    /** Raw CPA /v1/models entries (un-enriched), used for metadata-only reprojection. */
-    entries: CpaModelEntry[];
-    source: "live" | "fallback";
-}
+};
 
 /**
  * The only catalog surface enrichment needs: exact reference lookup.
@@ -83,7 +95,13 @@ export const STATIC_IMAGE_MODELS = new Set<string>([
 export async function fetchCpaModelIds(
     baseUrl: string,
     apiKey: string,
-): Promise<CpaModelEntry[]> {
+): Promise<CpaDiscoveryResult> {
+    if (!apiKey.trim())
+        return {
+            source: "unavailable",
+            entries: [],
+            failure: { kind: "missing-credentials" },
+        };
     const controller = new AbortController();
     // oxlint-disable-next-line @typescript-eslint/no-unsafe-assignment -- typeAware lint resolves setTimeout as `any`; the handle is opaque and only passed back to clearTimeout.
     const timeout = setTimeout(() => controller.abort(), 3000);
@@ -96,10 +114,11 @@ export async function fetchCpaModelIds(
         });
 
         if (!response.ok) {
-            console.warn(
-                `[cpa-models] CPA /v1/models returned ${response.status}`,
-            );
-            return [];
+            return {
+                source: "unavailable",
+                entries: [],
+                failure: { kind: "http", status: response.status },
+            };
         }
 
         // oxlint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- response.json() returns any; the payload shape is validated below.
@@ -115,12 +134,21 @@ export async function fetchCpaModelIds(
                 supportedInputModalities?: string[];
             }>;
         };
-        if (!json.data || !Array.isArray(json.data)) {
-            console.warn("[cpa-models] Unexpected /v1/models response shape");
-            return [];
-        }
+        if (
+            !json ||
+            !Array.isArray(json.data) ||
+            json.data.some(
+                (entry) =>
+                    !entry || typeof entry.id !== "string" || !entry.id.trim(),
+            )
+        )
+            return {
+                source: "unavailable",
+                entries: [],
+                failure: { kind: "invalid-response" },
+            };
 
-        return json.data.map((m) => {
+        const entries = json.data.map((m) => {
             const contextLength =
                 typeof m.context_length === "number" &&
                 Number.isInteger(m.context_length) &&
@@ -146,7 +174,8 @@ export async function fetchCpaModelIds(
 
             return {
                 id: m.id ?? "",
-                owned_by: m.owned_by ?? "unknown",
+                owned_by:
+                    typeof m.owned_by === "string" ? m.owned_by : "unknown",
                 contextLength,
                 maxCompletionTokens,
                 thinkingLevels:
@@ -159,13 +188,15 @@ export async function fetchCpaModelIds(
                         : undefined,
             };
         });
+        return { source: "live", entries };
     } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-            console.warn("[cpa-models] CPA /v1/models fetch timed out");
-        } else {
-            console.warn("[cpa-models] CPA /v1/models fetch failed:", err);
-        }
-        return [];
+        const kind =
+            err instanceof Error && err.name === "AbortError"
+                ? "timeout"
+                : err instanceof SyntaxError
+                  ? "invalid-response"
+                  : "network";
+        return { source: "unavailable", entries: [], failure: { kind } };
     } finally {
         clearTimeout(timeout);
     }
@@ -505,16 +536,9 @@ export async function buildCpaModels(
     options?: BuildCpaModelsOptions,
 ): Promise<CpaCatalogResult> {
     // 1. Fetch CPA model IDs (the only external request this function makes)
-    const entries = await fetchCpaModelIds(baseUrl, apiKey);
-
-    // 2. If CPA down, return static fallback
-    if (entries.length === 0) {
-        return {
-            models: STATIC_FALLBACK_MODELS,
-            entries: [],
-            source: "fallback",
-        };
-    }
+    const discovery = await fetchCpaModelIds(baseUrl, apiKey);
+    if (discovery.source === "unavailable") return { ...discovery, models: [] };
+    const entries = discovery.entries;
 
     // 3. Enrich each entry against the shared catalog (in-memory lookup)
     const catalog = options?.catalog ?? getModelsDevCatalog();
@@ -524,15 +548,6 @@ export async function buildCpaModels(
     for (const entry of entries) {
         const model = enrichModel(entry, catalog, modelRules);
         if (model) models.push(model);
-    }
-
-    // 4. If all enrichment failed, return static fallback
-    if (models.length === 0) {
-        return {
-            models: STATIC_FALLBACK_MODELS,
-            entries: [],
-            source: "fallback",
-        };
     }
 
     return { models, entries, source: "live" };

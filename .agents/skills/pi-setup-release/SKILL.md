@@ -39,6 +39,8 @@ The output directory must not exist. `--source-sha FULL_SHA` selects a historica
 
 Review `inventory.json` and the captured profile locally. Verify the source SHA, package pins, runtime identities, archive digest and intended skills/configuration. Redaction is a rejection check, not proof that arbitrary prose contains no private data. Keep this directory owner-only. Credentials, sessions, memory, caches and machine authority must remain excluded. Resolve unsupported resources explicitly; never suppress packaging failures or rewrite personal files just to pass them.
 
+External global skills are excluded by default; repository `agent/skills` resources and package skill selections are retained. Use `pack --include-global-skills` only when that release intentionally snapshots `~/.agents/skills`. Otherwise let agent-tools synchronize the destination skills independently. Check that the inventory and exported resource paths match that choice, especially when updating a release that previously contained `agent/portable-skills`.
+
 ## Qualification without publication
 
 Use the final release tag from the start. Upload only `setup.tgz` and `release.json` to one private draft in `abdwhb-png/my-pi-distribution`, using `gh release create --draft`. Do not finalize it in the UI.

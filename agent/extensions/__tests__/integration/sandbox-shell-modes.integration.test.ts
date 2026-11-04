@@ -1,5 +1,5 @@
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
@@ -7,14 +7,16 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { localMachineId } from "./capabilities/authority.ts";
-import { currentShellPolicy } from "./capabilities/runtime.ts";
+import { localMachineId } from "../../_shared/sandbox-runtime/machine-identity.ts";
+import { currentShellPolicy } from "../../_shared/shell-runtime/index.ts";
+
+const sandboxDir = resolve(import.meta.dir, "../../sandbox");
 
 test.skipIf(
     process.platform !== "linux" ||
         process.env.PI_SANDBOX_REAL_SHELL_MODES_CONTRACT !== "1",
 ).each(["default", "custom"] as const)(
-    "real !s uses the %s sandbox and preserves the explicitly selected host session",
+    "real /sandbox run uses the %s sandbox and preserves the explicitly selected host session",
     async (profile) => {
         const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
         const binarySha256 = process.env.PI_SANDBOX_ZEROBOX_SHA256;
@@ -68,10 +70,10 @@ test.skipIf(
                 { mode: 0o600 },
             );
 
-            const sandboxSource = await realpath(resolve(import.meta.dir, "index.ts"));
-            const bashSource = await realpath(resolve(import.meta.dir, "../bash-execution/index.ts"));
-            expect(sandboxSource).toBe(resolve(import.meta.dir, "index.ts"));
-            expect(bashSource).toBe(resolve(import.meta.dir, "../bash-execution/index.ts"));
+            const sandboxSource = await realpath(resolve(sandboxDir, "index.ts"));
+            const bashSource = await realpath(resolve(sandboxDir, "../bash-execution/index.ts"));
+            expect(sandboxSource).toBe(resolve(sandboxDir, "index.ts"));
+            expect(bashSource).toBe(resolve(sandboxDir, "../bash-execution/index.ts"));
             const entrypoint = join(agentDir, "sandbox-entrypoint.ts");
             const leaseCreated = join(root, "lease-created");
             const leaseRecovered = join(root, "lease-recovered");
@@ -81,7 +83,7 @@ test.skipIf(
             // no I/O and provides no evidence about actual Analysis execution.
             await writeFile(entrypoint, [
                 `import { createSandboxExtension } from ${JSON.stringify(sandboxSource)};`,
-                `import { createPrivateTempLease, recoverStalePrivateTempLeases } from ${JSON.stringify(resolve(import.meta.dir, "runtime/private-temp.ts"))};`,
+                `import { createPrivateTempLease, recoverStalePrivateTempLeases } from ${JSON.stringify(resolve(sandboxDir, "runtime/private-temp.ts"))};`,
                 'import { writeFile } from "node:fs/promises";',
                 "export default (pi) => createSandboxExtension(pi, {",
                 "analysisServiceOptions: { runHost: async (request) => {",
@@ -121,17 +123,17 @@ test.skipIf(
                 `if test -r ${JSON.stringify(marker)}; then cat ${JSON.stringify(marker)}; else printf 'hidden\\n'; fi`,
                 "if test -r private.txt; then cat private.txt; else printf 'private-hidden\\n'; fi",
             ].join("; ");
-            // Pi removes the initial ! before emitting user_bash. The real
-            // bash-execution hook owns the remaining s prefix and shell choice.
-            const forced = `s ${command}`;
-            const forcedEvent = await session.session.extensionRunner.emitUserBash({
-                type: "user_bash", command: forced, cwd, excludeFromContext: false,
-            });
-            expect(forcedEvent?.operations).toBeDefined();
-            const sandboxResult = await session.session.executeBash(forced, undefined, {
-                operations: forcedEvent?.operations,
-            });
+            const activeSession = session;
+            const runSandbox = async () => {
+                await activeSession.session.prompt(`/sandbox run ${command}`);
+                const entry = activeSession.session.sessionManager.getBranch().findLast(entry => entry.type === "custom_message" && entry.customType === "pi.sandbox-run.v1");
+                const details = entry && "details" in entry ? entry.details : undefined;
+                if (!details || typeof details !== "object" || !("output" in details) || typeof details.output !== "string" || !("execution" in details) || !details.execution || typeof details.execution !== "object" || !("exitCode" in details.execution) || typeof details.execution.exitCode !== "number") throw new Error("Missing Sandbox result receipt");
+                return { output: details.output, exitCode: details.execution.exitCode, execution: details.execution };
+            };
+            const sandboxResult = await runSandbox();
             expect(sandboxResult.exitCode, sandboxResult.output).toBe(0);
+            expect(sandboxResult.execution).toMatchObject({ status: "sandboxed", backend: "zerobox", mode: "sandbox", shellProfile: profile, exitCode: 0, outcome: "succeeded" });
             expect(sandboxResult.output).toBe(
                 `/home/sandbox\nhidden\n${profile === "custom" ? "private-hidden" : "project-private"}\n`,
             );
@@ -151,21 +153,14 @@ test.skipIf(
             const receipts = session.session.sessionManager.getBranch().filter(
                 (entry) => entry.type === "custom" && entry.customType === "pi.execution.user-bash.v1",
             );
-            expect(receipts).toHaveLength(2);
+            expect(receipts).toHaveLength(1);
             expect(receipts[0]).toMatchObject({ data: { execution: {
-                status: "sandboxed", backend: "zerobox", mode: "sandbox",
-                shellProfile: profile, exitCode: 0, outcome: "succeeded",
-            } } });
-            expect(receipts[1]).toMatchObject({ data: { execution: {
                 status: "unsandboxed", backend: "local", mode: "host",
                 shellProfile: "host", exitCode: 0, outcome: "succeeded",
             } } });
             await session.session.prompt("/sandbox mode sandbox");
             expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile });
-            const restoredEvent = await session.session.extensionRunner.emitUserBash({
-                type: "user_bash", command, cwd, excludeFromContext: false,
-            });
-            const restored = await session.session.executeBash(command, undefined, { operations: restoredEvent?.operations });
+            const restored = await runSandbox();
             expect(restored.exitCode).toBe(0);
             expect(restored.output).toBe(sandboxResult.output);
             expect(await readFile(leaseCreated, "utf8")).toBe("created");

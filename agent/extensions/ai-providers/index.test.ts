@@ -17,6 +17,9 @@ let enabled: Record<string, boolean> = { cpa: true };
 let capturedGetRefreshers: (() => unknown[]) | undefined;
 const integrationCalls = mock(() => {});
 
+mock.module('../_shared/models-dev/catalog', () => ({
+    getModelsDevCatalog: () => ({ load: async () => {} }),
+}));
 mock.module('./config.ts', () => ({
     isProviderEnabled: (name: string) => enabled[name] ?? true,
     isWidgetEnabled: () => true,
@@ -36,7 +39,11 @@ mock.module('./providers/cpa.ts', () => ({
     registerCpaProvider: () => {
         order.push('cpa');
         registeredProviders.push('cpa');
-        return { providerId: 'cpa', refreshProjection: mock(async () => {}) };
+        return {
+            providerId: 'cpa',
+            refreshProjection: mock(async () => {}),
+            refreshStartupProjection: mock(async () => {}),
+        };
     },
 }));
 mock.module('./commands/providers.ts', () => ({
@@ -50,14 +57,14 @@ const { default: aiProvidersExtension } = await import('./index.ts');
 const mockPi = { on: mock(() => {}), registerProvider: mock(() => {}) };
 
 describe('aiProvidersExtension composition', () => {
-    it('registers enabled providers, collects handles, and installs one shared lifecycle', () => {
+    it('registers enabled providers, collects handles, and installs one shared lifecycle', async () => {
         enabled = { cpa: true };
         registeredProviders.length = 0;
         order.length = 0;
         capturedGetRefreshers = undefined;
         integrationCalls.mockClear();
 
-        aiProvidersExtension(mockPi as never);
+        await aiProvidersExtension(mockPi as never);
 
         // One shared lifecycle, registered before the providers, reading the
         // completed refresher list via closure.
@@ -68,20 +75,20 @@ describe('aiProvidersExtension composition', () => {
         const refreshers = capturedGetRefreshers!();
         expect(refreshers.length).toBe(1);
         for (const r of refreshers) {
-            expect(typeof (r as { refreshProjection: unknown }).refreshProjection).toBe(
-                'function',
-            );
+            expect(
+                typeof (r as { refreshProjection: unknown }).refreshProjection,
+            ).toBe('function');
         }
     });
 
-    it('omits disabled provider refreshers', () => {
+    it('omits disabled provider refreshers', async () => {
         enabled = { cpa: true };
         registeredProviders.length = 0;
         order.length = 0;
         capturedGetRefreshers = undefined;
         integrationCalls.mockClear();
 
-        aiProvidersExtension(mockPi as never);
+        await aiProvidersExtension(mockPi as never);
 
         expect(registeredProviders).toEqual(['cpa']);
         expect(capturedGetRefreshers!().length).toBe(1);
@@ -91,31 +98,31 @@ describe('aiProvidersExtension composition', () => {
         order.length = 0;
         capturedGetRefreshers = undefined;
 
-        aiProvidersExtension(mockPi as never);
+        await aiProvidersExtension(mockPi as never);
 
         expect(registeredProviders).toEqual([]);
         expect(capturedGetRefreshers!().length).toBe(0);
     });
 
-    it('installs the lifecycle even when every provider is disabled', () => {
+    it('installs the lifecycle even when every provider is disabled', async () => {
         enabled = { cpa: false };
         registeredProviders.length = 0;
         order.length = 0;
         capturedGetRefreshers = undefined;
         integrationCalls.mockClear();
 
-        aiProvidersExtension(mockPi as never);
+        await aiProvidersExtension(mockPi as never);
 
         expect(integrationCalls).toHaveBeenCalledTimes(1);
         expect(registeredProviders).toEqual([]);
         expect(capturedGetRefreshers!().length).toBe(0);
     });
 
-    it('keeps the global command registration', () => {
+    it('keeps the global command registration', async () => {
         enabled = { cpa: false };
         order.length = 0;
 
-        aiProvidersExtension(mockPi as never);
+        await aiProvidersExtension(mockPi as never);
 
         expect(order).toContain('providers-command');
     });

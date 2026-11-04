@@ -39,6 +39,7 @@ function registerSandbox(options: { noSandbox?: boolean } = {}): {
     let stop: SessionHandler | undefined;
     const pi = {
         registerFlag: () => undefined,
+        registerMessageRenderer: () => undefined,
         registerTool: () => {
             throw new Error("sandbox must not register a tool");
         },

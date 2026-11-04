@@ -9,7 +9,9 @@ Use exactly two active configuration locations:
 - `~/.pi/agent/config/sandbox.json`: global defaults and authorization ceilings.
 - `<project>/.pi/config/sandbox.json`: optional project restrictions and explicit Docker activation.
 
-Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires global `host.allowed: true` and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
+Choose the agent shell execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires global `host.allowed: true` and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
+
+Manual `!` and `!!` commands retain Pi's native host execution. Use `/sandbox run <command>` for a manual command in Zerobox without changing the agent mode or its permissions. The old `!s` and `!!s` shortcuts have been removed; `s` is now passed literally to the host shell.
 
 A change to either configuration file is checked before each model request and shell admission. The model sees valid changes as pending until the next shell call admits the replacement. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution. While processes remain active, the watcher also polls once per second: a removed grant interrupts every existing descendant that retained it before the replacement is used; additive changes let existing work drain.
 

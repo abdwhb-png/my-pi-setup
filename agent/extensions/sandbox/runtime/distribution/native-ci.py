@@ -9,6 +9,10 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
 import urllib.request
 import uuid
 
@@ -26,19 +30,35 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def download_input(item, directory):
+    filename = item["file"]
+    if not isinstance(filename, str) or Path(filename).name != filename:
+        raise RuntimeError("Locked input must have a plain filename")
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=directory) as staging:
+        downloaded = Path(staging) / filename
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(item["url"], timeout=120) as response:
+                    with downloaded.open("wb") as target:
+                        shutil.copyfileobj(response, target)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if (isinstance(error, urllib.error.HTTPError)
+                        and error.code not in {429, 500, 502, 503, 504}) or attempt == 2:
+                    raise
+                print(f"Retrying locked input {filename} ({attempt + 2}/3)", file=sys.stderr, flush=True)
+                time.sleep(2 ** attempt)
+        if digest(downloaded) != item["sha256"]:
+            raise RuntimeError(f"Runtime input digest mismatch: {filename}")
+        downloaded.chmod(0o644)
+        os.link(downloaded, directory / filename)
+
+
 def require_native_linux():
     if (platform.system() != "Linux" or platform.machine() != "x86_64"
             or "microsoft" in platform.release().lower()
             or "wsl" in platform.release().lower()):
         raise RuntimeError("Native Linux x86_64 qualification cannot run on WSL or another platform")
-
-
-def package_download_command(lock, packages):
-    snapshot = lock.get("snapshot")
-    if not isinstance(snapshot, str) or re.fullmatch(r"\d{8}T\d{6}Z", snapshot) is None:
-        raise RuntimeError("Native qualification requires a locked Ubuntu snapshot")
-    return ["apt-get", "--snapshot", snapshot, "download",
-            *[f"{package['package']}={package['version']}" for package in packages]]
 
 
 def main():
@@ -62,20 +82,18 @@ def main():
     tools = Path(__file__).resolve().parent
     lock = json.loads((tools / "input-lock.json").read_text())
     packages = json.loads((tools / "inputs/packages.json").read_text())
-    package_download = package_download_command(lock, packages)
-    snapshot = lock["snapshot"]
+    snapshot = lock.get("snapshot")
+    if not isinstance(snapshot, str) or re.fullmatch(r"\d{8}T\d{6}Z", snapshot) is None:
+        raise RuntimeError("Native qualification requires a locked Ubuntu snapshot")
     assets = json.loads((tools / "inputs/assets.json").read_text())
     downloads = root / "downloads"
     downloads.mkdir()
     (root / "build-inputs").mkdir()
     (root / "build-inputs").chmod(0o755)
     for asset in assets:
-        destination = downloads / asset["file"]
-        with urllib.request.urlopen(asset["url"], timeout=120) as response:
-            with destination.open("xb") as target:
-                shutil.copyfileobj(response, target)
-        if digest(destination) != asset["sha256"]:
-            raise RuntimeError(f"Runtime archive digest mismatch: {asset['file']}")
+        download_input(asset, downloads)
+    for package in packages:
+        download_input(package, root / "build-inputs")
     binary = engine_root / "target/x86_64-unknown-linux-gnu/release/zerobox"
     if output("git", "status", "--porcelain", cwd=engine_root):
         raise RuntimeError("Native qualification requires a clean engine source checkout")
@@ -106,13 +124,6 @@ def main():
         "-v", f"{tools}:/build:ro", lock["image"], "sleep", "infinity")
     try:
         run("docker", "start", container)
-        run("docker", "exec", container, "apt-get", "--snapshot", snapshot, "update")
-        run("docker", "exec", "-w", "/inputs/build-inputs", container,
-            *package_download)
-        for package in packages:
-            path = root / "build-inputs" / package["file"]
-            if digest(path) != package["sha256"]:
-                raise RuntimeError(f"Builder package digest mismatch: {package['file']}")
         run("docker", "network", "disconnect", "bridge", container)
         # Let apt order Pre-Depends, using only the already verified local
         # packages. The separate mount lets _apt read them without opening the

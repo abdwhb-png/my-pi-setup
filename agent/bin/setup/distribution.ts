@@ -16,8 +16,9 @@ import { join, resolve, dirname, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
+import { redactValue } from '../../extensions/_shared/secret-redaction.ts';
 import {
-    archive,
+    archiveAsync,
     assertInventory,
     child,
     digest,
@@ -25,31 +26,224 @@ import {
     json,
     object,
     run,
+    runAsync,
     writeJson,
     writableDirectories,
 } from './files.ts';
+import { setupStep, type SetupProgress } from './progress.ts';
 
 export const DISTRIBUTION_REPOSITORY = 'abdwhb-png/my-pi-distribution';
-const LOCAL_AUTHORITY = new Set([
-    'sandbox.json',
-    'package-finalizer.json',
-    'pi-dangerous-mode.json',
-    'pi-permission-system-addons.json',
-]);
-function allowedProfilePath(path: string): boolean {
-    return (
-        [
+const PROFILE_EXCLUSIONS = {
+    'agent/config/sandbox.json': 'Machine-local sandbox authority',
+    'agent/config/package-finalizer.json': 'Machine-local package trust',
+    'agent/config/pi-dangerous-mode.json':
+        'Machine-local execution permissions',
+    'agent/config/pi-permission-system-addons.json':
+        'Machine-local execution permissions',
+    'agent/config/setup-bindings.json': 'Generated machine-local tool bindings',
+    'agent/trust.json': 'Machine-local project trust',
+    'agent/mcp-project-approvals.json': 'Machine-local MCP approvals',
+    'agent/mcp-auth.json': 'Machine-local MCP credentials',
+    'agent/models-store.json': 'Generated model catalog',
+    'agent/mcp-cache.json': 'Generated MCP catalog',
+    'agent/mcp-npx-cache.json': 'Generated MCP installation cache',
+    'agent/mcp-onboarding.json': 'Machine-local onboarding state',
+    'agent/skills-lock.json': 'External skill synchronization state',
+    'agent/pi-yolo.json': 'Unused legacy execution configuration',
+    'agent/.fallowrc.json': 'Development tooling configuration',
+    'agent/settings.example.json': 'Development configuration template',
+    'agent/ai-providers.secrets.example.json':
+        'Development credential template',
+    ...Object.fromEntries(
+        Object.values(CONFIG_OWNERS).flatMap((owner) =>
+            'legacyFile' in owner
+                ? [
+                      [
+                          `agent/${owner.legacyFile}`,
+                          'Legacy location; migrate to the configuration owner',
+                      ],
+                  ]
+                : [],
+        ),
+    ),
+};
+
+type ProfileKind = 'preferences' | 'models' | 'mcp';
+export const PORTABLE_PROFILE_FILES: ReadonlyMap<string, ProfileKind> = new Map(
+    [
+        ...[
             'agent/settings.json',
             'agent/hermes-memory-config.json',
             'agent/keybindings.json',
-        ].includes(path) ||
-        path.startsWith('agent/portable-skills/') ||
-        Object.values(CONFIG_OWNERS).some(
-            (owner) =>
-                !LOCAL_AUTHORITY.has(owner.file) &&
-                path === `agent/config/${owner.file}`,
-        )
+            'agent/fancy-footer.json',
+            'agent/fancy-footer.local.json',
+            'agent/pi-session-recall.json',
+            ...Object.values(CONFIG_OWNERS).map(
+                (owner) => `agent/config/${owner.file}`,
+            ),
+        ]
+            .filter((path) => !Object.hasOwn(PROFILE_EXCLUSIONS, path))
+            .map((path): [string, ProfileKind] => [path, 'preferences']),
+        ['agent/models.json', 'models'],
+        ['agent/mcp.json', 'mcp'],
+        ['agent/mcp-adapter.json', 'mcp'],
+    ],
+);
+const CREDENTIAL_FILE = /(^|\/)(auth\.json|\.env[^/]*|.*\.secrets\.json)$/;
+function allowedProfilePath(path: string): boolean {
+    return (
+        PORTABLE_PROFILE_FILES.has(path) ||
+        path.startsWith('agent/portable-skills/')
     );
+}
+
+function assertClassifiedProfileConfigurations(root: string): void {
+    const unclassified: string[] = [];
+    for (const directory of ['agent', 'agent/config']) {
+        const source = join(root, directory);
+        if (!existsSync(source)) continue;
+        for (const entry of readdirSync(source, { withFileTypes: true })) {
+            if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+            if (!/\.(?:jsonc?|ya?ml|toml)$/i.test(entry.name)) continue;
+            const path = `${directory}/${entry.name}`;
+            if (
+                allowedCodePath(path) ||
+                PORTABLE_PROFILE_FILES.has(path) ||
+                Object.hasOwn(PROFILE_EXCLUSIONS, path) ||
+                CREDENTIAL_FILE.test(path)
+            )
+                continue;
+            unclassified.push(path);
+        }
+    }
+    if (unclassified.length)
+        throw new Error(
+            `Unclassified profile configuration: ${unclassified.toSorted().join(', ')}. Declare its portability policy before packaging.`,
+        );
+}
+
+function readProfileFile(root: string, path: string): Record<string, unknown> {
+    const source = child(root, path);
+    if (!lstatSync(source).isFile())
+        throw new Error(`Profile must be a regular file: ${path}`);
+    const raw = readFileSync(source, 'utf8');
+    try {
+        return object(JSON.parse(raw));
+    } catch {
+        throw new Error(`Invalid JSON profile: ${path}`);
+    }
+}
+
+function assertPortableProfileValue(
+    path: string,
+    value: Record<string, unknown>,
+): void {
+    const kind = PORTABLE_PROFILE_FILES.get(path);
+    const connectionProfile = kind === 'models' || kind === 'mcp';
+    const reference = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+    const authorizationReference = /^Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+    const credentialName =
+        /api[-_]?key|private[-_]?key|authorization|cookie|password|secret|token(?:$|[-_])|credential|^key$/i;
+    function credentialError(location: string[]): never {
+        throw new Error(
+            `Profile credential requires an environment reference: ${path}:${location.join('.')}`,
+        );
+    }
+    function scanView(input: unknown, location: string[] = []): unknown {
+        if (location.length >= 100)
+            throw new Error(`Profile exceeds nesting limit: ${path}`);
+        if (Array.isArray(input)) {
+            if (input.length > 100000)
+                throw new Error(`Profile exceeds array limit: ${path}`);
+            if (connectionProfile && location.at(-1) === 'args') {
+                for (const [index, argument] of input.entries()) {
+                    if (
+                        typeof argument !== 'string' ||
+                        !argument.startsWith('-')
+                    )
+                        continue;
+                    const separator = argument.indexOf('=');
+                    const flag = (
+                        separator < 0 ? argument : argument.slice(0, separator)
+                    ).replace(/^-+/, '');
+                    if (!credentialName.test(flag)) continue;
+                    const argumentValue =
+                        separator < 0
+                            ? input[index + 1]
+                            : argument.slice(separator + 1);
+                    if (
+                        typeof argumentValue !== 'string' ||
+                        !reference.test(argumentValue)
+                    )
+                        credentialError([...location, String(index)]);
+                }
+            }
+            return input.map((nested, index) =>
+                scanView(nested, [...location, String(index)]),
+            );
+        }
+        if (!input || typeof input !== 'object') return input;
+        const output: Record<string, unknown> = Object.create(null);
+        for (const [key, nested] of Object.entries(input)) {
+            const field = [...location, key];
+            const parent = location.at(-1);
+            const credential =
+                connectionProfile &&
+                (key.toLowerCase() === 'apikey' ||
+                    ((parent === 'headers' ||
+                        parent === 'env' ||
+                        parent === 'auth' ||
+                        parent === 'oauth') &&
+                        credentialName.test(key)) ||
+                    /^(?:token|access_token|refresh_token|password|secret|privatekey)$/i.test(
+                        key,
+                    ));
+            if (
+                connectionProfile &&
+                parent === 'headers' &&
+                typeof nested === 'string' &&
+                nested.startsWith('!')
+            )
+                credentialError(field);
+            if (credential) {
+                if (
+                    typeof nested !== 'string' ||
+                    !(
+                        reference.test(nested) ||
+                        (key.toLowerCase() === 'authorization' &&
+                            authorizationReference.test(nested))
+                    )
+                )
+                    credentialError(field);
+                // Only the scan view omits validated references. The original
+                // configuration is serialized unchanged, never with redactions.
+                continue;
+            }
+            if (
+                connectionProfile &&
+                /^(?:url|baseUrl)$/i.test(key) &&
+                typeof nested === 'string' &&
+                URL.canParse(nested)
+            ) {
+                const url = new URL(nested);
+                if (url.username || url.password) credentialError(field);
+                for (const [name, parameter] of url.searchParams)
+                    if (credentialName.test(name) && !reference.test(parameter))
+                        credentialError(field);
+            }
+            output[key] = scanView(nested, field);
+        }
+        return output;
+    }
+    const scan = redactValue(scanView(value), {
+        maxDepth: 100,
+        maxArrayItems: 100000,
+        maxStringLength: 1000000,
+    });
+    if (Object.values(scan.counters).some((count) => count !== 0))
+        throw new Error(
+            `Profile requires review for credentials or excessive content: ${path}`,
+        );
 }
 export interface SetupManifest {
     schemaVersion: 1;
@@ -120,6 +314,16 @@ export function validateBundle(root: string): SetupManifest {
     ])
         if (!files[required])
             throw new Error(`Missing distribution file: ${required}`);
+    for (const path of Object.keys(files)) {
+        if (
+            path.startsWith('setup/') &&
+            PORTABLE_PROFILE_FILES.has(path.slice(6))
+        )
+            assertPortableProfileValue(
+                path.slice(6),
+                readProfileFile(root, path),
+            );
+    }
     return manifest;
 }
 
@@ -129,7 +333,7 @@ export function allowedCodePath(path: string): boolean {
         /(^|\/)(node_modules|sessions|artifacts|cache|git|npm|\.git|\.aws)(\/|$)/.test(
             path,
         ) ||
-        /(^|\/)(auth\.json|\.env[^/]*|.*\.secrets\.json)$/.test(path)
+        CREDENTIAL_FILE.test(path)
     )
         return false;
     return (
@@ -169,8 +373,8 @@ export function resolveMainCommit(root: string, requested?: string): string {
     return commit;
 }
 
-export function refreshMain(root: string): void {
-    run(
+export async function refreshMain(root: string): Promise<void> {
+    await runAsync(
         'git',
         ['fetch', '--no-tags', 'origin', 'main:refs/remotes/origin/main'],
         root,
@@ -320,19 +524,30 @@ export async function packDistribution(
     sourceRoot: string,
     output: string,
     sourceCommit = resolveMainCommit(sourceRoot),
+    options: { includeGlobalSkills?: boolean; progress?: SetupProgress } = {},
 ): Promise<void> {
     const lock = acquireRuntimeStorageLock(sourceRoot);
-    try { await packDistributionLocked(sourceRoot, output, sourceCommit); }
-    finally { lock.release(); }
+    try {
+        await packDistributionLocked(sourceRoot, output, sourceCommit, options);
+    } finally {
+        lock.release();
+    }
 }
 
-async function packDistributionLocked(sourceRoot: string, output: string, sourceCommit: string): Promise<void> {
+async function packDistributionLocked(
+    sourceRoot: string,
+    output: string,
+    sourceCommit: string,
+    options: { includeGlobalSkills?: boolean; progress?: SetupProgress },
+): Promise<void> {
     sourceRoot = resolve(sourceRoot);
     output = resolve(output);
     if (!/^[a-f0-9]{40}$/.test(sourceCommit))
         throw new Error('Invalid source commit');
+    assertClassifiedProfileConfigurations(sourceRoot);
     const code = codeFiles(sourceRoot, sourceCommit);
     if (existsSync(output)) throw new Error('Output directory already exists');
+    options.progress?.({ stage: 'runtimes', state: 'start' });
     const selected = await pinnedRuntimes(sourceRoot, sourceCommit);
     const packedRoot = selected.packedRoot;
     const zerobox = await validateRuntimes(
@@ -340,6 +555,7 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
         packedRoot,
         selected.zeroRoot,
     );
+    options.progress?.({ stage: 'runtimes', state: 'done' });
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-pack-'));
     try {
         const bundle = join(temporary, 'bundle');
@@ -352,9 +568,12 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
             });
             chmodSync(target, mode);
         }
-        const packages = await captureProfile(
-            sourceRoot,
-            join(bundle, 'setup'),
+        const packages = await setupStep(options.progress, 'profile', () =>
+            captureProfile(
+                sourceRoot,
+                join(bundle, 'setup'),
+                options.includeGlobalSkills ?? false,
+            ),
         );
         cpSync(packedRoot, join(bundle, 'pi'), {
             recursive: true,
@@ -382,7 +601,9 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
         writeJson(join(bundle, 'manifest.json'), manifest);
         validateBundle(bundle);
         mkdirSync(output, { mode: 0o700 });
-        archive('pack', bundle, join(output, 'setup.tgz'));
+        await setupStep(options.progress, 'archive', () =>
+            archiveAsync('pack', bundle, join(output, 'setup.tgz')),
+        );
         writeJson(join(output, 'release.json'), {
             schemaVersion: 1,
             sourceCommit: manifest.sourceCommit,
@@ -398,15 +619,14 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
 async function captureProfile(
     root: string,
     destination: string,
+    includeGlobalSkills: boolean,
 ): Promise<string[]> {
     const { DefaultPackageManager, SettingsManager } =
         await import('@earendil-works/pi-coding-agent');
-    const { redactValue } =
-        await import('../../extensions/_shared/secret-redaction.ts');
     const { toPortableHomePath } =
         await import('../../extensions/_shared/home-path.ts');
     const agentDir = join(root, 'agent');
-    const settings = json(join(agentDir, 'settings.json'));
+    const settings = readProfileFile(root, 'agent/settings.json');
     const manager = new DefaultPackageManager({
         cwd: root,
         agentDir,
@@ -453,8 +673,32 @@ async function captureProfile(
     });
     settings.npmCommand = ['sfw', '--', 'bun'];
     delete settings.lastChangelogVersion;
-    const globalSkills = join(homedir(), '.agents/skills');
-    if (existsSync(globalSkills)) {
+    if (Array.isArray(settings.skills)) {
+        settings.skills = settings.skills.filter((entry) => {
+            if (typeof entry !== 'string' || /^[!+-]/.test(entry)) return true;
+            const path = toPortableHomePath(entry, homedir());
+            if (
+                !includeGlobalSkills &&
+                (path === '~/.pi/agent/portable-skills' ||
+                    path.startsWith('~/.pi/agent/portable-skills/'))
+            )
+                return false;
+            if (path === '~/.pi' || path.startsWith('~/.pi/')) return true;
+            if (
+                includeGlobalSkills &&
+                (path === '~/.agents/skills' ||
+                    path.startsWith('~/.agents/skills/'))
+            )
+                return true;
+            return !path.startsWith('~/') && !path.startsWith('/');
+        });
+    }
+    if (includeGlobalSkills) {
+        const globalSkills = join(homedir(), '.agents/skills');
+        if (!existsSync(globalSkills))
+            throw new Error(
+                'Global skills directory is absent: ~/.agents/skills. Omit --include-global-skills or synchronize it first.',
+            );
         const exported = join(destination, 'agent/portable-skills');
         function captureSkills(source: string, target: string) {
             mkdirSync(target, { recursive: true, mode: 0o700 });
@@ -483,16 +727,25 @@ async function captureProfile(
         }
         captureSkills(globalSkills, exported);
         settings.skills = [
-            ...(Array.isArray(settings.skills) ? settings.skills : []),
-            '~/.pi/agent/portable-skills',
+            ...new Set(
+                [
+                    ...(Array.isArray(settings.skills) ? settings.skills : []),
+                    '~/.pi/agent/portable-skills',
+                ].map((entry) =>
+                    entry === '~/.agents/skills'
+                        ? '~/.pi/agent/portable-skills'
+                        : entry,
+                ),
+            ),
         ];
     }
     function portable(value: unknown): unknown {
         if (typeof value === 'string') {
             const next = toPortableHomePath(value, homedir());
             if (
-                next === '~/.agents/skills' ||
-                next.startsWith('~/.agents/skills/')
+                includeGlobalSkills &&
+                (next === '~/.agents/skills' ||
+                    next.startsWith('~/.agents/skills/'))
             )
                 return `~/.pi/agent/portable-skills${next.slice('~/.agents/skills'.length)}`;
             if (next.startsWith('./agent/')) return `~/.pi/${next.slice(2)}`;
@@ -510,15 +763,7 @@ async function captureProfile(
     }
     function save(path: string, value: unknown) {
         const normalized = portable(value);
-        const scan = redactValue(normalized, {
-            maxDepth: 100,
-            maxArrayItems: 100000,
-            maxStringLength: 1000000,
-        });
-        if (Object.values(scan.counters).some((count) => count !== 0))
-            throw new Error(
-                `Profile requires review for credentials or excessive content: ${path}`,
-            );
+        assertPortableProfileValue(path, object(normalized));
         writeJson(join(destination, path), normalized);
     }
     function validateResources(value: unknown): void {
@@ -551,23 +796,17 @@ async function captureProfile(
         for (const override of Object.values(object(subagents.agentOverrides)))
             validateResources(object(override).subagentOnlyExtensions);
     save('agent/settings.json', settings);
-    for (const file of new Set(
-        Object.values(CONFIG_OWNERS).map((owner) => owner.file),
-    )) {
-        const path = `agent/config/${file}`;
-        if (!LOCAL_AUTHORITY.has(file) && existsSync(join(root, path)))
-            save(path, json(join(root, path)));
-    }
-    for (const file of ['hermes-memory-config.json', 'keybindings.json']) {
-        const path = `agent/${file}`;
-        if (existsSync(join(root, path))) save(path, json(join(root, path)));
+    for (const path of PORTABLE_PROFILE_FILES.keys()) {
+        if (path === 'agent/settings.json') continue;
+        if (lstatSync(join(root, path), { throwIfNoEntry: false }))
+            save(path, readProfileFile(root, path));
     }
     return packages;
 }
 
-function requirePrivateRepository(): void {
+async function requirePrivateRepository(): Promise<void> {
     if (
-        run('gh', [
+        (await runAsync('gh', [
             'repo',
             'view',
             DISTRIBUTION_REPOSITORY,
@@ -575,7 +814,7 @@ function requirePrivateRepository(): void {
             'isPrivate',
             '--jq',
             '.isPrivate',
-        ]) !== 'true'
+        ])) !== 'true'
     )
         throw new Error('Distribution repository must be private');
 }
@@ -602,12 +841,12 @@ function distributionDescriptor(directory: string): {
     return { sourceCommit: value.sourceCommit, sha256: value.sha256 };
 }
 
-function unpackDistribution(
+async function unpackDistribution(
     directory: string,
     destination: string,
-): SetupManifest {
+): Promise<SetupManifest> {
     const descriptor = distributionDescriptor(directory);
-    archive('extract', join(directory, 'setup.tgz'), destination);
+    await archiveAsync('extract', join(directory, 'setup.tgz'), destination);
     const manifest = validateBundle(destination);
     if (descriptor.sourceCommit !== manifest.sourceCommit)
         throw new Error('Release source descriptors disagree');
@@ -620,11 +859,18 @@ export async function validateReleaseSource(
     expectedCommit: string,
 ): Promise<SetupManifest> {
     const lock = acquireRuntimeStorageLock(root);
-    try { return await validateReleaseSourceLocked(root, bundle, expectedCommit); }
-    finally { lock.release(); }
+    try {
+        return await validateReleaseSourceLocked(root, bundle, expectedCommit);
+    } finally {
+        lock.release();
+    }
 }
 
-async function validateReleaseSourceLocked(root: string, bundle: string, expectedCommit: string): Promise<SetupManifest> {
+async function validateReleaseSourceLocked(
+    root: string,
+    bundle: string,
+    expectedCommit: string,
+): Promise<SetupManifest> {
     resolveMainCommit(root, expectedCommit);
     const manifest = validateBundle(bundle);
     if (manifest.sourceCommit !== expectedCommit)
@@ -664,14 +910,14 @@ export async function publishDistribution(
     sourceRoot: string,
 ): Promise<string> {
     releaseTag(tag);
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-publish-'));
     try {
         const bundle = join(temporary, 'bundle');
-        const manifest = unpackDistribution(directory, bundle);
+        const manifest = await unpackDistribution(directory, bundle);
         await validateReleaseSource(sourceRoot, bundle, manifest.sourceCommit);
         const config = JSON.parse(
-            run('gh', [
+            await runAsync('gh', [
                 'api',
                 `repos/${DISTRIBUTION_REPOSITORY}/immutable-releases`,
             ]),
@@ -680,7 +926,7 @@ export async function publishDistribution(
             throw new Error(
                 'Enable immutable releases on the private distribution repository before publishing',
             );
-        run('gh', [
+        await runAsync('gh', [
             'release',
             'create',
             tag,
@@ -695,7 +941,7 @@ export async function publishDistribution(
             'Private Pi setup awaiting qualification. Memories and credentials are excluded.',
         ]);
         const descriptor = distributionDescriptor(directory);
-        run('gh', [
+        await runAsync('gh', [
             'workflow',
             'run',
             'portable-private-qualification.yml',
@@ -791,7 +1037,7 @@ export async function downloadDraftDistribution(options: {
     if (!/^[a-f0-9]{64}$/.test(options.archiveSha256))
         throw new Error('Expected candidate archive SHA-256');
     resolveMainCommit(options.sourceRoot, options.sourceCommit);
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const release = draftRelease(options.tag);
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
     run('gh', [
@@ -813,7 +1059,7 @@ export async function downloadDraftDistribution(options: {
     )
         throw new Error('Candidate archive differs from the requested SHA-256');
     const bundle = join(options.directory, 'bundle');
-    unpackDistribution(options.directory, bundle);
+    await unpackDistribution(options.directory, bundle);
     await validateReleaseSource(
         options.sourceRoot,
         bundle,
@@ -910,7 +1156,7 @@ export async function finalizeDistribution(options: {
             receipt.descriptorSha256
     )
         throw new Error('Qualified candidate changed');
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const release = draftRelease(receipt.tag);
     if (
         receipt.releaseId !== release.releaseId ||
@@ -953,7 +1199,7 @@ export async function finalizeDistribution(options: {
         ]);
         verifyPublishedRelease(receipt.tag);
         const published = join(temporary, 'published');
-        downloadDistribution(receipt.tag, published);
+        await downloadDistribution(receipt.tag, published);
         if (
             digest(readFileSync(join(published, 'setup.tgz'))) !==
                 receipt.archiveSha256 ||
@@ -975,34 +1221,52 @@ export async function finalizeDistribution(options: {
     }
 }
 
-export function downloadDistribution(tag: string, directory: string): string {
+export async function downloadDistribution(
+    tag: string,
+    directory: string,
+    progress?: SetupProgress,
+): Promise<string> {
     releaseTag(tag);
-    requirePrivateRepository();
+    await setupStep(progress, 'repository', () => requirePrivateRepository());
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    run('gh', ['release', 'verify', tag, '--repo', DISTRIBUTION_REPOSITORY]);
-    run('gh', [
-        'release',
-        'download',
-        tag,
-        '--repo',
-        DISTRIBUTION_REPOSITORY,
-        '--dir',
-        directory,
-        '--pattern',
-        'setup.tgz',
-        '--pattern',
-        'release.json',
-    ]);
-    for (const file of ['setup.tgz', 'release.json'])
-        run('gh', [
+    await setupStep(progress, 'release', () =>
+        runAsync('gh', [
             'release',
-            'verify-asset',
+            'verify',
             tag,
-            join(directory, file),
             '--repo',
             DISTRIBUTION_REPOSITORY,
-        ]);
+        ]),
+    );
+    await setupStep(progress, 'download', () =>
+        runAsync('gh', [
+            'release',
+            'download',
+            tag,
+            '--repo',
+            DISTRIBUTION_REPOSITORY,
+            '--dir',
+            directory,
+            '--pattern',
+            'setup.tgz',
+            '--pattern',
+            'release.json',
+        ]),
+    );
+    await setupStep(progress, 'attestations', async () => {
+        for (const file of ['setup.tgz', 'release.json'])
+            await runAsync('gh', [
+                'release',
+                'verify-asset',
+                tag,
+                join(directory, file),
+                '--repo',
+                DISTRIBUTION_REPOSITORY,
+            ]);
+    });
     const bundle = join(directory, 'bundle');
-    unpackDistribution(directory, bundle);
+    await setupStep(progress, 'extract', () =>
+        unpackDistribution(directory, bundle),
+    );
     return bundle;
 }

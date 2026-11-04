@@ -1,10 +1,17 @@
-import type { ChatModelConfig } from "../rules/model-rules.ts";
-import type { CpaCatalogResult } from "./cpa-models.ts";
+import type { CpaCatalogFailure, CpaCatalogResult } from './cpa-models.ts';
 
-export type CpaCatalogGuardResult =
-    | { state: "valid"; modelId?: string; refreshed: boolean }
-    | { state: "stale"; modelId: string; refreshed: boolean }
-    | { state: "unverified"; modelId?: string; refreshed: boolean };
+export type CpaCatalogGuardResult = {
+    catalog: CpaCatalogResult;
+    refreshed: boolean;
+} & (
+    | { state: 'valid'; modelId?: string }
+    | { state: 'stale'; modelId: string }
+    | {
+          state: 'unverified';
+          modelId?: string;
+          failure: CpaCatalogFailure;
+      }
+);
 
 interface ActiveModelRef {
     provider: string;
@@ -15,8 +22,6 @@ interface RefreshInput {
     force?: boolean;
     activeModel?: ActiveModelRef;
     loadCatalog(): Promise<CpaCatalogResult>;
-    registerModels(models: ChatModelConfig[]): void;
-    hasModel(provider: string, id: string): boolean;
 }
 
 interface CpaCatalogGuardOptions {
@@ -27,67 +32,59 @@ interface CpaCatalogGuardOptions {
 export function createCpaCatalogGuard(options: CpaCatalogGuardOptions) {
     const now = options.now ?? Date.now;
     let lastRefreshAt = Number.NEGATIVE_INFINITY;
-    let lastResult: CpaCatalogGuardResult = {
-        state: "unverified",
-        refreshed: false,
-    };
-    let inFlight: Promise<CpaCatalogGuardResult> | undefined;
+    let lastCatalog: CpaCatalogResult | undefined;
+    let inFlight: Promise<CpaCatalogResult> | undefined;
 
     async function performRefresh(
         input: RefreshInput,
-    ): Promise<CpaCatalogGuardResult> {
+    ): Promise<CpaCatalogResult> {
         const catalog = await input.loadCatalog();
+        lastCatalog = catalog;
         lastRefreshAt = now();
-
-        if (catalog.source !== "live") {
-            if (
-                lastResult.state !== "unverified" &&
-                lastResult.modelId === input.activeModel?.id
-            ) {
-                return { ...lastResult, refreshed: true };
-            }
-            lastResult = {
-                state: "unverified",
-                modelId: input.activeModel?.id,
-                refreshed: true,
-            };
-            return lastResult;
-        }
-
-        input.registerModels(catalog.models);
-
-        if (
-            input.activeModel?.provider === "cpa" &&
-            !input.hasModel("cpa", input.activeModel.id)
-        ) {
-            lastResult = {
-                state: "stale",
-                modelId: input.activeModel.id,
-                refreshed: true,
-            };
-            return lastResult;
-        }
-
-        lastResult = {
-            state: "valid",
-            modelId: input.activeModel?.id,
-            refreshed: true,
-        };
-        return lastResult;
+        return catalog;
     }
 
     return {
         async refresh(input: RefreshInput): Promise<CpaCatalogGuardResult> {
-            if (!input.force && now() - lastRefreshAt < options.refreshTtlMs) {
-                return { ...lastResult, refreshed: false };
+            let refreshed = false;
+            let catalog = lastCatalog;
+            if (
+                !catalog ||
+                input.force ||
+                now() - lastRefreshAt >= options.refreshTtlMs
+            ) {
+                inFlight ??= performRefresh(input).finally(() => {
+                    inFlight = undefined;
+                });
+                catalog = await inFlight;
+                refreshed = true;
             }
-
-            if (inFlight) return inFlight;
-
-            inFlight = performRefresh(input).finally(() => {
-                inFlight = undefined;
-            });
-            return inFlight;
+            if (catalog.source === 'unavailable')
+                return {
+                    state: 'unverified',
+                    catalog,
+                    modelId: input.activeModel?.id,
+                    refreshed,
+                    failure: catalog.failure,
+                };
+            if (
+                input.activeModel?.provider === 'cpa' &&
+                !catalog.models.some(
+                    (model) => model.id === input.activeModel?.id,
+                )
+            )
+                return {
+                    state: 'stale',
+                    catalog,
+                    modelId: input.activeModel.id,
+                    refreshed,
+                };
+            return {
+                state: 'valid',
+                catalog,
+                modelId: input.activeModel?.id,
+                refreshed,
+            };
         },
     };
 }
