@@ -56,6 +56,8 @@ const { default: aiProvidersExtension } = await import('./index.ts');
 describe('aiProvidersExtension lifecycle composition', () => {
     it('uses one shared session_start to discover and re-register CPA once', async () => {
         const originalFetch = globalThis.fetch;
+        const originalKey = process.env.CLIPROXY_API_KEY;
+        process.env.CLIPROXY_API_KEY = 'fixture-key';
         globalThis.fetch = fetchModels as unknown as typeof fetch;
         try {
             aiProvidersExtension({
@@ -66,6 +68,7 @@ describe('aiProvidersExtension lifecycle composition', () => {
                     registrations.push({ name, models: config.models ?? [] });
                 },
                 registerCommand: () => {},
+                unregisterProvider: () => {},
             } as never);
 
             const sessionStarts = handlers.filter(
@@ -88,6 +91,8 @@ describe('aiProvidersExtension lifecycle composition', () => {
             expect(registrations.filter(({ name }) => name === 'cpa')).toHaveLength(2);
         } finally {
             globalThis.fetch = originalFetch;
+            if (originalKey === undefined) delete process.env.CLIPROXY_API_KEY;
+            else process.env.CLIPROXY_API_KEY = originalKey;
         }
     });
 });

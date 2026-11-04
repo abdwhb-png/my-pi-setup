@@ -17,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import {
-    archive,
+    archiveAsync,
     assertInventory,
     child,
     digest,
@@ -25,9 +25,11 @@ import {
     json,
     object,
     run,
+    runAsync,
     writeJson,
     writableDirectories,
 } from './files.ts';
+import { setupStep, type SetupProgress } from './progress.ts';
 
 export const DISTRIBUTION_REPOSITORY = 'abdwhb-png/my-pi-distribution';
 const LOCAL_AUTHORITY = new Set([
@@ -169,8 +171,8 @@ export function resolveMainCommit(root: string, requested?: string): string {
     return commit;
 }
 
-export function refreshMain(root: string): void {
-    run(
+export async function refreshMain(root: string): Promise<void> {
+    await runAsync(
         'git',
         ['fetch', '--no-tags', 'origin', 'main:refs/remotes/origin/main'],
         root,
@@ -320,19 +322,29 @@ export async function packDistribution(
     sourceRoot: string,
     output: string,
     sourceCommit = resolveMainCommit(sourceRoot),
+    options: { includeGlobalSkills?: boolean; progress?: SetupProgress } = {},
 ): Promise<void> {
     const lock = acquireRuntimeStorageLock(sourceRoot);
-    try { await packDistributionLocked(sourceRoot, output, sourceCommit); }
-    finally { lock.release(); }
+    try {
+        await packDistributionLocked(sourceRoot, output, sourceCommit, options);
+    } finally {
+        lock.release();
+    }
 }
 
-async function packDistributionLocked(sourceRoot: string, output: string, sourceCommit: string): Promise<void> {
+async function packDistributionLocked(
+    sourceRoot: string,
+    output: string,
+    sourceCommit: string,
+    options: { includeGlobalSkills?: boolean; progress?: SetupProgress },
+): Promise<void> {
     sourceRoot = resolve(sourceRoot);
     output = resolve(output);
     if (!/^[a-f0-9]{40}$/.test(sourceCommit))
         throw new Error('Invalid source commit');
     const code = codeFiles(sourceRoot, sourceCommit);
     if (existsSync(output)) throw new Error('Output directory already exists');
+    options.progress?.({ stage: 'runtimes', state: 'start' });
     const selected = await pinnedRuntimes(sourceRoot, sourceCommit);
     const packedRoot = selected.packedRoot;
     const zerobox = await validateRuntimes(
@@ -340,6 +352,7 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
         packedRoot,
         selected.zeroRoot,
     );
+    options.progress?.({ stage: 'runtimes', state: 'done' });
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-pack-'));
     try {
         const bundle = join(temporary, 'bundle');
@@ -352,9 +365,12 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
             });
             chmodSync(target, mode);
         }
-        const packages = await captureProfile(
-            sourceRoot,
-            join(bundle, 'setup'),
+        const packages = await setupStep(options.progress, 'profile', () =>
+            captureProfile(
+                sourceRoot,
+                join(bundle, 'setup'),
+                options.includeGlobalSkills ?? false,
+            ),
         );
         cpSync(packedRoot, join(bundle, 'pi'), {
             recursive: true,
@@ -382,7 +398,9 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
         writeJson(join(bundle, 'manifest.json'), manifest);
         validateBundle(bundle);
         mkdirSync(output, { mode: 0o700 });
-        archive('pack', bundle, join(output, 'setup.tgz'));
+        await setupStep(options.progress, 'archive', () =>
+            archiveAsync('pack', bundle, join(output, 'setup.tgz')),
+        );
         writeJson(join(output, 'release.json'), {
             schemaVersion: 1,
             sourceCommit: manifest.sourceCommit,
@@ -398,6 +416,7 @@ async function packDistributionLocked(sourceRoot: string, output: string, source
 async function captureProfile(
     root: string,
     destination: string,
+    includeGlobalSkills: boolean,
 ): Promise<string[]> {
     const { DefaultPackageManager, SettingsManager } =
         await import('@earendil-works/pi-coding-agent');
@@ -453,8 +472,32 @@ async function captureProfile(
     });
     settings.npmCommand = ['sfw', '--', 'bun'];
     delete settings.lastChangelogVersion;
-    const globalSkills = join(homedir(), '.agents/skills');
-    if (existsSync(globalSkills)) {
+    if (Array.isArray(settings.skills)) {
+        settings.skills = settings.skills.filter((entry) => {
+            if (typeof entry !== 'string' || /^[!+-]/.test(entry)) return true;
+            const path = toPortableHomePath(entry, homedir());
+            if (
+                !includeGlobalSkills &&
+                (path === '~/.pi/agent/portable-skills' ||
+                    path.startsWith('~/.pi/agent/portable-skills/'))
+            )
+                return false;
+            if (path === '~/.pi' || path.startsWith('~/.pi/')) return true;
+            if (
+                includeGlobalSkills &&
+                (path === '~/.agents/skills' ||
+                    path.startsWith('~/.agents/skills/'))
+            )
+                return true;
+            return !path.startsWith('~/') && !path.startsWith('/');
+        });
+    }
+    if (includeGlobalSkills) {
+        const globalSkills = join(homedir(), '.agents/skills');
+        if (!existsSync(globalSkills))
+            throw new Error(
+                'Global skills directory is absent: ~/.agents/skills. Omit --include-global-skills or synchronize it first.',
+            );
         const exported = join(destination, 'agent/portable-skills');
         function captureSkills(source: string, target: string) {
             mkdirSync(target, { recursive: true, mode: 0o700 });
@@ -483,16 +526,25 @@ async function captureProfile(
         }
         captureSkills(globalSkills, exported);
         settings.skills = [
-            ...(Array.isArray(settings.skills) ? settings.skills : []),
-            '~/.pi/agent/portable-skills',
+            ...new Set(
+                [
+                    ...(Array.isArray(settings.skills) ? settings.skills : []),
+                    '~/.pi/agent/portable-skills',
+                ].map((entry) =>
+                    entry === '~/.agents/skills'
+                        ? '~/.pi/agent/portable-skills'
+                        : entry,
+                ),
+            ),
         ];
     }
     function portable(value: unknown): unknown {
         if (typeof value === 'string') {
             const next = toPortableHomePath(value, homedir());
             if (
-                next === '~/.agents/skills' ||
-                next.startsWith('~/.agents/skills/')
+                includeGlobalSkills &&
+                (next === '~/.agents/skills' ||
+                    next.startsWith('~/.agents/skills/'))
             )
                 return `~/.pi/agent/portable-skills${next.slice('~/.agents/skills'.length)}`;
             if (next.startsWith('./agent/')) return `~/.pi/${next.slice(2)}`;
@@ -565,9 +617,9 @@ async function captureProfile(
     return packages;
 }
 
-function requirePrivateRepository(): void {
+async function requirePrivateRepository(): Promise<void> {
     if (
-        run('gh', [
+        (await runAsync('gh', [
             'repo',
             'view',
             DISTRIBUTION_REPOSITORY,
@@ -575,7 +627,7 @@ function requirePrivateRepository(): void {
             'isPrivate',
             '--jq',
             '.isPrivate',
-        ]) !== 'true'
+        ])) !== 'true'
     )
         throw new Error('Distribution repository must be private');
 }
@@ -602,12 +654,12 @@ function distributionDescriptor(directory: string): {
     return { sourceCommit: value.sourceCommit, sha256: value.sha256 };
 }
 
-function unpackDistribution(
+async function unpackDistribution(
     directory: string,
     destination: string,
-): SetupManifest {
+): Promise<SetupManifest> {
     const descriptor = distributionDescriptor(directory);
-    archive('extract', join(directory, 'setup.tgz'), destination);
+    await archiveAsync('extract', join(directory, 'setup.tgz'), destination);
     const manifest = validateBundle(destination);
     if (descriptor.sourceCommit !== manifest.sourceCommit)
         throw new Error('Release source descriptors disagree');
@@ -620,11 +672,18 @@ export async function validateReleaseSource(
     expectedCommit: string,
 ): Promise<SetupManifest> {
     const lock = acquireRuntimeStorageLock(root);
-    try { return await validateReleaseSourceLocked(root, bundle, expectedCommit); }
-    finally { lock.release(); }
+    try {
+        return await validateReleaseSourceLocked(root, bundle, expectedCommit);
+    } finally {
+        lock.release();
+    }
 }
 
-async function validateReleaseSourceLocked(root: string, bundle: string, expectedCommit: string): Promise<SetupManifest> {
+async function validateReleaseSourceLocked(
+    root: string,
+    bundle: string,
+    expectedCommit: string,
+): Promise<SetupManifest> {
     resolveMainCommit(root, expectedCommit);
     const manifest = validateBundle(bundle);
     if (manifest.sourceCommit !== expectedCommit)
@@ -664,14 +723,14 @@ export async function publishDistribution(
     sourceRoot: string,
 ): Promise<string> {
     releaseTag(tag);
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const temporary = mkdtempSync(join(tmpdir(), 'pi-setup-publish-'));
     try {
         const bundle = join(temporary, 'bundle');
-        const manifest = unpackDistribution(directory, bundle);
+        const manifest = await unpackDistribution(directory, bundle);
         await validateReleaseSource(sourceRoot, bundle, manifest.sourceCommit);
         const config = JSON.parse(
-            run('gh', [
+            await runAsync('gh', [
                 'api',
                 `repos/${DISTRIBUTION_REPOSITORY}/immutable-releases`,
             ]),
@@ -680,7 +739,7 @@ export async function publishDistribution(
             throw new Error(
                 'Enable immutable releases on the private distribution repository before publishing',
             );
-        run('gh', [
+        await runAsync('gh', [
             'release',
             'create',
             tag,
@@ -695,7 +754,7 @@ export async function publishDistribution(
             'Private Pi setup awaiting qualification. Memories and credentials are excluded.',
         ]);
         const descriptor = distributionDescriptor(directory);
-        run('gh', [
+        await runAsync('gh', [
             'workflow',
             'run',
             'portable-private-qualification.yml',
@@ -791,7 +850,7 @@ export async function downloadDraftDistribution(options: {
     if (!/^[a-f0-9]{64}$/.test(options.archiveSha256))
         throw new Error('Expected candidate archive SHA-256');
     resolveMainCommit(options.sourceRoot, options.sourceCommit);
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const release = draftRelease(options.tag);
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
     run('gh', [
@@ -813,7 +872,7 @@ export async function downloadDraftDistribution(options: {
     )
         throw new Error('Candidate archive differs from the requested SHA-256');
     const bundle = join(options.directory, 'bundle');
-    unpackDistribution(options.directory, bundle);
+    await unpackDistribution(options.directory, bundle);
     await validateReleaseSource(
         options.sourceRoot,
         bundle,
@@ -910,7 +969,7 @@ export async function finalizeDistribution(options: {
             receipt.descriptorSha256
     )
         throw new Error('Qualified candidate changed');
-    requirePrivateRepository();
+    await requirePrivateRepository();
     const release = draftRelease(receipt.tag);
     if (
         receipt.releaseId !== release.releaseId ||
@@ -953,7 +1012,7 @@ export async function finalizeDistribution(options: {
         ]);
         verifyPublishedRelease(receipt.tag);
         const published = join(temporary, 'published');
-        downloadDistribution(receipt.tag, published);
+        await downloadDistribution(receipt.tag, published);
         if (
             digest(readFileSync(join(published, 'setup.tgz'))) !==
                 receipt.archiveSha256 ||
@@ -975,34 +1034,52 @@ export async function finalizeDistribution(options: {
     }
 }
 
-export function downloadDistribution(tag: string, directory: string): string {
+export async function downloadDistribution(
+    tag: string,
+    directory: string,
+    progress?: SetupProgress,
+): Promise<string> {
     releaseTag(tag);
-    requirePrivateRepository();
+    await setupStep(progress, 'repository', () => requirePrivateRepository());
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    run('gh', ['release', 'verify', tag, '--repo', DISTRIBUTION_REPOSITORY]);
-    run('gh', [
-        'release',
-        'download',
-        tag,
-        '--repo',
-        DISTRIBUTION_REPOSITORY,
-        '--dir',
-        directory,
-        '--pattern',
-        'setup.tgz',
-        '--pattern',
-        'release.json',
-    ]);
-    for (const file of ['setup.tgz', 'release.json'])
-        run('gh', [
+    await setupStep(progress, 'release', () =>
+        runAsync('gh', [
             'release',
-            'verify-asset',
+            'verify',
             tag,
-            join(directory, file),
             '--repo',
             DISTRIBUTION_REPOSITORY,
-        ]);
+        ]),
+    );
+    await setupStep(progress, 'download', () =>
+        runAsync('gh', [
+            'release',
+            'download',
+            tag,
+            '--repo',
+            DISTRIBUTION_REPOSITORY,
+            '--dir',
+            directory,
+            '--pattern',
+            'setup.tgz',
+            '--pattern',
+            'release.json',
+        ]),
+    );
+    await setupStep(progress, 'attestations', async () => {
+        for (const file of ['setup.tgz', 'release.json'])
+            await runAsync('gh', [
+                'release',
+                'verify-asset',
+                tag,
+                join(directory, file),
+                '--repo',
+                DISTRIBUTION_REPOSITORY,
+            ]);
+    });
     const bundle = join(directory, 'bundle');
-    unpackDistribution(directory, bundle);
+    await setupStep(progress, 'extract', () =>
+        unpackDistribution(directory, bundle),
+    );
     return bundle;
 }

@@ -154,6 +154,21 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 // ── session_start ──
 
 describe('registerModelsDevIntegration session_start', () => {
+    it('awaits provider startup verification exactly once before startup completes', async () => {
+        const h = makeHarness(async () => ({ status: 'fresh', catalog: makeStatus(false) }));
+        let release!: () => void;
+        const verification = new Promise<void>((resolve) => { release = resolve; });
+        const verify = mock(() => verification);
+        h.refreshers[0]!.refreshStartupProjection = verify;
+        let started = false;
+        const startup = Promise.resolve(h.sessionStart.handler({}, uiCtx())).then(() => { started = true; });
+        await flush();
+        try {
+            expect(verify).toHaveBeenCalledTimes(1);
+            expect(started).toBe(false);
+            expect(h.refreshers[0]!.refreshProjection).not.toHaveBeenCalled();
+        } finally { release(); await startup; }
+    });
     it('awaits disk load and cached projections before returning, then starts stale network without awaiting it', async () => {
         const pending = pendingRefresh();
         const h = makeHarness(() => pending.promise);
@@ -182,16 +197,19 @@ describe('registerModelsDevIntegration session_start', () => {
         expect(h.refreshers[1].refreshProjection).toHaveBeenCalledTimes(2);
     });
 
-    it('starts provider live verification after cached startup projection without awaiting it', async () => {
+    it('reports a failed provider startup verification without blocking other providers', async () => {
         const h = makeHarness(() =>
             Promise.resolve({ status: 'fresh', catalog: h.state.status }),
         );
-        const startupVerification = mock(() => new Promise<void>(() => {}));
+        const startupVerification = mock(async () => { throw new Error('fixture verification failure'); });
         h.refreshers[0].refreshStartupProjection = startupVerification;
 
-        await h.sessionStart.handler({}, uiCtx());
+        const notify = mock(() => {});
+        await h.sessionStart.handler({}, uiCtx(notify));
 
         expect(startupVerification).toHaveBeenCalledTimes(1);
+        expect(h.refreshers[1]!.refreshProjection).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining('proj-a'), 'warning');
     });
 
     it('does not reproject when the automatic refresh reports fresh, not-modified, or failed', async () => {

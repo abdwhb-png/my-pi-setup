@@ -102,7 +102,7 @@ function parseCache(
         return undefined;
     }
     if (!isPositiveInteger(raw.fetchedAt)) return undefined;
-    if (!Array.isArray(raw.entries) || raw.entries.length === 0) {
+    if (!Array.isArray(raw.entries)) {
         return undefined;
     }
 

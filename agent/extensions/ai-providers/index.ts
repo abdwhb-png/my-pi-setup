@@ -24,7 +24,10 @@ import {
     registerModelsDevIntegration,
     type ProviderProjectionHandle,
 } from "./models-dev.ts";
-import { registerCpaProvider } from "./providers/cpa.ts";
+import {
+    registerCpaProvider,
+    type CpaProviderHandle,
+} from "./providers/cpa.ts";
 
 const CPA_PROVIDER = "cpa";
 
@@ -35,11 +38,13 @@ export default function aiProvidersExtension(pi: ExtensionAPI): void {
     // dedup, /models-dev-refresh, and the projection fanout. Registered first,
     // but the closure reads the refresher list after providers fill it.
     const refreshers: ProviderProjectionHandle[] = [];
+    let cpa: CpaProviderHandle | undefined;
     registerModelsDevIntegration(pi, getModelsDevCatalog(), () => refreshers);
 
     // ── CLIProxyAPI (CPA) ──
     if (isProviderEnabled(CPA_PROVIDER, cwd)) {
-        refreshers.push(registerCpaProvider(pi));
+        cpa = registerCpaProvider(pi);
+        refreshers.push(cpa);
     }
 
     // ── Future providers go here ──
@@ -48,5 +53,5 @@ export default function aiProvidersExtension(pi: ExtensionAPI): void {
     // if (isProviderEnabled("groq", cwd)) registerGroqProvider(pi);
 
     // ── Global Commands ──
-    registerProvidersCommand(pi);
+    registerProvidersCommand(pi, () => cpa?.getAvailability());
 }

@@ -898,8 +898,7 @@ describe('buildCpaModels', () => {
         globalThis.fetch = origFetch;
     });
 
-    it('returns STATIC_FALLBACK_MODELS when CPA returns empty (CPA down)', async () => {
-        // CPA availability fails → static fallback, no metadata request at all
+    it('returns no models when CPA cannot be reached', async () => {
         globalThis.fetch = mock(() =>
             Promise.reject(new Error('network error')),
         ) as unknown as typeof fetch;
@@ -908,12 +907,12 @@ describe('buildCpaModels', () => {
             'test-key',
             { catalog: emptyLookup },
         );
-        expect(result.source).toBe('fallback');
-        expect(result.models.length).toBe(28);
-        expect(result.models).toBe(STATIC_FALLBACK_MODELS);
+        expect(result.source).toBe('unavailable');
+        expect(result.models).toEqual([]);
+        expect(result).toHaveProperty('failure', { kind: 'network' });
     });
 
-    it('returns STATIC_FALLBACK_MODELS when all entries filter to null', async () => {
+    it('does not invent available models when all verified entries are filtered', async () => {
         // CPA returns only prefixed variants (all filtered by enrichModel)
         let callCount = 0;
         globalThis.fetch = mock((_url: string, _opts?: RequestInit) => {
@@ -942,9 +941,8 @@ describe('buildCpaModels', () => {
             'test-key',
             { catalog: emptyLookup },
         );
-        expect(result.source).toBe('fallback');
-        expect(result.models.length).toBe(28);
-        expect(result.models).toBe(STATIC_FALLBACK_MODELS);
+        expect(result.source).toBe('live');
+        expect(result.models).toEqual([]);
         // no metadata request behind the availability fetch
         expect(callCount).toBe(1);
     });
@@ -1126,7 +1124,7 @@ describe('buildCpaModels', () => {
         expect(result.models[0].contextWindow).toBe(1_000_000);
     });
 
-    it('fetchCpaModelIds returns empty on failed fetch', async () => {
+    it('fetchCpaModelIds preserves a bounded network failure reason', async () => {
         globalThis.fetch = mock(() =>
             Promise.reject(new Error('network error')),
         ) as unknown as typeof fetch;
@@ -1134,6 +1132,34 @@ describe('buildCpaModels', () => {
             'http://localhost:8317/v1',
             'test-key',
         );
-        expect(result).toEqual([]);
+        expect(result).toEqual({ source: 'unavailable', entries: [], failure: { kind: 'network' } });
+    });
+
+    it.each([401, 403, 500])('keeps HTTP %s distinct from an authoritative empty catalog', async (status) => {
+        globalThis.fetch = mock(async () => new Response('private diagnostic', { status })) as unknown as typeof fetch;
+        const result = await buildCpaModels('http://localhost:8317/v1', 'fixture-key', { catalog: emptyLookup });
+        expect(result).toEqual({ source: 'unavailable', entries: [], models: [], failure: { kind: 'http', status } });
+    });
+
+    it('accepts an authoritative empty catalog without static fallbacks', async () => {
+        globalThis.fetch = mock(async () => Response.json({ data: [] })) as unknown as typeof fetch;
+        expect(await buildCpaModels('http://localhost:8317/v1', 'fixture-key', { catalog: emptyLookup })).toEqual({ source: 'live', entries: [], models: [] });
+    });
+
+    it('does not query CPA without credentials', async () => {
+        const fetch = mock(async () => Response.json({ data: [] }));
+        globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
+        expect(await buildCpaModels('http://localhost:8317/v1', '', { catalog: emptyLookup })).toEqual({ source: 'unavailable', entries: [], models: [], failure: { kind: 'missing-credentials' } });
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it.each([{ wrong: [] }, { data: [null] }, { data: [{ id: 42 }] }])('rejects malformed model catalogs: %j', async (payload) => {
+        globalThis.fetch = mock(async () => Response.json(payload)) as unknown as typeof fetch;
+        expect(await buildCpaModels('http://localhost:8317/v1', 'fixture-key', { catalog: emptyLookup })).toEqual({ source: 'unavailable', entries: [], models: [], failure: { kind: 'invalid-response' } });
+    });
+
+    it('distinguishes a request timeout from other network failures', async () => {
+        globalThis.fetch = mock(async () => { throw new DOMException('fixture timeout', 'AbortError'); }) as unknown as typeof fetch;
+        expect(await buildCpaModels('http://localhost:8317/v1', 'fixture-key', { catalog: emptyLookup })).toHaveProperty('failure', { kind: 'timeout' });
     });
 });

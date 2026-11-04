@@ -35,7 +35,7 @@ export interface ProviderProjectionHandle {
         ctx: LifecycleCtx,
         options?: ProviderProjectionOptions,
     ): Promise<void>;
-    /** Starts provider-specific live verification after cached projection. */
+    /** Verifies provider availability before session startup completes. */
     refreshStartupProjection?(ctx: LifecycleCtx): Promise<void>;
 }
 
@@ -111,11 +111,14 @@ export function registerModelsDevIntegration(
     async function projectAll(
         ctx: LifecycleCtx,
         options?: ProviderProjectionOptions,
+        startup = false,
     ): Promise<ProjectionSummary> {
         const refreshers = getRefreshers();
         const settled = await Promise.allSettled(
             refreshers.map((refresher) =>
-                refresher.refreshProjection(ctx, options),
+                startup && refresher.refreshStartupProjection
+                    ? refresher.refreshStartupProjection(ctx)
+                    : refresher.refreshProjection(ctx, options),
             ),
         );
         const summary: ProjectionSummary = {
@@ -177,19 +180,15 @@ export function registerModelsDevIntegration(
         return backgroundRefresh;
     }
 
-    // Session start: await disk load plus all cached provider projections,
-    // then start provider and models.dev freshness checks without awaiting them.
+    // Provider availability is verified before startup completes; metadata
+    // freshness remains an independent background operation.
     pi.on("session_start", async (_event, ctx) => {
         await catalog.load();
-        const summary = await projectAll(ctx);
+        const summary = await projectAll(ctx, undefined, true);
         if (summary.failedProviders.length > 0) {
             warnOnce(ctx, partialProjectionMessage(summary.failedProviders));
         } else {
             warningKey = null;
-        }
-        for (const refresher of getRefreshers()) {
-            if (!refresher.refreshStartupProjection) continue;
-            void refresher.refreshStartupProjection(ctx).catch(() => {});
         }
         void startBackgroundFreshness(ctx).catch(() => {});
     });

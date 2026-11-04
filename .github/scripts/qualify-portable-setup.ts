@@ -213,6 +213,7 @@ if (privateProfile) {
         'operator-regressions',
         [
             'bin/setup',
+            'extensions/ai-providers',
             'bin/pi-fork-cli.test.ts',
             'bin/pi-fork-release.test.ts',
             'bin/pi-runtime-store.test.ts',
@@ -231,7 +232,11 @@ if (privateProfile) {
             'extensions/sandbox/preparation.test.ts',
         ],
         join(source, 'agent'),
-        { ...process.env, PI_PHP_DISCOVERY_CONTRACT: '1' },
+        {
+            ...process.env,
+            PI_PHP_DISCOVERY_CONTRACT: '1',
+            PI_CPA_AVAILABILITY_CONTRACT: '1',
+        },
     );
     passed('operator and launcher regression suites');
 

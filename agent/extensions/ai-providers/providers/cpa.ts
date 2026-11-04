@@ -1,4 +1,4 @@
-import { extensionPath } from "../../_shared/extension-paths.ts";
+import { extensionPath } from '../../_shared/extension-paths.ts';
 /**
  * CLIProxyAPI (CPA) provider for Pi.
  *
@@ -6,72 +6,102 @@ import { extensionPath } from "../../_shared/extension-paths.ts";
  * Models are dynamically discovered from CPA's `/v1/models` endpoint and
  * enriched with metadata via the cpa-models enrichment engine.
  *
- * Two-phase registration:
- *   1. Static fallback models registered synchronously at extension load
- *   2. Dynamic enriched models replace them on session_start
+ * Models become available only after live catalog verification. Cached and
+ * static metadata enrich verified entries without granting availability.
  *
  * CPA is an OpenAI-compatible proxy — the built-in `openai-completions`
  * streamSimple handles all streaming. No custom streamSimple needed.
  */
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 import {
     existsSync,
     mkdirSync,
     readFileSync,
     renameSync,
     writeFileSync,
-} from "node:fs";
-import { basename, dirname, join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
-import { createUiColors } from "../../_shared/ui/ui-colors.ts";
-import { loadAiProvidersConfig } from "../config.ts";
-import { STATIC_FALLBACK_MODELS } from "../constants/cpa-static-models";
-import type { ChatModelConfig } from "../rules/model-rules.ts";
-import type { CatalogDiffCounts } from "./catalog-diff.ts";
-import { reportCatalogDiff } from "./catalog-diff.ts";
-import { createCpaCatalogCache } from "./cpa-catalog-cache.ts";
-import { createCpaCatalogGuard } from "./cpa-catalog-guard.ts";
-import { buildCpaModels, enrichModel } from "./cpa-models.ts";
-import type { CpaCatalogLookup, CpaModelEntry } from "./cpa-models.ts";
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import type { RefreshModelsContext } from '@earendil-works/pi-ai';
+import type {
+    ExtensionAPI,
+    ProviderConfig,
+} from '@earendil-works/pi-coding-agent';
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { getModelsDevCatalog } from '../../_shared/models-dev/catalog';
+import { createUiColors } from '../../_shared/ui/ui-colors.ts';
+import { loadAiProvidersConfig } from '../config.ts';
+import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
+import type { ChatModelConfig } from '../rules/model-rules.ts';
+import type { CatalogDiffCounts } from './catalog-diff.ts';
+import { reportCatalogDiff } from './catalog-diff.ts';
+import { createCpaCatalogCache } from './cpa-catalog-cache.ts';
+import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
+import { buildCpaModels, enrichModel } from './cpa-models.ts';
+import type {
+    CpaCatalogFailure,
+    CpaCatalogLookup,
+    CpaCatalogResult,
+    CpaModelEntry,
+} from './cpa-models.ts';
 
 // ── Constants ──
 
-const PROVIDER_NAME = "cpa";
-const PROVIDER_DISPLAY = "CLIProxyAPI";
-const DEFAULT_BASE_URL = "http://localhost:8317/v1";
-const PROVIDER_API = "openai-completions" as const;
+const PROVIDER_NAME = 'cpa';
+const PROVIDER_DISPLAY = 'CLIProxyAPI';
+const DEFAULT_BASE_URL = 'http://localhost:8317/v1';
+const PROVIDER_API = 'openai-completions' as const;
 
 // ── Lifecycle event context shape ──
 
-export type LifecycleCtx = Parameters<Parameters<ExtensionAPI["on"]>[1]>[1];
+export type LifecycleCtx = Parameters<Parameters<ExtensionAPI['on']>[1]>[1];
 
 /**
  * Handle returned by {@link registerCpaProvider}.
  *
- * `refreshProjection` performs the same forced catalog refresh the
- * `/cpa-refresh` command runs: reloads live models through the catalog
- * guard, re-registers the provider projection, and reports stale/unverified
- * states to the user.
+ * Forced projections and `/cpa-refresh` verify the live catalog. Ordinary
+ * projections may re-enrich entries only while the current catalog is verified.
  */
 export interface CpaProviderHandle {
-    providerId: "cpa";
+    providerId: 'cpa';
     refreshProjection(
         ctx: LifecycleCtx,
         options?: { force?: boolean },
     ): Promise<void>;
     refreshStartupProjection(ctx: LifecycleCtx): Promise<void>;
+    getAvailability(): Readonly<CpaProviderAvailability>;
+}
+
+export interface CpaProviderAvailability {
+    state: 'checking' | 'available' | 'empty' | 'unavailable';
+    diagnostic: string;
+}
+
+function catalogFailureMessage(failure: CpaCatalogFailure): string {
+    const reason =
+        failure.kind === 'http'
+            ? `catalog request ${[401, 403].includes(failure.status) ? 'authentication refused' : 'failed'} (HTTP ${failure.status})`
+            : {
+                  'missing-credentials': 'credentials are missing',
+                  timeout: 'catalog request timed out',
+                  network: 'catalog endpoint could not be reached',
+                  'invalid-response': 'catalog response is invalid',
+              }[failure.kind];
+    const action =
+        failure.kind === 'missing-credentials' ||
+        (failure.kind === 'http' && [401, 403].includes(failure.status))
+            ? 'Verify CLIPROXY_API_KEY through your secure configuration channel'
+            : 'Check the configured CPA endpoint and tunnel';
+    return `CPA is unavailable: ${reason}. ${action}, then run /cpa-refresh or choose another provider with /model.`;
 }
 
 /** Persists informational drift from non-interactive CPA invocations. */
 const HEADLESS_DRIFT_DIAGNOSTIC_PATH = extensionPath(
-    { scope: "global" },
-    "artifacts",
-    "cache",
-    "ai-providers",
-    "cpa-catalog-drift.v1.json",
+    { scope: 'global' },
+    'artifacts',
+    'cache',
+    'ai-providers',
+    'cpa-catalog-drift.v1.json',
 );
 
 type HeadlessCatalogDrift = CatalogDiffCounts & { recordedAt: number };
@@ -91,7 +121,7 @@ function persistHeadlessCatalogDrift(counts: CatalogDiffCounts): void {
         writeFileSync(
             temporaryPath,
             `${JSON.stringify({ ...counts, recordedAt: Date.now() })}\n`,
-            "utf8",
+            'utf8',
         );
         renameSync(temporaryPath, HEADLESS_DRIFT_DIAGNOSTIC_PATH);
     } catch (error) {
@@ -104,11 +134,11 @@ function persistHeadlessCatalogDrift(counts: CatalogDiffCounts): void {
 function loadHeadlessCatalogDrift(): HeadlessCatalogDrift | undefined {
     try {
         const value: unknown = JSON.parse(
-            readFileSync(HEADLESS_DRIFT_DIAGNOSTIC_PATH, "utf8"),
+            readFileSync(HEADLESS_DRIFT_DIAGNOSTIC_PATH, 'utf8'),
         );
         if (
             !value ||
-            typeof value !== "object" ||
+            typeof value !== 'object' ||
             !Number.isFinite((value as HeadlessCatalogDrift).recordedAt) ||
             !Number.isInteger((value as HeadlessCatalogDrift).newCount) ||
             !Number.isInteger(
@@ -136,7 +166,7 @@ function themedDriftSink(
     return (counts) => {
         const theme = ctx.ui.theme;
         if (!theme) {
-            ctx.ui.notify(formatCatalogDrift(counts), "info");
+            ctx.ui.notify(formatCatalogDrift(counts), 'info');
             return;
         }
         const colors = createUiColors(theme);
@@ -152,8 +182,8 @@ function themedDriftSink(
             );
         }
         ctx.ui.notify(
-            `${colors.model("[cpa]")} ${parts.join(colors.separator(" · "))}`,
-            "info",
+            `${colors.model('[cpa]')} ${parts.join(colors.separator(' · '))}`,
+            'info',
         );
     };
 }
@@ -166,48 +196,43 @@ function themedDriftSink(
  */
 export function getCliproxyApiKey(): string {
     if (process.env.CLIPROXY_API_KEY) {
-        return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, "");
+        return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, '');
     }
-    const envPath = join(getAgentDir(), ".env");
+    const envPath = join(getAgentDir(), '.env');
     if (existsSync(envPath)) {
         try {
-            const content = readFileSync(envPath, "utf-8");
+            const content = readFileSync(envPath, 'utf-8');
             for (const line of content.split(/\r?\n/)) {
                 const trimmed = line.trim();
-                if (trimmed.startsWith("CLIPROXY_API_KEY=")) {
+                if (trimmed.startsWith('CLIPROXY_API_KEY=')) {
                     const value = trimmed
-                        .slice("CLIPROXY_API_KEY=".length)
+                        .slice('CLIPROXY_API_KEY='.length)
                         .trim();
-                    return value.replace(/^["']|["']$/g, "");
+                    return value.replace(/^["']|["']$/g, '');
                 }
             }
         } catch {
             // ignore
         }
     }
-    return "";
+    return '';
 }
 
 // ── Provider config helpers ──
 
-function buildProviderConfig(models: ChatModelConfig[], baseUrl: string) {
+function buildProviderConfig(
+    models: ChatModelConfig[],
+    baseUrl: string,
+    refreshModels: NonNullable<ProviderConfig['refreshModels']>,
+): ProviderConfig {
     return {
         name: PROVIDER_DISPLAY,
         baseUrl,
         api: PROVIDER_API,
         apiKey: getCliproxyApiKey(),
         models,
+        refreshModels,
     };
-}
-
-function mergeStartupModels(
-    cachedModels: readonly ChatModelConfig[],
-): ChatModelConfig[] {
-    const modelsById = new Map(
-        STATIC_FALLBACK_MODELS.map((model) => [model.id, model]),
-    );
-    for (const model of cachedModels) modelsById.set(model.id, model);
-    return [...modelsById.values()];
 }
 
 // ── Registration ──
@@ -239,27 +264,27 @@ export function registerCpaProvider(
         process.env.CLIPROXY_BASE_URL?.trim() ||
         cpaConfig.baseUrl ||
         DEFAULT_BASE_URL
-    ).replace(/\/+$/, "");
+    ).replace(/\/+$/, '');
     const endpoint = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
     if (
         !endpoint ||
-        !["http:", "https:"].includes(endpoint.protocol) ||
+        !['http:', 'https:'].includes(endpoint.protocol) ||
         endpoint.username ||
         endpoint.password ||
-        baseUrl.includes("?") ||
-        baseUrl.includes("#")
+        baseUrl.includes('?') ||
+        baseUrl.includes('#')
     ) {
         throw new Error(
-            "Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.",
+            'Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.',
         );
     }
     const catalogCache = createCpaCatalogCache({
         cachePath: extensionPath(
-            { scope: "global" },
-            "artifacts",
-            "cache",
-            "ai-providers",
-            "cpa-catalog.v1.json",
+            { scope: 'global' },
+            'artifacts',
+            'cache',
+            'ai-providers',
+            'cpa-catalog.v1.json',
         ),
         endpoint: baseUrl,
     });
@@ -282,12 +307,17 @@ export function registerCpaProvider(
     // provider registration lifetime. Reset on extension reload.
     const reportedCatalogDrift = new Set<string>();
     let lastNotifiedStaleModelId: string | undefined;
-    let unverifiedWarningShown = false;
+    let lastUnavailableMessage: string | undefined;
     // Cache raw CPA entries so projections can re-enrich against current
     // models.dev metadata without another CPA /v1/models request.
     const lastEntries: CpaModelEntry[] = [];
     let lastEnrichedModels: ChatModelConfig[] = [];
-    let hasStartupCatalog = false;
+    let acceptedCatalog: CpaCatalogResult | undefined;
+    let lastSavedCatalog: CpaCatalogResult | undefined;
+    let availability: CpaProviderAvailability = {
+        state: 'checking',
+        diagnostic: 'CPA catalog has not been verified.',
+    };
 
     function enrichEntries(
         entries: readonly CpaModelEntry[],
@@ -300,6 +330,74 @@ export function registerCpaProvider(
             .filter((model): model is ChatModelConfig => model !== null);
     }
 
+    function acceptCatalog(catalog: CpaCatalogResult): void {
+        if (acceptedCatalog === catalog) return;
+        acceptedCatalog = catalog;
+        if (catalog.source === 'live') {
+            lastEntries.length = 0;
+            lastEntries.push(...catalog.entries);
+            lastEnrichedModels = catalog.models;
+        }
+        availability =
+            catalog.source === 'unavailable'
+                ? {
+                      state: 'unavailable',
+                      diagnostic: catalogFailureMessage(catalog.failure),
+                  }
+                : {
+                      state: catalog.models.length ? 'available' : 'empty',
+                      diagnostic: catalog.models.length
+                          ? 'CPA catalog verified.'
+                          : 'CPA catalog verified; no supported models are available.',
+                  };
+        if (catalog.source === 'live') lastUnavailableMessage = undefined;
+        if (
+            catalog.source === 'unavailable' ||
+            catalog.models.some(
+                (model) => model.id === lastNotifiedStaleModelId,
+            )
+        )
+            lastNotifiedStaleModelId = undefined;
+    }
+
+    async function persistCatalog(catalog: CpaCatalogResult): Promise<void> {
+        if (catalog.source !== 'live' || lastSavedCatalog === catalog) return;
+        lastSavedCatalog = catalog;
+        try {
+            await saveCachedEntries(catalog.entries);
+        } catch {
+            console.warn('[cpa] Failed to persist the verified CPA catalog.');
+        }
+    }
+
+    function availableModels(): ChatModelConfig[] {
+        return availability.state === 'available' ? lastEnrichedModels : [];
+    }
+
+    function loadCatalog(): Promise<CpaCatalogResult> {
+        return buildModels(baseUrl, getCliproxyApiKey());
+    }
+
+    async function refreshNativeCatalog(
+        context: RefreshModelsContext,
+    ): Promise<ChatModelConfig[]> {
+        if (!context.allowNetwork || context.signal.aborted)
+            return availableModels();
+        const result = await catalogGuard.refresh({
+            force: context.force,
+            loadCatalog,
+        });
+        // Pi owns publication into its registry. Re-registering here would
+        // replace the provider and invalidate the refresh's publication token.
+        if (
+            await context.publish({
+                update: () => acceptCatalog(result.catalog),
+            })
+        )
+            await persistCatalog(result.catalog);
+        return availableModels();
+    }
+
     async function refreshCatalog(
         ctx: LifecycleCtx,
         force = false,
@@ -308,44 +406,45 @@ export function registerCpaProvider(
             saveHeadlessCatalogDrift,
         ),
     ) {
-        const apiKey = getCliproxyApiKey();
-        const result = await catalogGuard.refresh({
+        let result = await catalogGuard.refresh({
             force,
             activeModel: ctx.model
                 ? { provider: ctx.model.provider, id: ctx.model.id }
                 : undefined,
-            loadCatalog: async () => {
-                const catalog = await buildModels(baseUrl, apiKey);
-                // ponytail: snapshot raw entries and enriched models for metadata-only reprojection.
-                if (catalog.source === "live") {
-                    // Mutate const array in-place — entries discovered from CPA.
-                    lastEntries.length = 0;
-                    lastEntries.push(...catalog.entries);
-                    lastEnrichedModels = catalog.models;
-                    try {
-                        await saveCachedEntries(catalog.entries);
-                    } catch {
-                        console.warn(
-                            "[cpa] Failed to persist the verified CPA catalog.",
-                        );
-                    }
-                }
-                return catalog;
-            },
-            registerModels: (models) => {
-                pi.registerProvider(
-                    PROVIDER_NAME,
-                    buildProviderConfig(models, baseUrl),
-                );
+            loadCatalog,
+        });
+        const needsPublication =
+            result.refreshed || acceptedCatalog !== result.catalog;
+        acceptCatalog(result.catalog);
+        if (needsPublication) {
+            const models = availableModels();
+            pi.registerProvider(
+                PROVIDER_NAME,
+                buildProviderConfig(models, baseUrl, refreshNativeCatalog),
+            );
+            if (models.length > 0)
                 reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
                     silent: silentCatalogDiff,
                     reported: reportedCatalogDrift,
                     sink,
                 });
-            },
-            hasModel: (provider, id) =>
-                Boolean(ctx.modelRegistry.find(provider, id)),
-        });
+        }
+        await persistCatalog(result.catalog);
+        const activeModel = ctx.model;
+        if (
+            result.state === 'valid' &&
+            activeModel?.provider === PROVIDER_NAME &&
+            !ctx.modelRegistry.find(PROVIDER_NAME, activeModel.id)
+        )
+            result = { ...result, state: 'stale', modelId: activeModel.id };
+        if (result.state !== 'stale') lastNotifiedStaleModelId = undefined;
+        if (ctx.hasUI)
+            ctx.ui.setStatus?.(
+                'cpa',
+                availability.state === 'available'
+                    ? undefined
+                    : availability.diagnostic,
+            );
         return result;
     }
 
@@ -353,57 +452,60 @@ export function registerCpaProvider(
         if (lastNotifiedStaleModelId === modelId) return;
         lastNotifiedStaleModelId = modelId;
         const message = `The active CPA model ${modelId} no longer exists. Use /model to choose a valid model.`;
-        if (ctx.hasUI) ctx.ui.notify(message, "warning");
+        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
         else console.warn(`[cpa] ${message}`);
     }
 
     function notifyUnverifiedOnce(ctx: LifecycleCtx): void {
-        if (unverifiedWarningShown) return;
-        unverifiedWarningShown = true;
-        const message =
-            "CPA catalog unavailable. The last verified state is preserved.";
-        if (ctx.hasUI) ctx.ui.notify(message, "warning");
+        // A child using another provider must not report this as an execution failure.
+        if (
+            !ctx.hasUI &&
+            isSubagentChild() &&
+            ctx.model?.provider !== PROVIDER_NAME
+        )
+            return;
+        const message = availability.diagnostic;
+        if (lastUnavailableMessage === message) return;
+        lastUnavailableMessage = message;
+        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
         else console.warn(`[cpa] ${message}`);
     }
 
     /**
      * Provider projection handle.
      *
-     * When `options.force` is true or no cached models exist, performs a full
-     * live discovery through CPA /v1/models (same as `/cpa-refresh`).
-     * Otherwise re-registers the last known enriched models from cache — a
-     * metadata-only reprojection that avoids a redundant CPA fetch when
-     * only the models.dev catalog changed.
+     * Forced refreshes verify CPA; metadata-only reprojection never restores
+     * an unavailable provider from the retained disk or in-memory cache.
      */
     const handle: CpaProviderHandle = {
         providerId: PROVIDER_NAME,
+        getAvailability: () => availability,
         async refreshStartupProjection(ctx) {
-            if (!hasStartupCatalog) return;
-            try {
-                const result = await refreshCatalog(ctx);
-                if (result.state === "stale") {
-                    notifyStaleModelOnce(ctx, result.modelId);
-                }
-            } catch {
-                // Cached projection remains available until input revalidation.
-            }
+            const result = await refreshCatalog(ctx);
+            if (result.state === 'stale')
+                notifyStaleModelOnce(ctx, result.modelId);
+            else if (result.state === 'unverified') notifyUnverifiedOnce(ctx);
         },
         async refreshProjection(ctx, projectionOptions) {
-            if (projectionOptions?.force || lastEnrichedModels.length === 0) {
-                const result = await refreshCatalog(ctx, true);
-                if (result.state === "stale") {
+            if (projectionOptions?.force || availability.state === 'checking') {
+                const result = await refreshCatalog(
+                    ctx,
+                    projectionOptions?.force ?? false,
+                );
+                if (result.state === 'stale') {
                     notifyStaleModelOnce(ctx, result.modelId);
                     return;
                 }
 
-                const message =
-                    result.state === "valid"
-                        ? "CPA catalog updated. The active model is valid."
-                        : "CPA catalog unavailable. The last verified state is preserved.";
+                if (result.state === 'unverified') {
+                    notifyUnverifiedOnce(ctx);
+                    return;
+                }
+                const message = availability.diagnostic;
                 if (ctx.hasUI)
                     ctx.ui.notify(
                         message,
-                        result.state === "valid" ? "info" : "warning",
+                        result.state === 'valid' ? 'info' : 'warning',
                     );
                 else console.warn(`[cpa] ${message}`);
                 return;
@@ -412,62 +514,57 @@ export function registerCpaProvider(
             // Metadata-only reprojection: re-enrich cached entries against
             // the current models.dev catalog snapshot without fetching CPA.
             // No notification — models.dev lifecycle handles its own.
-            if (lastEntries.length > 0) {
+            if (availability.state === 'available' && lastEntries.length > 0) {
                 const models = enrichEntries(lastEntries);
                 if (models.length > 0) {
+                    lastEnrichedModels = models;
                     pi.registerProvider(
                         PROVIDER_NAME,
-                        buildProviderConfig(models, baseUrl),
+                        buildProviderConfig(
+                            models,
+                            baseUrl,
+                            refreshNativeCatalog,
+                        ),
                     );
                 }
             }
         },
     };
 
-    // Phase 1: register static fallbacks plus last verified dynamic entries.
-    // Disk cache is read synchronously so Pi can resolve a CPA default before
-    // session_start performs its live verification.
+    // The disk cache is metadata, not evidence that this endpoint is available.
     let startupEntries: CpaModelEntry[] = [];
     try {
         startupEntries = loadCachedEntries() ?? [];
     } catch {
-        console.warn("[cpa] Failed to load the CPA catalog cache.");
+        console.warn('[cpa] Failed to load the CPA catalog cache.');
     }
-    const startupModels = enrichEntries(startupEntries);
-    hasStartupCatalog = startupModels.length > 0;
     lastEntries.push(...startupEntries);
-    lastEnrichedModels = startupModels;
     pi.registerProvider(
         PROVIDER_NAME,
-        buildProviderConfig(mergeStartupModels(startupModels), baseUrl),
+        buildProviderConfig([], baseUrl, refreshNativeCatalog),
     );
 
-    pi.on("model_select", async (event, ctx) => {
+    pi.on('model_select', async (event, ctx) => {
         if (event.model.provider !== PROVIDER_NAME) return;
-        try {
-            const result = await refreshCatalog(ctx, true);
-            if (result.state === "stale")
-                notifyStaleModelOnce(ctx, result.modelId);
-            if (result.state === "valid") {
-                lastNotifiedStaleModelId = undefined;
-                unverifiedWarningShown = false;
-            }
-        } catch {
-            // A failed verification must not block a newly selected model.
-        }
+        const result = await refreshCatalog(ctx, true);
+        if (result.state === 'stale') notifyStaleModelOnce(ctx, result.modelId);
+        if (result.state === 'unverified') notifyUnverifiedOnce(ctx);
     });
 
-    pi.on("input", async (_event, ctx) => {
+    pi.on('input', async (_event, ctx) => {
         if (ctx.model?.provider !== PROVIDER_NAME)
-            return { action: "continue" };
+            return { action: 'continue' };
         const result = await refreshCatalog(ctx);
-        if (result.state === "unverified") {
+        if (result.state === 'unverified') {
             notifyUnverifiedOnce(ctx);
-            return { action: "continue" };
+            if (!ctx.hasUI) {
+                if (isSubagentChild()) exitProcess(1);
+                else ctx.shutdown();
+            }
+            return { action: 'handled' };
         }
-        if (result.state === "valid") {
-            unverifiedWarningShown = false;
-            return { action: "continue" };
+        if (result.state === 'valid') {
+            return { action: 'continue' };
         }
 
         notifyStaleModelOnce(ctx, result.modelId);
@@ -481,34 +578,34 @@ export function registerCpaProvider(
                 ctx.shutdown();
             }
         }
-        return { action: "handled" };
+        return { action: 'handled' };
     });
 
-    pi.on("session_before_compact", async (_event, ctx) => {
+    pi.on('session_before_compact', async (_event, ctx) => {
         if (ctx.model?.provider !== PROVIDER_NAME) return undefined;
         const result = await refreshCatalog(ctx);
-        if (result.state !== "stale") return undefined;
-
-        notifyStaleModelOnce(ctx, result.modelId);
+        if (result.state === 'valid') return undefined;
+        if (result.state === 'stale') notifyStaleModelOnce(ctx, result.modelId);
+        else notifyUnverifiedOnce(ctx);
         return { cancel: true };
     });
 
-    pi.registerCommand("cpa-refresh", {
-        description: "Refresh CPA models and validate the active model",
+    pi.registerCommand('cpa-refresh', {
+        description: 'Refresh CPA models and validate the active model',
         handler: async (_args, ctx) => {
             await handle.refreshProjection(ctx, { force: true });
         },
     });
 
-    pi.registerCommand("cpa-drift", {
-        description: "Show latest headless CPA catalog drift diagnostic",
+    pi.registerCommand('cpa-drift', {
+        description: 'Show latest headless CPA catalog drift diagnostic',
         handler: (_args, ctx) => {
             const drift = loadHeadlessCatalogDrift();
             const message = drift
                 ? `${formatCatalogDrift(drift)}. Recorded ${new Date(drift.recordedAt).toISOString()}.`
-                : "[cpa] No headless catalog drift diagnostic recorded.";
+                : '[cpa] No headless catalog drift diagnostic recorded.';
             if (ctx.hasUI) {
-                ctx.ui.notify(message, "info");
+                ctx.ui.notify(message, 'info');
             } else {
                 process.stdout.write(`${message}\n`);
             }

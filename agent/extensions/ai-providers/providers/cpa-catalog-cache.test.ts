@@ -81,6 +81,14 @@ describe('CpaCatalogCache', () => {
         expect(otherEndpoint.load()).toBeUndefined();
     });
 
+    it('replaces a previous catalog with a verified empty catalog', async () => {
+        const { cachePath } = createFixture();
+        const cache = createCpaCatalogCache({ cachePath, endpoint });
+        await cache.save([entry]);
+        await cache.save([]);
+        expect(cache.load()).toEqual([]);
+    });
+
     it('ignores malformed cache data', () => {
         const { cachePath, directory } = createFixture();
         const cache = createCpaCatalogCache({ cachePath, endpoint });

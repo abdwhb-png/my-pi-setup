@@ -4,18 +4,31 @@ import { pathToFileURL } from 'node:url';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
 import { validateBundle } from './distribution.ts';
-import { json, object, run, writeJson } from './files.ts';
+import { json, object, run, runAsync, writeJson } from './files.ts';
+import {
+    childSetupProgress,
+    setupStep,
+    type SetupProgress,
+} from './progress.ts';
 
 /** Runs only after the transaction has placed the candidate at its final path. */
-export async function provision(root: string, bundle: string): Promise<void> {
+export async function provision(
+    root: string,
+    bundle: string,
+    progress: SetupProgress | undefined = childSetupProgress(),
+): Promise<void> {
     const manifest = validateBundle(bundle);
     const agentDir = join(root, 'agent');
-    const runtime = await deployFork({
-        packedRoot: join(bundle, 'pi'),
-        runtimeRoot: join(root, 'runtime/pi-core'),
-        agentDir,
-    });
-    await restoreBundledExtensionDependencies(root, manifest.files);
+    const runtime = await setupStep(progress, 'core', () =>
+        deployFork({
+            packedRoot: join(bundle, 'pi'),
+            runtimeRoot: join(root, 'runtime/pi-core'),
+            agentDir,
+        }),
+    );
+    await setupStep(progress, 'dependencies', () =>
+        restoreBundledExtensionDependencies(root, manifest.files),
+    );
     const settingsPath = join(agentDir, 'settings.json');
     const settings = prepareInstalledProfile(
         root,
@@ -31,23 +44,30 @@ export async function provision(root: string, bundle: string): Promise<void> {
         PI_REAL_BIN: undefined,
         PI_SUBAGENT_PI_BINARY: join(root, 'bin/pi'),
     };
-    for (const source of manifest.packages) {
-        if (source.startsWith('npm:')) {
-            const separator = source.lastIndexOf('@');
-            const name = source.slice(4, separator),
-                version = source.slice(separator + 1);
-            await verifyRegistryVersion(name, version);
-        }
-        run(
-            process.execPath,
-            [join(root, 'bin/pi'), 'install', source, '--no-approve'],
-            agentDir,
-            installEnv,
+    for (const [index, source] of manifest.packages.entries()) {
+        await setupStep(
+            progress,
+            'packages',
+            async () => {
+                if (source.startsWith('npm:')) {
+                    const separator = source.lastIndexOf('@');
+                    const name = source.slice(4, separator),
+                        version = source.slice(separator + 1);
+                    await verifyRegistryVersion(name, version);
+                }
+                await runAsync(
+                    process.execPath,
+                    [join(root, 'bin/pi'), 'install', source, '--no-approve'],
+                    agentDir,
+                    installEnv,
+                );
+            },
+            { current: index + 1, total: manifest.packages.length },
         );
     }
     // Preserve resource filters: package installation owns persistence, the profile owns selection.
     writeJson(settingsPath, settings);
-    run(
+    await runAsync(
         process.execPath,
         [join(root, 'bin/pi'), 'list', '--no-approve'],
         root,
@@ -63,28 +83,33 @@ export async function provision(root: string, bundle: string): Promise<void> {
     const provenance = json(join(bundle, 'zerobox/provenance.json'));
     if (typeof provenance.binarySha256 !== 'string')
         throw new Error('Missing Zerobox binary digest');
-    await stageRuntimeRelease({
-        candidateRoot: join(bundle, 'zerobox'),
-        runtimeBase: join(root, 'runtimes'),
-        managedBinary: join(root, 'bin/zerobox'),
-        provenanceSource: join(bundle, 'zerobox/provenance.json'),
-        expectedBinarySha256: provenance.binarySha256,
-    });
+    const binarySha256 = provenance.binarySha256;
+    await setupStep(progress, 'zerobox', () =>
+        stageRuntimeRelease({
+            candidateRoot: join(bundle, 'zerobox'),
+            runtimeBase: join(root, 'runtimes'),
+            managedBinary: join(root, 'bin/zerobox'),
+            provenanceSource: join(bundle, 'zerobox/provenance.json'),
+            expectedBinarySha256: binarySha256,
+        }),
+    );
     // The existing builder creates machine identity and retains local network/trust decisions.
     const bindings = join(agentDir, 'config/setup-bindings.json');
     if (process.env.PI_SETUP_BINDINGS)
         writeJson(bindings, json(process.env.PI_SETUP_BINDINGS));
-    const configured = run(
-        process.execPath,
-        [
-            join(agentDir, 'scripts/configure-sandbox.ts'),
-            'apply',
-            '--agent-dir',
-            agentDir,
-            ...(existsSync(bindings) ? ['--bindings', bindings] : []),
-        ],
-        root,
-        { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+    const configured = await setupStep(progress, 'sandbox', () =>
+        runAsync(
+            process.execPath,
+            [
+                join(agentDir, 'scripts/configure-sandbox.ts'),
+                'apply',
+                '--agent-dir',
+                agentDir,
+                ...(existsSync(bindings) ? ['--bindings', bindings] : []),
+            ],
+            root,
+            { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+        ),
     );
     const unavailable = configured
         .split('\n')
@@ -93,9 +118,11 @@ export async function provision(root: string, bundle: string): Promise<void> {
         throw new Error(
             `Host tools are missing: ${unavailable.join('; ')}. Install them or retry with --bindings FILE; no host tools were installed automatically.`,
         );
-    const coherence = verifyRuntimeCoherence(runtime, agentDir);
-    if (!coherence.ok) throw new Error(coherence.errors.join('\n'));
-    await verifyPackages(root, manifest.packages);
+    await setupStep(progress, 'verify', async () => {
+        const coherence = verifyRuntimeCoherence(runtime, agentDir);
+        if (!coherence.ok) throw new Error(coherence.errors.join('\n'));
+        await verifyPackages(root, manifest.packages);
+    });
 }
 
 async function verifyRegistryVersion(
@@ -159,8 +186,8 @@ export async function restoreBundledExtensionDependencies(
                 throw new Error(`Unsupported locked dependency: ${name}`);
             await verifyRegistryVersion(resolvedName, version);
         }
-        run('sfw', ['--version']);
-        run(
+        await runAsync('sfw', ['--version']);
+        await runAsync(
             'sfw',
             ['bun', 'install', '--frozen-lockfile', '--ignore-scripts'],
             dirname(packagePath),
@@ -214,7 +241,7 @@ export async function verifyPackages(
 ): Promise<void> {
     // Deployment creates node_modules after Bun has cached absent directories.
     // A fresh process must resolve the complete runtime graph, including transitives.
-    run(
+    await runAsync(
         process.execPath,
         [import.meta.filename, '--verify-packages', root, ...sources],
         root,

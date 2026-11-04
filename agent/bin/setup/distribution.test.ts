@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import {
     allowedCodePath,
     releaseTag,
@@ -23,12 +24,18 @@ import {
 } from './distribution.ts';
 import * as distribution from './distribution.ts';
 import { run, writeJson, digest, archive, inventory } from './files.ts';
-import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 test('packing cannot race runtime garbage collection', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-pack-lock-'));
     const lock = acquireRuntimeStorageLock(root);
-    try { await expect(packDistribution(root, join(root, 'output'), 'a'.repeat(40))).rejects.toThrow('Runtime storage is busy'); }
-    finally { lock.release(); rmSync(root, { recursive: true, force: true }); rmSync(`${root}.runtime.lock`, { force: true }); }
+    try {
+        await expect(
+            packDistribution(root, join(root, 'output'), 'a'.repeat(40)),
+        ).rejects.toThrow('Runtime storage is busy');
+    } finally {
+        lock.release();
+        rmSync(root, { recursive: true, force: true });
+        rmSync(`${root}.runtime.lock`, { force: true });
+    }
 });
 test('distribution code selection excludes credentials and runtime user state', () => {
     for (const path of [
@@ -61,6 +68,10 @@ test('pack snapshots main and publish requests qualification without finalizing 
         };
         write(join(root, 'bin/pi'), '#!/bin/sh\n');
         write(join(root, 'bin/pi-setup'), '#!/bin/sh\n');
+        write(
+            join(root, 'agent/skills/bundled/SKILL.md'),
+            '# Bundled skill\nRepository resource.',
+        );
         writeJson(join(root, 'agent/extensions/tool-groups/package.json'), {
             name: 'fixture-tool-groups',
             version: '1.0.0',
@@ -75,7 +86,7 @@ test('pack snapshots main and publish requests qualification without finalizing 
             'export const approved = true;',
         );
         run('git', ['init', '--quiet'], root);
-        run('git', ['add', 'bin', 'agent/extensions'], root);
+        run('git', ['add', 'bin', 'agent/extensions', 'agent/skills'], root);
         run(
             'git',
             [
@@ -93,6 +104,11 @@ test('pack snapshots main and publish requests qualification without finalizing 
             packages: ['extensions/tool-groups'],
             defaultProvider: 'fixture',
             defaultModel: 'fixture-model',
+            skills: [
+                '!agent-browser',
+                '~/.agents/skills',
+                '~/.pi/agent/portable-skills',
+            ],
         });
         writeJson(join(root, 'agent/auth.json'), {
             credential: 'EXCLUDED_FIXTURE_CREDENTIAL',
@@ -236,7 +252,7 @@ test('pack snapshots main and publish requests qualification without finalizing 
         const script = join(home, 'pack.ts');
         write(
             script,
-            `process.umask(0o077); const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3]);`,
+            `process.umask(0o077); const {packDistribution}=await import(${JSON.stringify(resolve(import.meta.dir, 'distribution.ts'))}); await packDistribution(process.argv[2], process.argv[3], undefined, {includeGlobalSkills:process.argv[4]==='include-global-skills'});`,
         );
         const output = join(home, 'output');
         chmodSync(join(runtime, 'packed/tarballs'), 0o555);
@@ -297,14 +313,58 @@ test('pack snapshots main and publish requests qualification without finalizing 
             ),
         ).toContain('fixture-model');
         expect(
+            existsSync(join(home, 'unpacked/setup/agent/portable-skills')),
+        ).toBe(false);
+        expect(
+            JSON.parse(
+                readFileSync(
+                    join(home, 'unpacked/setup/agent/settings.json'),
+                    'utf8',
+                ),
+            ).skills,
+        ).toEqual(['!agent-browser']);
+        expect(
+            readFileSync(
+                join(home, 'unpacked/setup/agent/skills/bundled/SKILL.md'),
+                'utf8',
+            ),
+        ).toContain('Repository resource');
+        const withSkills = join(home, 'with-skills');
+        run(
+            process.execPath,
+            [script, root, withSkills, 'include-global-skills'],
+            root,
+            {
+                ...process.env,
+                HOME: home,
+                PI_CODING_AGENT_DIR: join(root, 'agent'),
+            },
+        );
+        archive(
+            'extract',
+            join(withSkills, 'setup.tgz'),
+            join(home, 'with-skills-unpacked'),
+        );
+        expect(
             readFileSync(
                 join(
                     home,
-                    'unpacked/setup/agent/portable-skills/example/SKILL.md',
+                    'with-skills-unpacked/setup/agent/portable-skills/example/SKILL.md',
                 ),
                 'utf8',
             ),
         ).toContain('deterministic');
+        expect(
+            JSON.parse(
+                readFileSync(
+                    join(
+                        home,
+                        'with-skills-unpacked/setup/agent/settings.json',
+                    ),
+                    'utf8',
+                ),
+            ).skills,
+        ).toEqual(['!agent-browser', '~/.pi/agent/portable-skills']);
         // GitHub is the external boundary; archive admission and extraction stay real.
         const fakeTools = join(home, 'tools');
         mkdirSync(fakeTools);
@@ -463,7 +523,7 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
             await finalize();
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_DELAY_ATTESTATION;
-            const downloaded = downloadDistribution(
+            const downloaded = await downloadDistribution(
                 'fixture-release',
                 join(home, 'download'),
             );
@@ -478,40 +538,40 @@ else if (!['create', 'edit', 'verify', 'verify-asset'].includes(args[1])) proces
                 calls.filter((args) => args[1] === 'verify-asset'),
             ).toHaveLength(4);
             process.env.GH_FIXTURE_BAD_ASSET = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'fixture-release',
                     join(home, 'bad-asset'),
                 ),
-            ).toThrow('Command failed');
+            ).rejects.toThrow('Command failed');
             expect(() =>
                 readFileSync(join(home, 'bad-asset/bundle/manifest.json')),
             ).toThrow();
             process.env.GH_FIXTURE_INVALID_ATTESTATION = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'invalid-signature',
                     join(home, 'invalid-signature'),
                 ),
-            ).toThrow('invalid signature');
+            ).rejects.toThrow('invalid signature');
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_INVALID_ATTESTATION;
             process.env.GH_FIXTURE_MISSING_ATTESTATION = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'missing-attestation',
                     join(home, 'missing-attestation'),
                 ),
-            ).toThrow('no attestations for tag');
+            ).rejects.toThrow('no attestations for tag');
             expect(sleep).toHaveBeenCalledTimes(1);
             delete process.env.GH_FIXTURE_MISSING_ATTESTATION;
             process.env.GH_FIXTURE_PUBLIC = '1';
-            expect(() =>
+            await expect(
                 downloadDistribution(
                     'public-refused',
                     join(home, 'public-refused'),
                 ),
-            ).toThrow('must be private');
+            ).rejects.toThrow('must be private');
         } finally {
             process.env = originalEnv;
             sleep.mockRestore();

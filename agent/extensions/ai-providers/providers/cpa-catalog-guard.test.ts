@@ -15,7 +15,6 @@ const liveModel: ProviderModelConfig = {
 
 describe('createCpaCatalogGuard', () => {
     test('marks a CPA model stale when an authoritative live catalog removes it', async () => {
-        const registerModels = mock(() => {});
         const guard = createCpaCatalogGuard({
             refreshTtlMs: 30_000,
             now: () => 1_000,
@@ -24,21 +23,22 @@ describe('createCpaCatalogGuard', () => {
         const result = await guard.refresh({
             force: true,
             activeModel: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
-            loadCatalog: async () => ({ models: [liveModel], entries: [], source: 'live' }),
-            registerModels,
-            hasModel: (_provider, id) => id === liveModel.id,
+            loadCatalog: async () => ({
+                models: [liveModel],
+                entries: [],
+                source: 'live',
+            }),
         });
 
         expect(result).toEqual({
+            catalog: { models: [liveModel], entries: [], source: 'live' },
             state: 'stale',
             modelId: 'ocg/deepseek-v4-pro',
             refreshed: true,
         });
-        expect(registerModels).toHaveBeenCalledWith([liveModel]);
     });
 
-    test('keeps the current registry and fails open when CPA returns fallback', async () => {
-        const registerModels = mock(() => {});
+    test('withdraws the current catalog when CPA cannot be verified', async () => {
         const guard = createCpaCatalogGuard({
             refreshTtlMs: 30_000,
             now: () => 1_000,
@@ -48,20 +48,25 @@ describe('createCpaCatalogGuard', () => {
             force: true,
             activeModel: { provider: 'cpa', id: 'ocg/go-deepseek-v4-pro' },
             loadCatalog: async () => ({
-                models: [liveModel],
+                models: [],
                 entries: [],
-                source: 'fallback',
+                source: 'unavailable',
+                failure: { kind: 'http', status: 401 },
             }),
-            registerModels,
-            hasModel: () => false,
         });
 
         expect(result).toEqual({
+            catalog: {
+                models: [],
+                entries: [],
+                source: 'unavailable',
+                failure: { kind: 'http', status: 401 },
+            },
             state: 'unverified',
             modelId: 'ocg/go-deepseek-v4-pro',
             refreshed: true,
+            failure: { kind: 'http', status: 401 },
         });
-        expect(registerModels).not.toHaveBeenCalled();
     });
 
     test('reuses the last decision while the refresh TTL is fresh', async () => {
@@ -78,8 +83,6 @@ describe('createCpaCatalogGuard', () => {
         const input = {
             activeModel: { provider: 'cpa', id: liveModel.id },
             loadCatalog,
-            registerModels: () => {},
-            hasModel: () => true,
         };
 
         await guard.refresh(input);
@@ -87,6 +90,7 @@ describe('createCpaCatalogGuard', () => {
         const cached = await guard.refresh(input);
 
         expect(cached).toEqual({
+            catalog: { models: [liveModel], entries: [], source: 'live' },
             state: 'valid',
             modelId: liveModel.id,
             refreshed: false,
@@ -95,9 +99,7 @@ describe('createCpaCatalogGuard', () => {
     });
 
     test('shares one in-flight catalog refresh across concurrent callers', async () => {
-        let resolveCatalog:
-            | ((value: CpaCatalogResult) => void)
-            | undefined;
+        let resolveCatalog: ((value: CpaCatalogResult) => void) | undefined;
         const catalogPromise = new Promise<CpaCatalogResult>((resolve) => {
             resolveCatalog = resolve;
         });
@@ -109,8 +111,6 @@ describe('createCpaCatalogGuard', () => {
         const input = {
             activeModel: { provider: 'cpa', id: liveModel.id },
             loadCatalog,
-            registerModels: () => {},
-            hasModel: () => true,
         };
 
         const first = guard.refresh(input);
@@ -118,11 +118,13 @@ describe('createCpaCatalogGuard', () => {
         resolveCatalog?.({ models: [liveModel], entries: [], source: 'live' });
 
         expect(await first).toEqual({
+            catalog: { models: [liveModel], entries: [], source: 'live' },
             state: 'valid',
             modelId: liveModel.id,
             refreshed: true,
         });
         expect(await second).toEqual({
+            catalog: { models: [liveModel], entries: [], source: 'live' },
             state: 'valid',
             modelId: liveModel.id,
             refreshed: true,
@@ -130,7 +132,7 @@ describe('createCpaCatalogGuard', () => {
         expect(loadCatalog).toHaveBeenCalledTimes(1);
     });
 
-    test('preserves a confirmed stale decision when a later refresh falls back', async () => {
+    test('marks verification unavailable when a later refresh fails after a stale decision', async () => {
         let catalog: CpaCatalogResult = {
             models: [liveModel],
             entries: [],
@@ -144,18 +146,28 @@ describe('createCpaCatalogGuard', () => {
             force: true,
             activeModel: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
             loadCatalog: async () => catalog,
-            registerModels: () => {},
-            hasModel: () => false,
         };
 
         await guard.refresh(input);
-        catalog = { models: [liveModel], entries: [], source: 'fallback' };
+        catalog = {
+            models: [],
+            entries: [],
+            source: 'unavailable',
+            failure: { kind: 'network' },
+        };
         const result = await guard.refresh(input);
 
         expect(result).toEqual({
-            state: 'stale',
+            catalog: {
+                models: [],
+                entries: [],
+                source: 'unavailable',
+                failure: { kind: 'network' },
+            },
+            state: 'unverified',
             modelId: 'ocg/deepseek-v4-pro',
             refreshed: true,
+            failure: { kind: 'network' },
         });
     });
 
@@ -172,24 +184,34 @@ describe('createCpaCatalogGuard', () => {
         const baseInput = {
             force: true,
             loadCatalog: async () => catalog,
-            registerModels: () => {},
-            hasModel: () => false,
         };
 
         await guard.refresh({
             ...baseInput,
             activeModel: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
         });
-        catalog = { models: [liveModel], entries: [], source: 'fallback' };
+        catalog = {
+            models: [],
+            entries: [],
+            source: 'unavailable',
+            failure: { kind: 'network' },
+        };
         const result = await guard.refresh({
             ...baseInput,
             activeModel: { provider: 'cpa', id: liveModel.id },
         });
 
         expect(result).toEqual({
+            catalog: {
+                models: [],
+                entries: [],
+                source: 'unavailable',
+                failure: { kind: 'network' },
+            },
             state: 'unverified',
             modelId: liveModel.id,
             refreshed: true,
+            failure: { kind: 'network' },
         });
     });
 });

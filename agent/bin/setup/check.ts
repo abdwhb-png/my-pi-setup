@@ -2,8 +2,9 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { verifyRuntimeCoherence } from '../pi-fork-release.ts';
 import { loadCurrentPiRuntime } from '../pi-runtime-store.ts';
-import { assertInventory, json, run } from './files.ts';
+import { assertInventory, json, run, runAsync } from './files.ts';
 import { assertSetupIdle, readInstallation } from './installation.ts';
+import { childSetupProgress, setupStep } from './progress.ts';
 
 export function checkPrerequisites(): string[] {
     if (process.platform !== 'linux' || process.arch !== 'x64')
@@ -21,9 +22,12 @@ export function checkPrerequisites(): string[] {
     return missing;
 }
 export async function checkInstallation(root: string): Promise<string[]> {
+    const progress = childSetupProgress();
     assertSetupIdle(root);
     const state = readInstallation(root);
-    assertInventory(root, state.managed);
+    await setupStep(progress, 'files', () =>
+        assertInventory(root, state.managed),
+    );
     const agentDir = join(root, 'agent');
     const coherence = verifyRuntimeCoherence(
         loadCurrentPiRuntime(join(root, 'runtime/pi-core')),
@@ -35,7 +39,7 @@ export async function checkInstallation(root: string): Promise<string[]> {
     const sources = Array.isArray(settings.packages)
         ? settings.packages.map((p) => (typeof p === 'string' ? p : p.source))
         : [];
-    await verifyPackages(root, sources);
+    await setupStep(progress, 'verify', () => verifyPackages(root, sources));
     const { readPrivateRuntimeEntry, resolvePrivateRuntime } =
         await import('../../extensions/sandbox/runtime/runtime-bundle.ts');
     const entry = await readPrivateRuntimeEntry(
@@ -52,17 +56,19 @@ export async function checkInstallation(root: string): Promise<string[]> {
     const notices = checkPrerequisites();
     const bindings = join(agentDir, 'config/setup-bindings.json');
     try {
-        run(
-            process.execPath,
-            [
-                join(agentDir, 'scripts/configure-sandbox.ts'),
-                'check',
-                '--agent-dir',
-                agentDir,
-                ...(existsSync(bindings) ? ['--bindings', bindings] : []),
-            ],
-            root,
-            { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+        await setupStep(progress, 'tools', () =>
+            runAsync(
+                process.execPath,
+                [
+                    join(agentDir, 'scripts/configure-sandbox.ts'),
+                    'check',
+                    '--agent-dir',
+                    agentDir,
+                    ...(existsSync(bindings) ? ['--bindings', bindings] : []),
+                ],
+                root,
+                { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+            ),
         );
     } catch (error) {
         notices.push(
