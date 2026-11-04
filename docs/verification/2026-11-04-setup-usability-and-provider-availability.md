@@ -1,6 +1,6 @@
 # Setup usability and provider availability verification
 
-Date: 2026-11-04. Status: implemented working-tree changes; not committed, pushed, promoted or published.
+Date: 2026-11-04. The setup and native-refresh changes below were committed as `869a5cc`. The subsequent CPA cold-start correction is a local working-tree change; no promotion or publication is claimed by this report.
 
 ## Behavior and ownership
 
@@ -38,3 +38,13 @@ The existing runtime's scoped model selector can retain a previously scoped mode
 The public setup qualification now includes the ai-providers regressions and enables `PI_CPA_AVAILABILITY_CONTRACT=1` only in CI. The gated test loads the real extension through pi-test-harness, uses a loopback HTTP catalog fixture, refuses non-fixture fetches and generation, and verifies startup unavailability, native catalog refresh, withdrawal, blocked input, recovery, an empty live catalog and explicit `/cpa-refresh` recovery. It asserts that scoped model preferences remain unchanged. It was deliberately not executed locally.
 
 The current promoted runtime and frozen Pi fixture remain unchanged. The fork working-tree edits and added workflow were withdrawn; none was committed or pushed. No release, main promotion, external provider generation or VPS operation is covered by the local checks above. The previously deferred legacy GitHub lint workflow is unchanged.
+
+## CPA cold-start correction
+
+The installed Pi 1.1.0 loader awaits the extension factory before `createAgentSessionServices` applies pending provider registrations and the CLI resolves its explicit model. `session_start` runs later. The previous synchronous factory returned with only CPA's empty registration, so a fresh subagent could not initially resolve its requested CPA model even when the endpoint was healthy. A regression through the real extension entrypoint first failed because the registration still contained `[]` at factory completion.
+
+The factory now awaits cached models.dev metadata loading and the existing CPA startup projection before returning. The projection accepts an absent lifecycle context during extension loading, verifies the live catalog and queues the resulting provider registration through the public API. Runtime diagnostics wait for a real lifecycle context and are reported once for each verified catalog. `session_start` reuses the verification within the existing TTL. Failed verification leaves CPA unavailable; no cached or static catalog grants availability. The Pi core fork and promoted runtime remain unchanged.
+
+Executed locally: `bun test --isolate extensions/ai-providers bin/pi-cpa-startup.integration.test.ts ../.github/scripts/qualify-portable-setup.test.ts`, from `agent/`: 201 passed, 2 CI-only contracts skipped, 643 assertions across 14 files. Coverage includes factory completion waiting for catalog verification, registration before `session_start`, TTL reuse and HTTP 401 at initialization. `bun run typecheck`, `bun run lint:boundaries`, focused Oxlint and the storage lint passed; existing lint warnings remain. Formatting used the repository formatter with a temporary configuration admitting task test files; the temporary configuration was removed.
+
+The qualification runner now explicitly includes `bin/pi-cpa-startup.integration.test.ts` under the existing `PI_CPA_AVAILABILITY_CONTRACT=1` CI gate. That contract resolves the installed Pi package and reuses `resolvePiLaunchCommand`, then starts two fresh CLI processes with isolated homes, agent directories and configuration, no existing CPA cache, and the subagent environment marker. It checks the initially selected model through RPC with and without `:xhigh`, using explicit fixture thinking support. Only loopback `GET /v1/models` requests are permitted; no prompt or generation is sent. This contract and the earlier runtime lifecycle contract were deliberately not run locally. Actual CLI/runtime qualification remains pending GitHub Actions.

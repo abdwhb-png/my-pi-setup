@@ -68,7 +68,7 @@ export interface CpaProviderHandle {
         ctx: LifecycleCtx,
         options?: { force?: boolean },
     ): Promise<void>;
-    refreshStartupProjection(ctx: LifecycleCtx): Promise<void>;
+    refreshStartupProjection(ctx?: LifecycleCtx): Promise<void>;
     getAvailability(): Readonly<CpaProviderAvailability>;
 }
 
@@ -314,6 +314,7 @@ export function registerCpaProvider(
     let lastEnrichedModels: ChatModelConfig[] = [];
     let acceptedCatalog: CpaCatalogResult | undefined;
     let lastSavedCatalog: CpaCatalogResult | undefined;
+    let lastReportedCatalog: CpaCatalogResult | undefined;
     let availability: CpaProviderAvailability = {
         state: 'checking',
         diagnostic: 'CPA catalog has not been verified.',
@@ -399,16 +400,15 @@ export function registerCpaProvider(
     }
 
     async function refreshCatalog(
-        ctx: LifecycleCtx,
+        ctx: LifecycleCtx | undefined,
         force = false,
-        sink: (counts: CatalogDiffCounts) => void = themedDriftSink(
-            ctx,
-            saveHeadlessCatalogDrift,
-        ),
+        sink: ((counts: CatalogDiffCounts) => void) | undefined = ctx
+            ? themedDriftSink(ctx, saveHeadlessCatalogDrift)
+            : undefined,
     ) {
         let result = await catalogGuard.refresh({
             force,
-            activeModel: ctx.model
+            activeModel: ctx?.model
                 ? { provider: ctx.model.provider, id: ctx.model.id }
                 : undefined,
             loadCatalog,
@@ -422,23 +422,30 @@ export function registerCpaProvider(
                 PROVIDER_NAME,
                 buildProviderConfig(models, baseUrl, refreshNativeCatalog),
             );
-            if (models.length > 0)
-                reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
-                    silent: silentCatalogDiff,
-                    reported: reportedCatalogDrift,
-                    sink,
-                });
+        }
+        const models = availableModels();
+        if (
+            ctx &&
+            models.length > 0 &&
+            lastReportedCatalog !== result.catalog
+        ) {
+            lastReportedCatalog = result.catalog;
+            reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
+                silent: silentCatalogDiff,
+                reported: reportedCatalogDrift,
+                sink,
+            });
         }
         await persistCatalog(result.catalog);
-        const activeModel = ctx.model;
+        const activeModel = ctx?.model;
         if (
             result.state === 'valid' &&
             activeModel?.provider === PROVIDER_NAME &&
-            !ctx.modelRegistry.find(PROVIDER_NAME, activeModel.id)
+            !ctx?.modelRegistry.find(PROVIDER_NAME, activeModel.id)
         )
             result = { ...result, state: 'stale', modelId: activeModel.id };
         if (result.state !== 'stale') lastNotifiedStaleModelId = undefined;
-        if (ctx.hasUI)
+        if (ctx?.hasUI)
             ctx.ui.setStatus?.(
                 'cpa',
                 availability.state === 'available'
@@ -482,6 +489,7 @@ export function registerCpaProvider(
         getAvailability: () => availability,
         async refreshStartupProjection(ctx) {
             const result = await refreshCatalog(ctx);
+            if (!ctx) return;
             if (result.state === 'stale')
                 notifyStaleModelOnce(ctx, result.modelId);
             else if (result.state === 'unverified') notifyUnverifiedOnce(ctx);

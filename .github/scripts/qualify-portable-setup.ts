@@ -214,6 +214,7 @@ if (privateProfile) {
         [
             'bin/setup',
             'extensions/ai-providers',
+            'bin/pi-cpa-startup.integration.test.ts',
             'bin/pi-fork-cli.test.ts',
             'bin/pi-fork-release.test.ts',
             'bin/pi-runtime-store.test.ts',

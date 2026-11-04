@@ -16,22 +16,24 @@
  * Provider configuration: ~/.pi/agent/config/ai-providers.json and trusted <cwd>/.pi/config/ai-providers.json
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getModelsDevCatalog } from "../_shared/models-dev/catalog";
-import { registerProvidersCommand } from "./commands/providers.ts";
-import { isProviderEnabled } from "./config.ts";
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { getModelsDevCatalog } from '../_shared/models-dev/catalog';
+import { registerProvidersCommand } from './commands/providers.ts';
+import { isProviderEnabled } from './config.ts';
 import {
     registerModelsDevIntegration,
     type ProviderProjectionHandle,
-} from "./models-dev.ts";
+} from './models-dev.ts';
 import {
     registerCpaProvider,
     type CpaProviderHandle,
-} from "./providers/cpa.ts";
+} from './providers/cpa.ts';
 
-const CPA_PROVIDER = "cpa";
+const CPA_PROVIDER = 'cpa';
 
-export default function aiProvidersExtension(pi: ExtensionAPI): void {
+export default async function aiProvidersExtension(
+    pi: ExtensionAPI,
+): Promise<void> {
     const cwd = process.cwd();
 
     // Shared models.dev lifecycle: owns disk load, stale checks, warning
@@ -39,12 +41,17 @@ export default function aiProvidersExtension(pi: ExtensionAPI): void {
     // but the closure reads the refresher list after providers fill it.
     const refreshers: ProviderProjectionHandle[] = [];
     let cpa: CpaProviderHandle | undefined;
-    registerModelsDevIntegration(pi, getModelsDevCatalog(), () => refreshers);
+    const catalog = getModelsDevCatalog();
+    registerModelsDevIntegration(pi, catalog, () => refreshers);
 
     // ── CLIProxyAPI (CPA) ──
     if (isProviderEnabled(CPA_PROVIDER, cwd)) {
         cpa = registerCpaProvider(pi);
         refreshers.push(cpa);
+        // Pi awaits the factory before resolving an explicit CLI model.
+        // session_start is too late to publish a dynamically discovered model.
+        await catalog.load();
+        await cpa.refreshStartupProjection();
     }
 
     // ── Future providers go here ──
