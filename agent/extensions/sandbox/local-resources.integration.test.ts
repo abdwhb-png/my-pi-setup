@@ -7,6 +7,8 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import type { ExecutionProvenance } from "../_shared/execution-provenance/index.ts";
+import { resolveForcedSandboxOperations } from "../_shared/shell-runtime/operations.ts";
 
 import { localMachineId } from "./capabilities/authority.ts";
 import { currentShellPolicy } from "./capabilities/runtime.ts";
@@ -108,12 +110,13 @@ async function fixture() {
     const errors = spyOn(ExtensionRunner.prototype, "emitError");
     let session: PiSession | undefined;
     const pending = new Set<Promise<BashResult>>();
+    const executions: Array<{ command: string; execution?: ExecutionProvenance }> = [];
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await mkdir(agentDir, { mode: 0o700 });
     new ProjectTrustStore(agentDir).set(cwd, true);
     const projectConfig = join(cwd, ".pi/config/sandbox.json");
     return {
-        root, cwd, projectConfig,
+        root, cwd, projectConfig, executions,
         async start(resources: object) {
             const nodeRead = await hostToolReadClosure("/usr/bin/node");
             await writeFile(join(agentDir, "config", "sandbox.json"), JSON.stringify({
@@ -155,21 +158,19 @@ async function fixture() {
         },
         async run(command: string, onChunk?: (chunk: string) => void) {
             if (!session) throw new Error("Fixture session was not started");
-            const event = await session.session.extensionRunner.emitUserBash({
-                type: "user_bash", command, cwd, excludeFromContext: false,
+            const observed: (typeof executions)[number] = { command };
+            executions.push(observed);
+            // Resource revocation needs overlapping admissions. Use the same forced
+            // operations as /sandbox run without its single active command UI guard.
+            const operations = resolveForcedSandboxOperations({
+                onExecution: (execution) => { observed.execution = execution; },
             });
-            expect(event?.operations).toBeDefined();
-            const execution = session.session.executeBash(command, onChunk, { operations: event?.operations });
+            const execution = session.session.executeBash(command, onChunk, { operations });
             pending.add(execution);
             try { return await execution; }
             finally { pending.delete(execution); }
         },
         abort() { session?.session.abortBash(); },
-        receipts() {
-            return session?.session.sessionManager.getBranch().filter(
-                (entry) => entry.type === "custom" && entry.customType === "pi.execution.user-bash.v1",
-            ) ?? [];
-        },
         async dispose() {
             try {
                 session?.session.abortBash();
@@ -237,9 +238,9 @@ test.skipIf(!enabled)("real Pi inherits an exact Unix socket and closes the next
         const removed = await f.run(command);
         expect(removed.exitCode, removed.output).toBe(23);
         expect(exchanges).toEqual(["ping"]);
-        expect(f.receipts()[0]).toMatchObject({ data: { command, execution: {
+        expect(f.executions[0]).toMatchObject({ command, execution: {
             status: "sandboxed", backend: "zerobox", mode: "sandbox", shellProfile: "custom", exitCode: 0,
-        } } });
+        } });
     } finally {
         try { await f.dispose(); }
         finally { await closeServer(server, sockets); await closeServer(neighbour, sockets); }
@@ -330,10 +331,10 @@ test.skipIf(!enabled)("real Pi publishes a private TCP listener lazily without g
         await expect(exchange(listenPort, "ping")).rejects.toThrow();
         f.abort();
         expect((await unexposed).cancelled).toBe(true);
-        expect(f.receipts()).toEqual(expect.arrayContaining([
-            expect.objectContaining({ data: expect.objectContaining({ command, execution: expect.objectContaining({
+        expect(f.executions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ command, execution: expect.objectContaining({
                 status: "sandboxed", backend: "zerobox", mode: "sandbox", shellProfile: "custom", exitCode: 0,
-            }) }) }),
+            }) }),
         ]));
     } finally {
         try { await f.dispose(); }

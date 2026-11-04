@@ -114,21 +114,21 @@ test.skipIf(process.env.PI_SANDBOX_PATH_DIAGNOSTIC_CHILD !== "1")(
                 });
             }
 
-            phase("user-bash");
-            const command = `s cd ${sibling}`;
-            const event = await session.session.extensionRunner.emitUserBash({
-                type: "user_bash",
-                command,
-                cwd,
-                excludeFromContext: false,
-            });
-            const forced = await session.session.executeBash(
-                command,
-                undefined,
-                { operations: event?.operations },
+            phase("manual-sandbox-command");
+            const command = `cd ${sibling}`;
+            await session.session.prompt(`/sandbox run ${command}`);
+            const forced = session.session.sessionManager.getBranch().findLast(
+                (entry) => entry.type === "custom_message",
             );
-            expect(forced.exitCode).toBe(1);
-            expect(forced.output).toContain(
+            expect(forced).toMatchObject({
+                details: {
+                    command,
+                    execution: { status: "sandboxed", backend: "zerobox", exitCode: 1 },
+                },
+            });
+            if (forced?.type !== "custom_message")
+                throw new Error("Missing manual Sandbox result");
+            expect(forced.content).toContain(
                 `Sandbox: ${sibling} is outside the admitted read scope.`,
             );
 
