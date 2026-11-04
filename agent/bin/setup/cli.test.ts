@@ -6,6 +6,7 @@ import {
     mkdirSync,
     mkdtempSync,
     rmSync,
+    symlinkSync,
     writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -141,7 +142,10 @@ test('install reports verification while a subprocess is blocked and keeps progr
     const tools = join(home, 'tools');
     const marker = join(home, 'started');
     const gate = join(home, 'continue');
+    const fixtureRuntime = join(home, 'runtime with spaces');
+    const ghScript = join(tools, 'gh.ts');
     mkdirSync(tools);
+    symlinkSync(process.execPath, fixtureRuntime);
     for (const command of ['git', 'python3', 'bun', 'node', 'sfw'])
         writeFileSync(
             join(tools, command),
@@ -150,8 +154,12 @@ test('install reports verification while a subprocess is blocked and keeps progr
         );
     writeFileSync(
         join(tools, 'gh'),
-        `#!${process.execPath}
-import { writeFileSync, existsSync } from 'node:fs';
+        '#!/bin/sh\nexec "$PI_SETUP_FIXTURE_BUN" "$PI_SETUP_FIXTURE_GH" "$@"\n',
+        { mode: 0o700 },
+    );
+    writeFileSync(
+        ghScript,
+        `import { writeFileSync, existsSync } from 'node:fs';
 const args = process.argv.slice(2);
 if (args[0] === '--version') console.log('Fixture gh');
 else if (args[0] === 'repo') console.log('true');
@@ -163,7 +171,7 @@ else {
   process.exit(7);
 }
 `,
-        { mode: 0o700 },
+        { mode: 0o600 },
     );
     const child = spawn(
         process.execPath,
@@ -181,6 +189,8 @@ else {
                 PATH: tools,
                 FIXTURE_STARTED: marker,
                 FIXTURE_GATE: gate,
+                PI_SETUP_FIXTURE_BUN: fixtureRuntime,
+                PI_SETUP_FIXTURE_GH: ghScript,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
         },
@@ -200,7 +210,7 @@ else {
         const deadline = Date.now() + 3000;
         while (!existsSync(marker) && Date.now() < deadline)
             await Bun.sleep(10);
-        expect(existsSync(marker)).toBe(true);
+        expect(existsSync(marker), stderr).toBe(true);
         expect(child.exitCode).toBeNull();
         expect(stderr).toMatch(/Verifying .*release/i);
         expect(stdout).toBe('');
