@@ -25,6 +25,24 @@ export {
 const KEY = Symbol.for("pi.execution-provenance.v1");
 const CONTEXT_RECEIPT = Symbol.for("pi.execution-provenance.context.v1");
 
+export function formatShellExecutionLabel(
+    execution: ExecutionProvenance,
+    requestedMode: "host" | "sandbox",
+): string {
+    const observed =
+        execution.status === "sandboxed"
+            ? "sandbox"
+            : execution.status === "unsandboxed"
+              ? "host"
+              : undefined;
+    const label = (observed ?? requestedMode) === "host" ? "Host" : "Sandbox";
+    const outcome =
+        execution.outcome === "pending" ? "running" : execution.outcome;
+    const exit =
+        execution.exitCode === undefined ? "" : ` (exit ${execution.exitCode})`;
+    return `${label}${observed ? "" : " requested"} — ${outcome}${exit}`;
+}
+
 function wireDetails(value: object): JsonValue {
     // JSON serialization removes legacy non-JSON fields before Pi stores the result.
     // oxlint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- JSON.parse yields a JsonValue after JSON.stringify succeeds.

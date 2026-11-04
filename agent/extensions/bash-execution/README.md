@@ -21,16 +21,31 @@ The extension resolves operations through
 supervisor for approved host operations. Resolve local authority first, then
 select the backend. Engine failure never grants host execution.
 
-| Selected shell route | Execution |
+| Selected agent shell route | Execution |
 | --- | --- |
 | `sandbox` mode (`default` or `custom` profile) | Zerobox with the effective resource configuration |
 | Explicitly selected, globally authorized `host` mode | Local shell, existing permission pipeline |
 | Missing authorization or unavailable selected backend | Blocked, with no automatic fallback |
 
-Select the mode with `/sandbox mode sandbox` or `/sandbox mode host`. Use
+Select the agent mode with `/sandbox mode sandbox` or `/sandbox mode host`. Use
 ordinary commands. Legacy `hostCapability` parameters are rejected before launch.
 
-Use `!s <command>` to request sandbox execution explicitly. Think-in-Code keeps
+Manual `! <command>` and `!! <command>` use Pi's native host shell, independently
+of the agent mode and Sandbox availability. Pi's configured shell and command
+prefix still apply. The double exclamation form excludes the command and output
+from model context. Execution metadata identifies the observed host route without
+changing process output.
+
+Use `/sandbox run <command>` for a manual Sandbox command. It always uses the
+effective Sandbox authority, includes the result in session context without
+starting an agent turn, and never falls back to the host. The TUI shows the route,
+command and live output; Escape cancels the command. Truncated output retains its
+full output file. Only one `/sandbox run` command may run at a time.
+
+The former `!s` and `!!s` shortcuts have been removed. Their `s` is now an ordinary
+part of a native host command. Use `/sandbox run` when requesting isolation.
+
+Think-in-Code keeps
 its strict engine and private HOME and `/tmp` even when the shell profile is
 `host`. Native file tools, extensions, MCP tools, and browser executors remain outside this shell boundary.
 See [profiles and capabilities](../sandbox/docs/shell-capabilities.md).

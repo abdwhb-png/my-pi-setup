@@ -133,6 +133,7 @@ import {
 } from "./docker-presentation.ts";
 import { sandboxDoctor, inspectSandboxDoctor } from "./doctor.ts";
 import { registerSandboxModelContext } from "./model-context.ts";
+import { createSandboxCommandRunner } from "./run-command.ts";
 import {
     DOCKER_OPERATIONS,
     SandboxExecutionError,
@@ -499,9 +500,9 @@ export function renderSandboxStatusDetails(
         `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
         `  Write denial exceptions: ${JSON.stringify(config.filesystem.denyWriteExceptions ?? [])}`,
         "",
-        "Use /sandbox mode sandbox|host. Host mode requires an explicit current-session selection within the global ceiling.",
-        "Shell: ! <command> selected profile; !! <command> selected profile outside model context; !s <command> Sandbox; !!s <command> Sandbox outside model context.",
-        "!s without a command fails closed and does not fall back to the host.",
+        "Agent shell: /sandbox mode sandbox|host. Host mode requires an explicit current-session selection within the global ceiling.",
+        "Manual commands: ! <command> native host; !! <command> native host outside model context; /sandbox run <command> Sandbox.",
+        "A refused /sandbox run request never falls back to the host.",
     ];
     return lines.join("\n");
 }
@@ -790,6 +791,7 @@ export function createSandboxExtension(
     options: SandboxExtensionOptions = {},
 ) {
     const runtimeOwner = Symbol("sandbox-extension-owner");
+    const manualCommands = createSandboxCommandRunner(pi);
     const createConfiguredService = (config: SandboxConfig) =>
         createSandboxService({
             backend: createZeroboxBackend(options.zeroboxBackend),
@@ -2112,6 +2114,7 @@ export function createSandboxExtension(
     });
 
     pi.on("session_shutdown", async () => {
+        await manualCommands.cancel();
         modeSessionEpoch += 1;
         pendingModeChange = undefined;
         authorityWatch?.close();
@@ -2137,9 +2140,10 @@ export function createSandboxExtension(
 
     const sandboxCommand: Omit<RegisteredCommand, "name" | "sourceInfo"> = {
         description:
-            "Inspect shell policy, select the session mode, or configure Docker access",
+            "Inspect agent shell policy, run a command in Sandbox, or configure Docker access",
         getArgumentCompletions: (prefix: string) => {
             const values = [
+                "run",
                 "status",
                 "mode",
                 "doctor",
@@ -2166,6 +2170,14 @@ export function createSandboxExtension(
                 : null;
         },
         handler: async (args, ctx) => {
+            const run = /^run(?:\s|$)/i.exec(args.trimStart());
+            if (run) {
+                await manualCommands.run(
+                    args.trimStart().slice(run[0].length).trimStart(),
+                    ctx,
+                );
+                return;
+            }
             let arg = args.trim().toLowerCase();
             if (
                 ctx.mode === "tui" &&
@@ -2866,7 +2878,7 @@ export function createSandboxExtension(
                     return;
                 }
                 ctx.ui.notify(
-                    `Usage: /sandbox [status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-${resolved.breakGlassMaxMinutes}m]]]`,
+                    `Usage: /sandbox [run <command> | status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-${resolved.breakGlassMaxMinutes}m]]]`,
                     "error",
                 );
             } catch (error) {

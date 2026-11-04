@@ -235,7 +235,7 @@ Set global `host: { "allowed": true }` to permit host execution, then select it 
 
 The displayed profile is derived from the effective configuration: `default` for the baseline, `custom` when it differs, and `host` for host execution. Restrictions can also produce `custom`. Restoring the baseline restores `default`. Do not configure a profile or use decision labels such as D1 as selectors.
 
-Changing the session mode reuses an enabled runtime when its configuration is unchanged. Mode requests are applied in order; new ordinary shell and `!s` launches wait for pending mode changes instead of starting competing reconfigurations. Existing admitted commands retain their original execution context. If preparation fails or the session changes, the requested mode is not applied and waiting launches fail explicitly. The widget shows the applied mode after completion. `!s` continues to request sandbox execution without changing that mode.
+Changing the agent shell mode reuses an enabled runtime when its configuration is unchanged. Mode requests are applied in order; new agent shell and `/sandbox run` launches wait for pending mode changes instead of starting competing reconfigurations. Existing admitted commands retain their original execution context. If preparation fails or the session changes, the requested mode is not applied and waiting launches fail explicitly. The widget shows the applied mode after completion. `/sandbox run` always requests sandbox execution without changing that mode. Manual `!` and `!!` commands retain Pi's native host execution independently of these transitions.
 
 ## Applying and migrating changes
 

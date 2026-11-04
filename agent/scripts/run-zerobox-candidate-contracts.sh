@@ -88,6 +88,7 @@ export PI_SANDBOX_REAL_ANALYSIS_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT=1
 export PI_SANDBOX_PATH_DIAGNOSTIC_CONTRACT=1
 export PI_SANDBOX_CACHE_EXCEPTIONS_CONTRACT=1
+export PI_SANDBOX_RUN_INTEGRATION=1
 
 failed_contracts=()
 for contract in \
@@ -97,7 +98,8 @@ for contract in \
     extensions/sandbox/dependency-contract.test.ts \
     extensions/sandbox/local-resources.integration.test.ts \
     extensions/sandbox/native-authority.integration.test.ts \
-    extensions/sandbox/real-shell-modes.integration.test.ts \
+    extensions/__tests__/integration/sandbox-shell-modes.integration.test.ts \
+    extensions/sandbox/run-command.integration.test.ts \
     extensions/sandbox/docker-access.integration.test.ts \
     extensions/sandbox/docker-exec.integration.test.ts \
     extensions/sandbox/docker-policy-config.integration.test.ts \

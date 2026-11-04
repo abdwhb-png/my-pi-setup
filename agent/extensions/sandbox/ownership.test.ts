@@ -13,6 +13,7 @@ test("sandbox registers no Bash tools or user_bash hook", () => {
             tools.push(definition.name);
         },
         registerCommand: () => undefined,
+        registerMessageRenderer: () => undefined,
         on: (event: string) => hooks.push(event),
         getFlag: () => false,
     } as unknown as ExtensionAPI;

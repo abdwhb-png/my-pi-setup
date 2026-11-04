@@ -148,7 +148,7 @@ export function resolveWritableRoots(
     return roots;
 }
 
-/** Resolve an explicit !s request without changing the selected session mode. */
+/** Resolve an explicit Sandbox command without changing the selected agent mode. */
 export async function resolveForcedSandboxPolicyForExecution(
     cwd: string,
     deadline?: ExecutionDeadline,

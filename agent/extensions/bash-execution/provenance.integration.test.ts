@@ -92,200 +92,54 @@ test("user bash persists process provenance without modifying its output", async
     }
 }, 30_000);
 
-test("real Pi keeps !s sandboxed with a descriptive sandbox profile during host mode", async () => {
-    const cwd = await mkdtemp(resolve(import.meta.dir, ".forced-sandbox-host-"));
-    const previousCwd = process.cwd();
-    process.chdir(cwd);
-    const owner = Symbol("forced-sandbox-host");
-    let sandboxDispatches = 0;
+test("real Pi keeps native manual execution separate from agent Sandbox tools", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "manual-shell-contract-"));
+    const owner = Symbol("manual-shell-contract");
     claimSandboxRuntime(owner);
+    let sandboxDispatches = 0;
     publishSandboxRuntime(owner, {
         state: "enabled",
-        createBashOperations: (options) => ({
-            exec: async () => {
-                sandboxDispatches += 1;
-                options.onExecution?.({
-                    status: "sandboxed",
-                    profile: "bash-general",
-                    backend: "zerobox",
-                    tmpNamespace: "lease-private",
-                    phase: "process",
-                    outcome: "succeeded",
-                    exitCode: 0,
-                });
-                return { exitCode: 0 };
-            },
-        }),
+        createBashOperations: options => ({ exec: async (command, _cwd, executionOptions) => {
+            sandboxDispatches++;
+            options.onExecution?.({ status: "sandboxed", mode: "sandbox", profile: "bash-general", backend: "zerobox", tmpNamespace: "host", phase: "process", outcome: "succeeded", exitCode: 0 });
+            executionOptions.onData(Buffer.from(`sandbox:${command}`));
+            return { exitCode: 0 };
+        } }),
         createThinkBashOperations: () => ({ exec: async () => ({ exitCode: 0 }) }),
         analysis: { state: "retrying" },
     });
-    const host = {
-        state: "ready" as const,
-        projectRoot: cwd,
-        mode: "host" as const,
-        requestedMode: "host" as const,
-        profile: "host" as const,
-        requestedProfile: "host" as const,
-        grants: emptyGrants(), requestedGrants: emptyGrants(), authorityPath: "/unused",
-    };
-    const sandbox = {
-        ...host,
-        mode: "sandbox" as const,
-        requestedMode: "sandbox" as const,
-        profile: "default" as const,
-        requestedProfile: "default" as const,
-    };
-    publishShellRuntime(owner, () => host, undefined, () => sandbox);
+    publishShellRuntime(owner, () => ({ state: "ready", projectRoot: cwd, mode: "sandbox", requestedMode: "sandbox", profile: "default", requestedProfile: "default", grants: emptyGrants(), requestedGrants: emptyGrants(), authorityPath: "/unused" }));
     const session = await createTestSession({ cwd, extensions: [resolve(import.meta.dir, "index.ts")] });
+    session.session.settingsManager.setShellPath("/bin/bash");
+    session.session.settingsManager.setShellCommandPrefix("s() { printf '%s' \"$*\"; }; export MANUAL_PREFIX=prefix");
     try {
-        const forced = "s printf forced";
-        const forcedEvent = await session.session.extensionRunner.emitUserBash({ type: "user_bash", command: forced, cwd, excludeFromContext: false });
-        await session.session.executeBash(forced, undefined, { operations: forcedEvent?.operations });
-        expect(sandboxDispatches).toBe(1);
-        const forcedReceipt = session.session.sessionManager
-            .getBranch()
-            .filter(
-                (entry) =>
-                    entry.type === "custom" &&
-                    entry.customType === "pi.execution.user-bash.v1",
-            )
-            .at(-1);
-        expect(forcedReceipt).toMatchObject({
-            data: {
-                execution: {
-                    mode: "sandbox",
-                    shellProfile: "default",
-                    status: "sandboxed",
-                    backend: "zerobox",
-                },
-            },
-        });
-        const ordinary = "printf host";
-        const ordinaryEvent = await session.session.extensionRunner.emitUserBash({ type: "user_bash", command: ordinary, cwd, excludeFromContext: false });
-        const ordinaryResult = await session.session.executeBash(ordinary, undefined, { operations: ordinaryEvent?.operations });
-        expect(ordinaryResult.output).toBe("host");
-        expect(sandboxDispatches).toBe(1);
-    } finally {
-        session.dispose(); releaseSandboxRuntime(owner); releaseShellRuntime(owner);
-        process.chdir(previousCwd); await rm(cwd, { recursive: true, force: true });
-    }
-}, 30_000);
-
-test("real Pi refreshes authority before admitting an explicit Sandbox user command", async () => {
-    const cwd = await mkdtemp(resolve(import.meta.dir, ".user-sandbox-refresh-"));
-    const owner = Symbol("user-bash-sandbox-refresh");
-    claimSandboxRuntime(owner);
-    let sandboxDispatches = 0;
-    publishSandboxRuntime(owner, {
-        state: "enabled",
-        createBashOperations: () => {
-            sandboxDispatches += 1;
-            return { exec: async () => ({ exitCode: 0 }) };
-        },
-        createThinkBashOperations: () => ({
-            exec: async () => ({ exitCode: 0 }),
-        }),
-        analysis: { state: "retrying" },
-    });
-    publishShellRuntime(
-        owner,
-        () => ({
-            state: "ready" as const,
-            projectRoot: cwd,
-            mode: "sandbox" as const,
-            requestedMode: "sandbox" as const,
-            profile: "default" as const,
-            requestedProfile: "default" as const,
-            grants: emptyGrants(),
-            requestedGrants: emptyGrants(),
-            authorityPath: resolve(cwd, "sandbox.json"),
-        }),
-        async () => {
-            throw new Error("invalid active sandbox config");
-        },
-    );
-    const session = await createTestSession({
-        cwd,
-        extensions: [resolve(import.meta.dir, "index.ts")],
-    });
-    try {
-        const command = "s printf should-not-run";
-        const event = await session.session.extensionRunner.emitUserBash({
-            type: "user_bash",
-            command,
-            cwd,
-            excludeFromContext: false,
-        });
-        await expect(
-            session.session.executeBash(command, undefined, {
-                operations: event?.operations,
-            }),
-        ).rejects.toThrow("invalid active sandbox config");
+        for (const [command, excludeFromContext, output] of [
+            ["printf visible-manual", false, "visible-manual"],
+            ["printf excluded-manual", true, "excluded-manual"],
+            ["s literal-prefix", false, "literal-prefix"],
+            ["printf '%s' \"$MANUAL_PREFIX\"", false, "prefix"],
+        ] as const) {
+            const event = await session.session.extensionRunner.emitUserBash({ type: "user_bash", command, cwd, excludeFromContext });
+            const result = await session.session.executeBash(command, undefined, { operations: event?.operations, excludeFromContext });
+            expect(result.output).toBe(output);
+        }
         expect(sandboxDispatches).toBe(0);
+        const running = session.run(when("Run agent commands", [calls("bash", { command: "printf agent" }), calls("safe_bash", { command: "printf agent-safe" }), says("done")]));
+        const inputs: string[] = [];
+        const original = session.session.agent.streamFunction;
+        session.session.agent.streamFunction = (model, context, options) => { inputs.push(JSON.stringify(context.messages)); return original(model, context, options); };
+        await running;
+        expect(sandboxDispatches).toBe(2);
+        expect(inputs.join("")).toContain("visible-manual");
+        expect(inputs.join("")).not.toContain("excluded-manual");
+        for (const result of session.events.toolResults) expect(result.details).toMatchObject({ execution: { status: "sandboxed", backend: "zerobox" } });
+        const receipts = session.session.sessionManager.getBranch().filter(entry => entry.type === "custom" && entry.customType === "pi.execution.user-bash.v1");
+        expect(receipts).toHaveLength(4);
+        for (const receipt of receipts) expect(receipt).toMatchObject({ data: { execution: { mode: "host", status: "unsandboxed", exitCode: 0 } } });
     } finally {
-        session.dispose();
+        await session.close();
         releaseSandboxRuntime(owner);
         releaseShellRuntime(owner);
-        await rm(cwd, { recursive: true, force: true });
-    }
-}, 30_000);
-
-test("real Pi blocks !s when preparation revokes its sandbox policy", async () => {
-    const cwd = await mkdtemp(resolve(import.meta.dir, ".user-sandbox-revocation-"));
-    const previousCwd = process.cwd();
-    process.chdir(cwd);
-    const owner = Symbol("user-bash-sandbox-revocation");
-    claimSandboxRuntime(owner);
-    let sandboxDispatches = 0;
-    let revoked = false;
-    publishSandboxRuntime(owner, {
-        state: "enabled",
-        createBashOperations: () => {
-            sandboxDispatches += 1;
-            return { exec: async () => ({ exitCode: 0 }) };
-        },
-        createThinkBashOperations: () => ({ exec: async () => ({ exitCode: 0 }) }),
-        analysis: { state: "retrying" },
-    });
-    publishShellRuntime(
-        owner,
-        () => ({
-            state: revoked ? "authorization-required" as const : "ready" as const,
-            diagnostic: revoked ? "Sandbox policy was revoked" : undefined,
-            projectRoot: cwd,
-            mode: "sandbox" as const,
-            requestedMode: "sandbox" as const,
-            profile: "default" as const,
-            requestedProfile: "default" as const,
-            grants: emptyGrants(),
-            requestedGrants: emptyGrants(),
-            authorityPath: resolve(cwd, "sandbox.json"),
-        }),
-        async () => { revoked = true; },
-    );
-    const session = await createTestSession({
-        cwd,
-        extensions: [resolve(import.meta.dir, "index.ts")],
-    });
-    try {
-        const command = "s printf revoked";
-        const event = await session.session.extensionRunner.emitUserBash({
-            type: "user_bash",
-            command,
-            cwd,
-            excludeFromContext: false,
-        });
-        await expect(
-            session.session.executeBash(command, undefined, {
-                operations: event?.operations,
-            }),
-        ).rejects.toThrow("Sandbox policy was revoked");
-        expect(sandboxDispatches).toBe(0);
-    } finally {
-        session.dispose();
-        releaseSandboxRuntime(owner);
-        releaseShellRuntime(owner);
-        process.chdir(previousCwd);
         await rm(cwd, { recursive: true, force: true });
     }
 }, 30_000);

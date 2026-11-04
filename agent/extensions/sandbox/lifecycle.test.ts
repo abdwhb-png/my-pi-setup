@@ -206,6 +206,7 @@ function registerSandbox(
     const pi = {
         registerFlag: () => undefined,
         registerTool: () => undefined,
+        registerMessageRenderer: () => undefined,
         registerCommand: (
             name: string,
             definition: CommandDefinition,
@@ -427,9 +428,75 @@ describe("sandbox lifecycle", () => {
         prepareBash.mockReset(); prepareBash.mockImplementation(prepareBashDefault);
         analysisShutdown.mockClear(); analysisPreflight.mockReset(); analysisPreflight.mockImplementation(async () => undefined);
         createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null; capturedWidgetDef.updates = [];
+        createSandboxService.mockClear();
         activeProfileContexts = { ...profileContexts };
     });
     afterEach(async () => { await rm(cwd, { recursive: true, force: true }); });
+
+    it("runs an explicit Sandbox command through the real Pi command boundary", async () => {
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            await session.session.prompt("/sandbox run printf '%s' 'Mixed Case' | tr ' ' ':'");
+            const messages = session.session.sessionManager.getBranch().filter(entry =>
+                entry.type === "custom_message" && entry.customType === "pi.sandbox-run.v1",
+            );
+            expect(messages).toHaveLength(1);
+            expect(messages[0]).toMatchObject({
+                details: {
+                    command: "printf '%s' 'Mixed Case' | tr ' ' ':'",
+                    output: "Mixed:Case",
+                    execution: { mode: "sandbox", exitCode: 0, outcome: "succeeded" },
+                },
+            });
+            expect(prepareBash.mock.calls.some(([command]) => command.args.at(-1) === "printf '%s' 'Mixed Case' | tr ' ' ':'")).toBeTrue();
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("forces explicit Sandbox commands in host mode and refreshes their authority", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            await session.session.prompt("/sandbox mode host");
+            expect(currentShellPolicy()?.mode).toBe("host");
+            await session.session.prompt("/sandbox run printf forced-sandbox");
+            expect(prepareBash.mock.calls.some(([command]) => command.args.at(-1) === "printf forced-sandbox")).toBeTrue();
+            expect(currentShellPolicy()?.mode).toBe("host");
+            const calls = prepareBash.mock.calls.length;
+            await writeFile(join(isolatedAgentDirectory, "config", "sandbox.json"), "{");
+            await session.session.prompt("/sandbox run printf forbidden > escaped");
+            expect(prepareBash.mock.calls).toHaveLength(calls);
+            await expect(stat(join(cwd, "escaped"))).rejects.toMatchObject({ code: "ENOENT" });
+            const messages = session.session.sessionManager.getBranch().filter(entry => entry.type === "custom_message" && entry.customType === "pi.sandbox-run.v1");
+            expect(messages.at(-1)).toMatchObject({ details: { execution: { mode: "sandbox", status: "unknown", outcome: "blocked" } } });
+            expect(session.events.toolCalls).toHaveLength(0);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("cancels an explicit Sandbox command before the Pi session closes", async () => {
+        const started = deferred();
+        prepareBash.mockImplementationOnce(async command => {
+            const spawn = await prepareBashDefault(command);
+            return { ...spawn, supervise(child: ChildProcess) {
+                const status = spawn.supervise(child);
+                started.resolve();
+                return status;
+            } };
+        });
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        const running = session.session.prompt("/sandbox run printf started; sleep 30");
+        try {
+            await started.promise;
+        } finally {
+            await session.close();
+            await running;
+        }
+        const messages = session.session.sessionManager.getBranch().filter(entry => entry.type === "custom_message" && entry.customType === "pi.sandbox-run.v1");
+        expect(messages.at(-1)).toMatchObject({ details: { execution: { outcome: "aborted" } } });
+    });
 
     it("blocks writes to the active global authority", async () => {
         const registered = registerSandbox();

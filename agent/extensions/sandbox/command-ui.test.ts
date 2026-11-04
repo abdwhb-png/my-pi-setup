@@ -110,6 +110,15 @@ function section(
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("sandbox dashboard", () => {
+    it("distinguishes the agent shell mode from native and sandboxed manual commands", async () => {
+        const f = fixture();
+        const view = await f.opened;
+        expect(text(view)).toContain("Agent shell mode");
+        expect(text(view)).toContain("! / !!: host");
+        expect(text(view)).toContain("/sandbox run: sandbox");
+        view.handleInput?.("\x1b");
+        await f.closed;
+    });
     it("keeps label and value styling separate in technical details", async () => {
         const f = fixture();
         const view = await f.opened;
@@ -124,7 +133,7 @@ describe("sandbox dashboard", () => {
         const f = fixture(); const view = await f.opened;
         expect(text(view)).not.toContain("Sections");
         expect(text(view)).toContain("› Status  Permissions");
-        expect(f.fg).toHaveBeenCalledWith("muted", "Shell mode: ");
+        expect(f.fg).toHaveBeenCalledWith("muted", "Agent shell mode: ");
         view.handleInput?.("\x1b[C");
         expect(text(view)).toContain("Files:");
         view.handleInput?.("\r");
@@ -219,7 +228,7 @@ describe("sandbox dashboard", () => {
             view.handleInput?.(escape!);
             expect(text(view)).toContain("Manage local installations");
             view.handleInput?.(left!);
-            expect(text(view)).toContain("Shell mode:");
+            expect(text(view)).toContain("Agent shell mode:");
             view.handleInput?.(enter!);
             expect(await f.closed).toMatchObject({ action: "mode", state: { section: "Status", executable: undefined } });
             expect(f.redraw).toHaveBeenCalled();
@@ -237,7 +246,7 @@ describe("sandbox dashboard", () => {
         expect(text(view)).toContain("Files:");
         view.handleInput?.("\x1b[Z");
         view.handleInput?.("\x1b[B");
-        expect(text(view)).toContain("Shell mode:");
+        expect(text(view)).toContain("Agent shell mode:");
     });
     it("shows pending policy instead of an applied receipt or cached Docker success", async () => {
         const f = fixture();

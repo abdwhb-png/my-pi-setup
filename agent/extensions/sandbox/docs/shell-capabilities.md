@@ -1,6 +1,6 @@
 # Shell modes and resource configuration
 
-Select an execution mode independently of the descriptive profile.
+Select an agent shell execution mode independently of the descriptive profile.
 
 | Profile | Mode | Meaning |
 | --- | --- | --- |
@@ -26,11 +26,15 @@ See [configuration](configuration.md) for the active schema and [Docker authorit
 
 Use `/sandbox` for status and actions, `/sandbox mode` to select a mode, or `/sandbox status` for a text report. Run `/sandbox doctor [executable]` to inspect the effective configuration and optionally resolve an executable without launching it.
 
-Run `/sandbox mode host` to select host execution for the current session. The global configuration must authorize it with `host.allowed: true`. A global host ceiling alone does not select host execution, and a project file cannot make that selection. Run `/sandbox mode sandbox` to return to the authorized sandbox configuration. Session selections do not carry into another session.
+Run `/sandbox mode host` to select host execution for the agent's shell tools in the current session. The global configuration must authorize it with `host.allowed: true`. A global host ceiling alone does not select host execution, and a project file cannot make that selection. Run `/sandbox mode sandbox` to return the agent to the authorized sandbox configuration. Session selections do not carry into another session and do not govern manual commands.
 
 Use ordinary commands through `bash` or `safe_bash`. No tool parameter selects an editor, package manager or development service. A legacy `hostCapability` parameter produces a migration diagnostic before launch.
 
-Use `! <command>` or `!! <command>` with the selected mode. Use `!s <command>` or `!!s <command>` to request the sandbox. The double exclamation form keeps output outside model context. An empty `!s` request fails explicitly.
+Use `! <command>` or `!! <command>` for Pi's native host shell, including its configured shell and command prefix. These manual commands do not grant host execution to the agent or depend on `host.allowed`. The double exclamation form keeps the command and output outside model context. Their process output remains unchanged; execution metadata displays the observed route and outcome.
+
+Use `/sandbox run <command>` to execute a manual command in Zerobox, independently of the agent mode. The command is passed intact without host shell initialization. The result enters session context without starting an agent turn. The TUI shows live output and supports Escape cancellation. A second concurrent request is refused. Closing or reloading the session cancels the active request. Large output is bounded and retains a full output file, including when cancelled. An empty request displays usage. A Sandbox refusal never selects host execution.
+
+The former `!s` and `!!s` syntax has no special meaning. Pi passes the literal `s …` command to the native host shell. Replace old shortcut usage with `/sandbox run …`.
 
 ## Admission and results
 
