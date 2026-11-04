@@ -1,9 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
+import {
+    expandHomePath,
+    toPortableHomePath,
+} from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
-import { validateBundle } from './distribution.ts';
+import { PORTABLE_PROFILE_FILES, validateBundle } from './distribution.ts';
 import { json, object, run, runAsync, writeJson } from './files.ts';
 import {
     childSetupProgress,
@@ -195,6 +198,22 @@ export async function restoreBundledExtensionDependencies(
     }
 }
 
+function materializeMcpPaths(definition: Record<string, unknown>): void {
+    for (const key of ['command', 'cwd']) {
+        const path = definition[key];
+        if (typeof path === 'string') definition[key] = expandHomePath(path);
+    }
+    if (Array.isArray(definition.args))
+        definition.args = definition.args.map((argument) =>
+            typeof argument === 'string' ? expandHomePath(argument) : argument,
+        );
+    if (
+        definition.requestHeadersCommand &&
+        typeof definition.requestHeadersCommand === 'object'
+    )
+        materializeMcpPaths(object(definition.requestHeadersCommand));
+}
+
 export function prepareInstalledProfile(
     root: string,
     files: Record<string, string>,
@@ -220,12 +239,19 @@ export function prepareInstalledProfile(
     }
     for (const path of Object.keys(files)) {
         if (
-            /^setup\/agent\/(config\/[^/]+|hermes-memory-config|keybindings)\.json$/.test(
-                path,
-            )
+            path !== 'setup/agent/settings.json' &&
+            path.startsWith('setup/') &&
+            PORTABLE_PROFILE_FILES.has(path.slice(6))
         ) {
             const target = join(root, path.slice(6));
-            writeJson(target, relocate(json(target)));
+            const value = object(relocate(json(target)));
+            if (PORTABLE_PROFILE_FILES.get(path.slice(6)) === 'mcp') {
+                const servers = value.mcpServers ?? value['mcp-servers'];
+                if (servers !== undefined)
+                    for (const definition of Object.values(object(servers)))
+                        materializeMcpPaths(object(definition));
+            }
+            writeJson(target, value);
         }
     }
     const prepared = object(relocate(settings));

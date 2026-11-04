@@ -28,6 +28,32 @@ When an older managed installation is updated to a release without global skill 
 
 Release preparation includes storage cleanup before the next package and after verified publication, following the release skill. Downloaded archives and expanded delivery candidates are disposable once their remote or installed copy has been verified. Retain compact source/digest and qualification receipts; keep active/previous runtimes and migration backups separate from disposable build outputs. Local build caches and historical delivery directories are not included in the portable package.
 
+## Portable profile configuration
+
+One [profile policy](../agent/bin/setup/distribution.ts) controls capture, archive admission and restoration. Optional files are included only when present; packaging never creates them in the source profile.
+
+| Configuration | Distribution behavior |
+| --- | --- |
+| `agent/settings.json`, `agent/keybindings.json`, `agent/hermes-memory-config.json` | Preserve preferences, with the existing package pinning and resource-selection rules. |
+| `agent/fancy-footer.json`, `agent/fancy-footer.local.json`, `agent/pi-session-recall.json` | Preserve package preferences, including local footer layout and status visibility. “Local” in the footer filename does not make these preferences machine authority. |
+| `agent/models.json`, `agent/mcp.json`, `agent/mcp-adapter.json` | Preserve model and MCP declarations after credential validation. |
+| Registered `agent/config/` preferences | Preserve them except for machine authority and generated bindings. |
+| Credentials, trust, permission grants, sandbox authority, generated catalogs and MCP caches | Keep them local; do not distribute them. Legacy configuration locations remain excluded in favor of their current owners. |
+
+Before collecting runtime artifacts, `pack` inspects configuration candidates directly under `agent/` and `agent/config/` with JSON, JSONC, YAML or TOML suffixes. Each must have a declared policy as code, a template, a portable preference or an explicit exclusion. An unknown file fails with its relative path, rather than disappearing from the archive. This audit does not recursively classify arbitrary package data or backup files. See the policy source for the exact exclusions.
+
+Connection credentials must use a complete `${VARIABLE_NAME}` reference; `Authorization` headers can also use `Bearer ${VARIABLE_NAME}`. Ordinary nonsecret values such as transport names and `NODE_ENV` remain literal. Recognized inline keys, credential-bearing environment entries and arguments, embedded URL credentials and credential commands such as `!print-key` are refused. Diagnostics identify the file and field without printing the rejected value. Packaging and admission never resolve the variables or execute credential commands. Configure the corresponding secrets securely on each destination; `auth.json`, MCP authentication stores and `*.secrets.json` remain excluded.
+
+Home paths are stored as `~/…`, and references to `~/.pi` are rebound to a custom installation root during provisioning. MCP `command`, `cwd` and standalone path arguments are expanded for the destination because process launchers do not perform shell tilde expansion. This does not install MCP server binaries, create tunnels or make external services reachable. Existing package filters and the opt-in global skill behavior are unchanged.
+
+The manifest remains version 1 and updated operators still accept older archives that omit these optional files. Older bootstrap code rejects the newly admitted filenames. Refresh the bootstrap from `main` before installing a release that includes them:
+
+```sh
+git -C ~/pi-bootstrap pull --ff-only
+```
+
+During an update, a newly portable file can collide with an unmanaged destination file from an older installation. The operator reports the collision and leaves the installation unchanged. Back up and reconcile that file deliberately before retrying; no automatic merge or adoption occurs. Modified managed files retain the existing integrity checks.
+
 ## Install on another machine
 
 Replace `RELEASE_TAG` with the exact qualified tag. Clone the public source into a temporary bootstrap checkout, then invoke its launcher:
@@ -201,6 +227,8 @@ Export checks that every SQLite global memory is represented by the canonical Ma
 ## Verification boundaries
 
 The automated setup tests use temporary homes, real filesystem transactions, real archive handling, the installed Hermes modules and isolated SQLite databases. Dependency installation is substituted only in transaction tests; those tests do not establish network installation or sandbox execution on a second host. Release admission additionally requires actual installation on native Ubuntu 24.04 x86_64 and WSL2 x86_64, and the existing native Zerobox qualification. Record those results with the release before treating it as qualified for both platforms.
+
+The portable workflow also restores synthetic footer, session-recall, model and MCP configurations and checks their semantic contents. A CI-only contract resolves the pinned installed footer through Pi's package manager, loads its declared extension entrypoint and renders it through the real Pi test harness. It checks model-widget visibility and locally hidden extension statuses while forbidding fetch requests; it makes no generation call. Terminal fonts, glyph support and interactive terminal behavior remain outside this contract. Private profile qualification disables the built-in MCP extension for that process so it cannot connect to the transported personal servers; MCP connectivity and authentication remain separate host checks. These prepared checks require a successful Actions run before being treated as runtime evidence.
 
 Related documents: [Personal Pi setup overview](ABOUT-MY-PI.md), [sandbox configuration](../agent/extensions/sandbox/docs/configuration.md), [runtime distribution](../agent/extensions/sandbox/runtime/distribution/README.md), [implementation verification](verification/2026-10-31-portable-pi-setup.md), [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 

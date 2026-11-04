@@ -125,10 +125,19 @@ try {
     );
     sdk.initTheme(settingsManager.getTheme(), false);
     stage = 'session-create';
+    // Transport declarations are checked separately; CI must not connect to personal MCP services.
+    const resourceLoader = new sdk.DefaultResourceLoader({
+        cwd: process.env.HOME!,
+        agentDir,
+        settingsManager,
+        disabledBuiltinExtensions: ['mcp'],
+    });
+    await resourceLoader.reload();
     const created = await sdk.createAgentSession({
         cwd: process.env.HOME!,
         agentDir,
         settingsManager,
+        resourceLoader,
         sessionManager: sdk.SessionManager.inMemory(process.env.HOME!),
     });
     session = created.session;
@@ -239,6 +248,8 @@ try {
                 providers,
                 providerCatalog,
                 providerEvents,
+                mcpConnectivity:
+                    'not tested; built-in MCP disabled for qualification',
                 providerConnectivity: providers.length
                     ? 'passed'
                     : 'not requested',

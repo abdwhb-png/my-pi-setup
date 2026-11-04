@@ -6,7 +6,7 @@ import {
     chmodSync,
     readFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { inventory, json, writeJson } from './files.ts';
@@ -79,6 +79,28 @@ test('installation relocates every bundled profile and seeds the runtime changel
         writeJson(join(root, 'agent/config/tool-summary.json'), {
             fixturePath: '~/.pi/agent/assets',
         });
+        writeJson(join(root, 'agent/fancy-footer.json'), { gaugeWidth: 12 });
+        writeJson(join(root, 'agent/fancy-footer.local.json'), {
+            extensionStatusHiddenIds: ['fixture'],
+        });
+        writeJson(join(root, 'agent/pi-session-recall.json'), {
+            queryModel: { provider: 'fixture', id: 'query' },
+        });
+        for (const name of ['mcp.json', 'mcp-adapter.json'])
+            writeJson(join(root, 'agent', name), {
+                mcpServers: {
+                    fixture: {
+                        command: '~/bin/fixture-server',
+                        cwd: '~/.pi/agent',
+                        args: [
+                            '~/.pi/agent/assets/fixture.json',
+                            '~/fixtures/data',
+                            '${FIXTURE_ARGUMENT}',
+                        ],
+                        env: { FIXTURE_API_KEY: '${FIXTURE_API_KEY}' },
+                    },
+                },
+            });
         const files = Object.fromEntries(
             Object.entries(inventory(root)).map(([path, hash]) => [
                 `setup/${path}`,
@@ -102,6 +124,27 @@ test('installation relocates every bundled profile and seeds the runtime changel
         ).toBe(toPortableHomePath(join(root, 'agent/assets')));
         expect(json(join(root, 'agent/config/sandbox.json'))).toEqual({
             identity: 'local',
+        });
+        for (const name of ['mcp.json', 'mcp-adapter.json'])
+            expect(json(join(root, 'agent', name))).toEqual({
+                mcpServers: {
+                    fixture: {
+                        command: join(homedir(), 'bin/fixture-server'),
+                        cwd: join(root, 'agent'),
+                        args: [
+                            join(root, 'agent/assets/fixture.json'),
+                            join(homedir(), 'fixtures/data'),
+                            '${FIXTURE_ARGUMENT}',
+                        ],
+                        env: { FIXTURE_API_KEY: '${FIXTURE_API_KEY}' },
+                    },
+                },
+            });
+        expect(json(join(root, 'agent/fancy-footer.json'))).toEqual({
+            gaugeWidth: 12,
+        });
+        expect(json(join(root, 'agent/pi-session-recall.json'))).toEqual({
+            queryModel: { provider: 'fixture', id: 'query' },
         });
     } finally {
         rmSync(root, { recursive: true, force: true });

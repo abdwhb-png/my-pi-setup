@@ -16,6 +16,7 @@ import { join, resolve, dirname, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
+import { redactValue } from '../../extensions/_shared/secret-redaction.ts';
 import {
     archiveAsync,
     assertInventory,
@@ -32,26 +33,217 @@ import {
 import { setupStep, type SetupProgress } from './progress.ts';
 
 export const DISTRIBUTION_REPOSITORY = 'abdwhb-png/my-pi-distribution';
-const LOCAL_AUTHORITY = new Set([
-    'sandbox.json',
-    'package-finalizer.json',
-    'pi-dangerous-mode.json',
-    'pi-permission-system-addons.json',
-]);
-function allowedProfilePath(path: string): boolean {
-    return (
-        [
+const PROFILE_EXCLUSIONS = {
+    'agent/config/sandbox.json': 'Machine-local sandbox authority',
+    'agent/config/package-finalizer.json': 'Machine-local package trust',
+    'agent/config/pi-dangerous-mode.json':
+        'Machine-local execution permissions',
+    'agent/config/pi-permission-system-addons.json':
+        'Machine-local execution permissions',
+    'agent/config/setup-bindings.json': 'Generated machine-local tool bindings',
+    'agent/trust.json': 'Machine-local project trust',
+    'agent/mcp-project-approvals.json': 'Machine-local MCP approvals',
+    'agent/mcp-auth.json': 'Machine-local MCP credentials',
+    'agent/models-store.json': 'Generated model catalog',
+    'agent/mcp-cache.json': 'Generated MCP catalog',
+    'agent/mcp-npx-cache.json': 'Generated MCP installation cache',
+    'agent/mcp-onboarding.json': 'Machine-local onboarding state',
+    'agent/skills-lock.json': 'External skill synchronization state',
+    'agent/pi-yolo.json': 'Unused legacy execution configuration',
+    'agent/.fallowrc.json': 'Development tooling configuration',
+    'agent/settings.example.json': 'Development configuration template',
+    'agent/ai-providers.secrets.example.json':
+        'Development credential template',
+    ...Object.fromEntries(
+        Object.values(CONFIG_OWNERS).flatMap((owner) =>
+            'legacyFile' in owner
+                ? [
+                      [
+                          `agent/${owner.legacyFile}`,
+                          'Legacy location; migrate to the configuration owner',
+                      ],
+                  ]
+                : [],
+        ),
+    ),
+};
+
+type ProfileKind = 'preferences' | 'models' | 'mcp';
+export const PORTABLE_PROFILE_FILES: ReadonlyMap<string, ProfileKind> = new Map(
+    [
+        ...[
             'agent/settings.json',
             'agent/hermes-memory-config.json',
             'agent/keybindings.json',
-        ].includes(path) ||
-        path.startsWith('agent/portable-skills/') ||
-        Object.values(CONFIG_OWNERS).some(
-            (owner) =>
-                !LOCAL_AUTHORITY.has(owner.file) &&
-                path === `agent/config/${owner.file}`,
-        )
+            'agent/fancy-footer.json',
+            'agent/fancy-footer.local.json',
+            'agent/pi-session-recall.json',
+            ...Object.values(CONFIG_OWNERS).map(
+                (owner) => `agent/config/${owner.file}`,
+            ),
+        ]
+            .filter((path) => !Object.hasOwn(PROFILE_EXCLUSIONS, path))
+            .map((path): [string, ProfileKind] => [path, 'preferences']),
+        ['agent/models.json', 'models'],
+        ['agent/mcp.json', 'mcp'],
+        ['agent/mcp-adapter.json', 'mcp'],
+    ],
+);
+const CREDENTIAL_FILE = /(^|\/)(auth\.json|\.env[^/]*|.*\.secrets\.json)$/;
+function allowedProfilePath(path: string): boolean {
+    return (
+        PORTABLE_PROFILE_FILES.has(path) ||
+        path.startsWith('agent/portable-skills/')
     );
+}
+
+function assertClassifiedProfileConfigurations(root: string): void {
+    const unclassified: string[] = [];
+    for (const directory of ['agent', 'agent/config']) {
+        const source = join(root, directory);
+        if (!existsSync(source)) continue;
+        for (const entry of readdirSync(source, { withFileTypes: true })) {
+            if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+            if (!/\.(?:jsonc?|ya?ml|toml)$/i.test(entry.name)) continue;
+            const path = `${directory}/${entry.name}`;
+            if (
+                allowedCodePath(path) ||
+                PORTABLE_PROFILE_FILES.has(path) ||
+                Object.hasOwn(PROFILE_EXCLUSIONS, path) ||
+                CREDENTIAL_FILE.test(path)
+            )
+                continue;
+            unclassified.push(path);
+        }
+    }
+    if (unclassified.length)
+        throw new Error(
+            `Unclassified profile configuration: ${unclassified.toSorted().join(', ')}. Declare its portability policy before packaging.`,
+        );
+}
+
+function readProfileFile(root: string, path: string): Record<string, unknown> {
+    const source = child(root, path);
+    if (!lstatSync(source).isFile())
+        throw new Error(`Profile must be a regular file: ${path}`);
+    const raw = readFileSync(source, 'utf8');
+    try {
+        return object(JSON.parse(raw));
+    } catch {
+        throw new Error(`Invalid JSON profile: ${path}`);
+    }
+}
+
+function assertPortableProfileValue(
+    path: string,
+    value: Record<string, unknown>,
+): void {
+    const kind = PORTABLE_PROFILE_FILES.get(path);
+    const connectionProfile = kind === 'models' || kind === 'mcp';
+    const reference = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+    const authorizationReference = /^Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+    const credentialName =
+        /api[-_]?key|private[-_]?key|authorization|cookie|password|secret|token(?:$|[-_])|credential|^key$/i;
+    function credentialError(location: string[]): never {
+        throw new Error(
+            `Profile credential requires an environment reference: ${path}:${location.join('.')}`,
+        );
+    }
+    function scanView(input: unknown, location: string[] = []): unknown {
+        if (location.length >= 100)
+            throw new Error(`Profile exceeds nesting limit: ${path}`);
+        if (Array.isArray(input)) {
+            if (input.length > 100000)
+                throw new Error(`Profile exceeds array limit: ${path}`);
+            if (connectionProfile && location.at(-1) === 'args') {
+                for (const [index, argument] of input.entries()) {
+                    if (
+                        typeof argument !== 'string' ||
+                        !argument.startsWith('-')
+                    )
+                        continue;
+                    const separator = argument.indexOf('=');
+                    const flag = (
+                        separator < 0 ? argument : argument.slice(0, separator)
+                    ).replace(/^-+/, '');
+                    if (!credentialName.test(flag)) continue;
+                    const argumentValue =
+                        separator < 0
+                            ? input[index + 1]
+                            : argument.slice(separator + 1);
+                    if (
+                        typeof argumentValue !== 'string' ||
+                        !reference.test(argumentValue)
+                    )
+                        credentialError([...location, String(index)]);
+                }
+            }
+            return input.map((nested, index) =>
+                scanView(nested, [...location, String(index)]),
+            );
+        }
+        if (!input || typeof input !== 'object') return input;
+        const output: Record<string, unknown> = Object.create(null);
+        for (const [key, nested] of Object.entries(input)) {
+            const field = [...location, key];
+            const parent = location.at(-1);
+            const credential =
+                connectionProfile &&
+                (key.toLowerCase() === 'apikey' ||
+                    ((parent === 'headers' ||
+                        parent === 'env' ||
+                        parent === 'auth' ||
+                        parent === 'oauth') &&
+                        credentialName.test(key)) ||
+                    /^(?:token|access_token|refresh_token|password|secret|privatekey)$/i.test(
+                        key,
+                    ));
+            if (
+                connectionProfile &&
+                parent === 'headers' &&
+                typeof nested === 'string' &&
+                nested.startsWith('!')
+            )
+                credentialError(field);
+            if (credential) {
+                if (
+                    typeof nested !== 'string' ||
+                    !(
+                        reference.test(nested) ||
+                        (key.toLowerCase() === 'authorization' &&
+                            authorizationReference.test(nested))
+                    )
+                )
+                    credentialError(field);
+                // Only the scan view omits validated references. The original
+                // configuration is serialized unchanged, never with redactions.
+                continue;
+            }
+            if (
+                connectionProfile &&
+                /^(?:url|baseUrl)$/i.test(key) &&
+                typeof nested === 'string' &&
+                URL.canParse(nested)
+            ) {
+                const url = new URL(nested);
+                if (url.username || url.password) credentialError(field);
+                for (const [name, parameter] of url.searchParams)
+                    if (credentialName.test(name) && !reference.test(parameter))
+                        credentialError(field);
+            }
+            output[key] = scanView(nested, field);
+        }
+        return output;
+    }
+    const scan = redactValue(scanView(value), {
+        maxDepth: 100,
+        maxArrayItems: 100000,
+        maxStringLength: 1000000,
+    });
+    if (Object.values(scan.counters).some((count) => count !== 0))
+        throw new Error(
+            `Profile requires review for credentials or excessive content: ${path}`,
+        );
 }
 export interface SetupManifest {
     schemaVersion: 1;
@@ -122,6 +314,16 @@ export function validateBundle(root: string): SetupManifest {
     ])
         if (!files[required])
             throw new Error(`Missing distribution file: ${required}`);
+    for (const path of Object.keys(files)) {
+        if (
+            path.startsWith('setup/') &&
+            PORTABLE_PROFILE_FILES.has(path.slice(6))
+        )
+            assertPortableProfileValue(
+                path.slice(6),
+                readProfileFile(root, path),
+            );
+    }
     return manifest;
 }
 
@@ -131,7 +333,7 @@ export function allowedCodePath(path: string): boolean {
         /(^|\/)(node_modules|sessions|artifacts|cache|git|npm|\.git|\.aws)(\/|$)/.test(
             path,
         ) ||
-        /(^|\/)(auth\.json|\.env[^/]*|.*\.secrets\.json)$/.test(path)
+        CREDENTIAL_FILE.test(path)
     )
         return false;
     return (
@@ -342,6 +544,7 @@ async function packDistributionLocked(
     output = resolve(output);
     if (!/^[a-f0-9]{40}$/.test(sourceCommit))
         throw new Error('Invalid source commit');
+    assertClassifiedProfileConfigurations(sourceRoot);
     const code = codeFiles(sourceRoot, sourceCommit);
     if (existsSync(output)) throw new Error('Output directory already exists');
     options.progress?.({ stage: 'runtimes', state: 'start' });
@@ -420,12 +623,10 @@ async function captureProfile(
 ): Promise<string[]> {
     const { DefaultPackageManager, SettingsManager } =
         await import('@earendil-works/pi-coding-agent');
-    const { redactValue } =
-        await import('../../extensions/_shared/secret-redaction.ts');
     const { toPortableHomePath } =
         await import('../../extensions/_shared/home-path.ts');
     const agentDir = join(root, 'agent');
-    const settings = json(join(agentDir, 'settings.json'));
+    const settings = readProfileFile(root, 'agent/settings.json');
     const manager = new DefaultPackageManager({
         cwd: root,
         agentDir,
@@ -562,15 +763,7 @@ async function captureProfile(
     }
     function save(path: string, value: unknown) {
         const normalized = portable(value);
-        const scan = redactValue(normalized, {
-            maxDepth: 100,
-            maxArrayItems: 100000,
-            maxStringLength: 1000000,
-        });
-        if (Object.values(scan.counters).some((count) => count !== 0))
-            throw new Error(
-                `Profile requires review for credentials or excessive content: ${path}`,
-            );
+        assertPortableProfileValue(path, object(normalized));
         writeJson(join(destination, path), normalized);
     }
     function validateResources(value: unknown): void {
@@ -603,16 +796,10 @@ async function captureProfile(
         for (const override of Object.values(object(subagents.agentOverrides)))
             validateResources(object(override).subagentOnlyExtensions);
     save('agent/settings.json', settings);
-    for (const file of new Set(
-        Object.values(CONFIG_OWNERS).map((owner) => owner.file),
-    )) {
-        const path = `agent/config/${file}`;
-        if (!LOCAL_AUTHORITY.has(file) && existsSync(join(root, path)))
-            save(path, json(join(root, path)));
-    }
-    for (const file of ['hermes-memory-config.json', 'keybindings.json']) {
-        const path = `agent/${file}`;
-        if (existsSync(join(root, path))) save(path, json(join(root, path)));
+    for (const path of PORTABLE_PROFILE_FILES.keys()) {
+        if (path === 'agent/settings.json') continue;
+        if (lstatSync(join(root, path), { throwIfNoEntry: false }))
+            save(path, readProfileFile(root, path));
     }
     return packages;
 }
