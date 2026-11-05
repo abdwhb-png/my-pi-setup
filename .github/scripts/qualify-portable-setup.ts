@@ -22,6 +22,7 @@ import {
     DISTRIBUTION_REPOSITORY,
     validateBundle,
     LOCAL_CONNECTION_FILES,
+    LOCAL_PROFILE_FILES,
 } from '../../agent/bin/setup/distribution.ts';
 import {
     archive,
@@ -112,6 +113,15 @@ function passed(name: string) {
         kernel: run('uname', ['-r']),
         milestones,
     });
+}
+
+function assertLocalProfilesUnmanaged(root: string) {
+    const managed = object(json(join(root, '.pi-setup-state.json')).managed);
+    for (const path of LOCAL_PROFILE_FILES)
+        assert(
+            !Object.hasOwn(managed, path),
+            `Setup must not own local profile state: ${path}`,
+        );
 }
 
 function runTests(
@@ -429,6 +439,7 @@ run(process.execPath, [join(target, 'bin/pi-fork'), 'verify'], home);
 run(process.execPath, [join(target, 'bin/pi'), '--version'], home);
 run(process.execPath, [join(target, 'bin/pi'), 'list'], home);
 passed('clean target installation, runtime coherence and daily launcher');
+assertLocalProfilesUnmanaged(target);
 for (const path of LOCAL_CONNECTION_FILES.keys())
     assert(
         !existsSync(join(target, path)),
@@ -549,19 +560,34 @@ if (!privateProfile) {
 if (!profileOnly) {
     for (const [name, value] of Object.entries(localConnections))
         writeJson(join(target, 'agent', name), value);
+    const catalogPath = join(target, 'agent/models-store.json');
+    if (!existsSync(catalogPath)) writeJson(catalogPath, {});
     // Reproduce an older operator's ownership before personal changes.
     const legacyState = json(join(target, '.pi-setup-state.json'));
     const legacyFiles = inventory(target);
     legacyState.managed = {
         ...object(legacyState.managed),
         ...Object.fromEntries(
-            [...LOCAL_CONNECTION_FILES.keys()].map((path) => [
-                path,
-                legacyFiles[path],
-            ]),
+            [...LOCAL_CONNECTION_FILES.keys(), 'agent/models-store.json'].map(
+                (path) => [path, legacyFiles[path]],
+            ),
         ),
     };
     writeJson(join(target, '.pi-setup-state.json'), legacyState);
+    writeJson(catalogPath, {
+        ...json(catalogPath),
+        'qualification-fixture': { models: [], checkedAt: 1 },
+    });
+    run(
+        process.execPath,
+        [
+            join(target, 'bin/pi'),
+            '--no-extensions',
+            '--list-models',
+            '--no-approve',
+        ],
+        home,
+    );
     writeJson(join(target, 'agent/mcp.json'), {
         mcpServers: {},
         personal: true,
@@ -573,6 +599,11 @@ if (!profileOnly) {
     symlinkSync(adapter, join(target, 'agent/mcp-adapter.json'));
     const localBeforeUpdate = inventory(target);
     const assertLocalConnections = () => {
+        assertLocalProfilesUnmanaged(target);
+        assert.deepEqual(object(json(catalogPath)['qualification-fixture']), {
+            models: [],
+            checkedAt: 1,
+        });
         const current = inventory(target);
         for (const path of LOCAL_CONNECTION_FILES.keys()) {
             assert.equal(
@@ -627,7 +658,7 @@ if (!profileOnly) {
     assert.equal(readInstallation(target).release, 'qualification-one');
     assertLocalConnections();
     passed(
-        'edited, deleted and linked local connection files survive real update and rollback',
+        'local connections and a refreshed model catalog survive runtime initialization, update and rollback',
     );
     assert(!existsSync(join(target, 'agent/prompts/qualification-version.md')));
     assert.equal(

@@ -163,7 +163,7 @@
     },
     {
       "path": "scripts/upstream-runtime-bundle.patch",
-      "sha256": "2e09aae3e43c96dae52e4a591f88ea816bfeb8ddd311e6ab6eb0c8dd86c47b01"
+      "sha256": "787e33914f6bd73d46c25cc893a6b056129b9067545d2a9b21bff1b75d8da205"
     },
     {
       "path": "scripts/upstream-mediated-direct-tcp.patch",

@@ -25,6 +25,8 @@ python3 build.py assemble \
 
 The supplied engine and helper must be regular files. The helper is copied as a static engine-build input at `components/shell/libexec/zerobox-linux-sandbox` only after `readelf` confirms it has no dynamic interpreter. The builder runs the supplied engine's `--version` command and requires it to match the supplied provenance before writing the candidate. `--version` names the runtime distribution, while candidate provenance preserves the rebuilt engine version and records the distribution as `runtimeVersion`. It also records the pinned image, input-lock SHA-256, durable metadata digests, exact `.deb` versions/hashes, archive URLs/hashes, and builder package versions. The builder uses the downloaded, unmodified Bun archive to build the QuickJS worker before relocating the distributed binaries and libraries. It recursively copies the locked Analysis dependency closure, including conflicting nested jsonjoy versions, copies package licences, hashes every emitted regular file and records symlinks in `manifest.json`.
 
+Native qualification builds bubblewrap 0.11.1 from its SHA-256-pinned official release archive on the disposable Actions runner. Its file-descriptor mount checks reject symlink destinations that Ubuntu 24.04's older backport accepts. Read-only resource contracts cover relative and absolute symlinks, directory aliases and symlink ancestors, including denied neighboring files and refused writes. The runtime must bind the pinned source's real target while preserving the granted logical path.
+
 Stage only after independent qualification, never as part of ordinary builds or tests:
 
 ```text

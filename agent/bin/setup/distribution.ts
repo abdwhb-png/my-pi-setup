@@ -68,6 +68,12 @@ export const LOCAL_CONNECTION_FILES: ReadonlyMap<string, ProfileKind> = new Map(
         ['agent/mcp-adapter.json', 'mcp'],
     ],
 );
+export const LOCAL_PROFILE_FILES: ReadonlySet<string> = new Set([
+    ...LOCAL_CONNECTION_FILES.keys(),
+    ...Object.entries(PROFILE_EXCLUSIONS)
+        .filter(([, disposition]) => disposition === 'local')
+        .map(([path]) => path),
+]);
 export const PORTABLE_PROFILE_FILES: ReadonlyMap<string, ProfileKind> = new Map(
     [
         'agent/settings.json',
@@ -328,7 +334,7 @@ function resourceDisposition(path: string): ResourceDisposition | undefined {
             path,
         ) ||
         CREDENTIAL_FILE.test(path) ||
-        LOCAL_CONNECTION_FILES.has(path) ||
+        LOCAL_PROFILE_FILES.has(path) ||
         path === 'MEMORY.md' ||
         path === 'bin/zerobox' ||
         path === 'agent/pi-subagents/last-seen-version.json'

@@ -48,6 +48,8 @@ Portable home paths are stored as `~/…`, and references to `~/.pi` are rebound
 
 The manifest and installation state remain version 1. Updated operators accept legacy archives while treating their connection files as local. Before an update, setup transfers ownership of these three paths out of the managed inventory, so modified, deleted and symlinked files survive both update and rollback. Preview lists each path as `Keep local`. No automatic backup, restoration or merge of these connection files takes place.
 
+The same declared local profile policy applies to installation ownership after provisioning. Runtime catalogs such as `agent/models-store.json`, MCP caches and machine-local permission state never belong in the managed inventory. When older installers recorded these files, the refreshed bootstrap removes their ownership before integrity checks, preserving their current state. CI initializes the installed model runtime before update/rollback and checks the stored inventory against every declared local profile path. Managed code and portable preferences retain their integrity checks.
+
 Refresh the external bootstrap from `main` before installation, update or rollback:
 
 ```sh

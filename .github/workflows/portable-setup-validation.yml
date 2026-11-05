@@ -104,7 +104,7 @@ jobs:
           [[ "$native_source_sha" =~ ^[a-f0-9]{40}$ ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUNTIME_RUN_ID/jobs?filter=latest&per_page=100" --jq ".jobs[] | select(.name == \"$producer_job\") | .conclusion")" = success || { echo 'The source did not produce a successfully qualified native runtime' >&2; exit 1; }
           git fetch --no-tags --depth=1 origin "$native_source_sha"
-          git diff --exit-code "$native_source_sha" HEAD -- .github/workflows/private-runtime-validation.yml .github/actions/prepare-agent .github/fixtures .github/scripts/restore-pi-runtime.py agent/package.json agent/bun.lock agent/extensions/sandbox/runtime agent/extensions/think-in-code agent/extensions/_shared ':(exclude)agent/extensions/sandbox/runtime/development-tools.integration.test.ts'
+          git diff --exit-code "$native_source_sha" HEAD -- .github/workflows/private-runtime-validation.yml .github/actions/prepare-agent .github/fixtures .github/scripts/restore-pi-runtime.py .github/scripts/install-qualification-bwrap.sh agent/package.json agent/bun.lock agent/extensions/sandbox/runtime agent/extensions/think-in-code agent/extensions/_shared ':(exclude)agent/extensions/sandbox/runtime/development-tools.integration.test.ts'
           printf '%s' "$native_source_sha" > "$RUNNER_TEMP/native-source-sha"
           printf '%s' "$producer_job" > "$RUNNER_TEMP/native-source-job"
       - uses: actions/download-artifact@v4
