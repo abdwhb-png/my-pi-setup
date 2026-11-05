@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py --check-host
           sudo apt-get update
-          sudo apt-get install -y bubblewrap libcap-dev netcat-openbsd fd-find=9.0.0-1
+          sudo apt-get install -y bubblewrap libcap-dev meson ninja-build pkg-config netcat-openbsd fd-find=9.0.0-1
           node_binary=$(realpath "$(command -v node)")
           if [[ "$node_binary" != /usr/bin/node ]]; then
             sudo install -m 0755 "$node_binary" /usr/bin/node
@@ -70,6 +70,8 @@ jobs:
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Qualify with the VPS bubblewrap mount checks
+        run: bash .pi/.github/scripts/install-qualification-bwrap.sh
       - uses: ./.pi/.github/actions/prepare-agent
       - name: Verify installed integration imports before compiling
         working-directory: .pi/agent

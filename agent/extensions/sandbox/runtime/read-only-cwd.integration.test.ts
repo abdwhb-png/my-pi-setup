@@ -1,65 +1,104 @@
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
-import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile as writeResource } from "node:fs/promises";
-import { join } from "node:path";
+import { expect, test } from 'bun:test';
+import {
+    mkdir,
+    mkdtemp,
+    readFile,
+    rm,
+    symlink,
+    writeFile as writeResource,
+} from 'node:fs/promises';
+import { join } from 'node:path';
+import { ProjectTrustStore } from '@earendil-works/pi-coding-agent';
+import { writeFixtureFileAsync as writeFile } from '../../_shared/testing/config-fixture.ts';
 
-import { createBashProcessSupervisor } from "../../_shared/command-execution/exec.ts";
-import { createSandboxedBashOps, loadSandboxConfig } from "../index.ts";
-import { localMachineId } from "../capabilities/authority.ts";
-import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
-import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private-temp.ts";
-import { createSandboxService } from "./service.ts";
-import { createZeroboxBackend } from "./zerobox-backend.ts";
-import { validatePiSandboxConfig } from "./policies.ts";
+import { createBashProcessSupervisor } from '../../_shared/command-execution/exec.ts';
+import { localMachineId } from '../capabilities/authority.ts';
+import { createSandboxedBashOps, loadSandboxConfig } from '../index.ts';
+import {
+    candidateBackendOptions,
+    hasCandidateRuntime,
+} from './integration-fixtures.ts';
+import { validatePiSandboxConfig } from './policies.ts';
+import {
+    createPrivateTempLease,
+    recoverStalePrivateTempLeases,
+} from './private-temp.ts';
+import { createSandboxService } from './service.ts';
+import { createZeroboxBackend } from './zerobox-backend.ts';
 
-for (const kind of ["relative-file", "absolute-file", "directory", "ancestor"] as const) {
+for (const kind of [
+    'relative-file',
+    'absolute-file',
+    'directory',
+    'ancestor',
+] as const) {
     test.skipIf(!hasCandidateRuntime())(
         `explicit read grants preserve ${kind} symlinks and their access restrictions`,
         async () => {
-            const root = await mkdtemp("/var/tmp/pi-read-link-");
-            const leaseRoot = await mkdtemp("/var/tmp/z-");
-            const cwd = join(root, "project");
-            const target = join(root, "resource");
-            const alias = join(root, "alias");
+            const root = await mkdtemp('/var/tmp/pi-read-link-');
+            const leaseRoot = await mkdtemp('/var/tmp/z-');
+            const cwd = join(root, 'project');
+            const target = join(root, 'resource');
+            const alias = join(root, 'alias');
             const supervisor = createBashProcessSupervisor();
             let service: ReturnType<typeof createSandboxService> | undefined;
             try {
                 await mkdir(cwd);
                 await mkdir(target);
-                await writeResource(join(target, "visible"), "visible");
-                await writeResource(join(target, "secret"), "secret");
-                const directory = kind === "directory" || kind === "ancestor";
+                await writeResource(join(target, 'visible'), 'visible');
+                await writeResource(join(target, 'secret'), 'secret');
+                const directory = kind === 'directory' || kind === 'ancestor';
                 await symlink(
-                    directory ? "resource" : kind === "absolute-file" ? join(target, "visible") : "resource/visible",
+                    directory
+                        ? 'resource'
+                        : kind === 'absolute-file'
+                          ? join(target, 'visible')
+                          : 'resource/visible',
                     alias,
                 );
-                const grant = kind === "ancestor" ? join(alias, "visible") : alias;
-                const visible = directory ? join(alias, "visible") : alias;
+                const grant =
+                    kind === 'ancestor' ? join(alias, 'visible') : alias;
+                const visible = directory ? join(alias, 'visible') : alias;
                 const config = validatePiSandboxConfig({
                     filesystem: {
                         allowRead: [grant],
                         allowWrite: [cwd],
-                        denyRead: kind === "directory" ? [join(alias, "secret")] : [],
+                        denyRead:
+                            kind === 'directory' ? [join(alias, 'secret')] : [],
                     },
                 });
                 service = createSandboxService({
-                    backend: createZeroboxBackend(candidateBackendOptions(leaseRoot)),
+                    backend: createZeroboxBackend(
+                        candidateBackendOptions(leaseRoot),
+                    ),
                     config,
-                    createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+                    createLease: () =>
+                        createPrivateTempLease({ rootDir: leaseRoot }),
                     recoverStaleLeases: async () => {
-                        await recoverStalePrivateTempLeases({ rootDir: leaseRoot });
+                        await recoverStalePrivateTempLeases({
+                            rootDir: leaseRoot,
+                        });
                     },
                 });
                 await service.startBashSession(cwd);
-                let output = "";
-                const result = await createSandboxedBashOps(service, supervisor).exec(
-                    `test "$(cat ${JSON.stringify(visible)})" = visible && ! cat ${JSON.stringify(join(target, "secret"))} 2>/dev/null && ! printf changed > ${JSON.stringify(visible)} 2>/dev/null`,
+                let output = '';
+                const result = await createSandboxedBashOps(
+                    service,
+                    supervisor,
+                ).exec(
+                    `test "$(cat ${JSON.stringify(visible)})" = visible && ! cat ${JSON.stringify(join(target, 'secret'))} 2>/dev/null && ! printf changed > ${JSON.stringify(visible)} 2>/dev/null`,
                     cwd,
-                    { timeout: 10, onData: (chunk) => { output += chunk.toString(); } },
+                    {
+                        timeout: 10,
+                        onData: (chunk) => {
+                            output += chunk.toString();
+                        },
+                    },
                 );
                 expect(result.exitCode, output).toBe(0);
-                expect(await readFile(join(target, "visible"), "utf8")).toBe("visible");
+                expect(await readFile(join(target, 'visible'), 'utf8')).toBe(
+                    'visible',
+                );
             } finally {
                 supervisor.shutdown();
                 await service?.shutdown();
@@ -72,36 +111,36 @@ for (const kind of ["relative-file", "absolute-file", "directory", "ancestor"] a
 }
 
 test.skipIf(!hasCandidateRuntime())(
-    "a read-only cwd with write denials starts without a FUSE view",
+    'a read-only cwd with write denials starts without a FUSE view',
     async () => {
-        const root = await mkdtemp("/var/tmp/pi-read-only-cwd-");
-        const leaseRoot = await mkdtemp("/var/tmp/z-");
-        const agentDir = join(root, "agent");
-        const cwd = join(root, "project");
-        const external = join(root, "external");
+        const root = await mkdtemp('/var/tmp/pi-read-only-cwd-');
+        const leaseRoot = await mkdtemp('/var/tmp/z-');
+        const agentDir = join(root, 'agent');
+        const cwd = join(root, 'project');
+        const external = join(root, 'external');
         const supervisor = createBashProcessSupervisor();
         let service: ReturnType<typeof createSandboxService> | undefined;
         try {
-            await mkdir(join(cwd, ".pi"), { recursive: true });
+            await mkdir(join(cwd, '.pi'), { recursive: true });
             await mkdir(agentDir, { recursive: true });
             new ProjectTrustStore(agentDir).set(cwd, true);
             await mkdir(external, { recursive: true });
-            await writeFile(join(cwd, "visible.txt"), "visible");
+            await writeFile(join(cwd, 'visible.txt'), 'visible');
             await writeFile(
-                join(agentDir, "config", "sandbox.json"),
+                join(agentDir, 'config', 'sandbox.json'),
                 JSON.stringify({
                     version: 2,
                     machineId: localMachineId(),
                     filesystem: {
                         allowRead: [cwd],
                         allowWrite: [external],
-                        denyWrite: [".env.*", "node_modules/*"],
+                        denyWrite: ['.env.*', 'node_modules/*'],
                     },
                 }),
                 { mode: 0o600 },
             );
             await writeFile(
-                join(cwd, ".pi/config/sandbox.json"),
+                join(cwd, '.pi/config/sandbox.json'),
                 JSON.stringify({ filesystem: { allowWrite: [external] } }),
                 { mode: 0o600 },
             );
@@ -114,17 +153,23 @@ test.skipIf(!hasCandidateRuntime())(
             expect(config.filesystem.allowWrite).toEqual([external]);
 
             service = createSandboxService({
-                backend: createZeroboxBackend(candidateBackendOptions(leaseRoot)),
+                backend: createZeroboxBackend(
+                    candidateBackendOptions(leaseRoot),
+                ),
                 config,
-                createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+                createLease: () =>
+                    createPrivateTempLease({ rootDir: leaseRoot }),
                 recoverStaleLeases: async () => {
                     await recoverStalePrivateTempLeases({ rootDir: leaseRoot });
                 },
             });
             await service.startBashSession(cwd);
-            let output = "";
-            const result = await createSandboxedBashOps(service, supervisor).exec(
-                "test \"$(cat visible.txt)\" = visible && ! printf blocked > created.txt 2>/dev/null",
+            let output = '';
+            const result = await createSandboxedBashOps(
+                service,
+                supervisor,
+            ).exec(
+                'test "$(cat visible.txt)" = visible && ! printf blocked > created.txt 2>/dev/null',
                 cwd,
                 {
                     timeout: 10,
@@ -135,8 +180,10 @@ test.skipIf(!hasCandidateRuntime())(
             );
 
             expect(result.exitCode, output).toBe(0);
-            await expect(readFile(join(cwd, "created.txt"), "utf8")).rejects.toMatchObject({
-                code: "ENOENT",
+            await expect(
+                readFile(join(cwd, 'created.txt'), 'utf8'),
+            ).rejects.toMatchObject({
+                code: 'ENOENT',
             });
         } finally {
             supervisor.shutdown();
