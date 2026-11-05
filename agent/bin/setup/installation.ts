@@ -612,7 +612,18 @@ export async function rollbackInstallation(
     const targetDefaults =
         state.previousProfileDefaults ??
         (await previousDefaults(previous, old));
-    const reconciled = reconcileProfiles(root, currentDefaults, targetDefaults);
+    const restoredMachinePreferences = Object.fromEntries(
+        Object.keys(targetDefaults).map((path) => [
+            path,
+            readProfile(previous, path),
+        ]),
+    );
+    const reconciled = reconcileProfiles(
+        root,
+        currentDefaults,
+        targetDefaults,
+        restoredMachinePreferences,
+    );
     if (dryRun)
         return `Would restore ${old.release}\n${reconciled.preserved.map((path) => `Preserve local: ${path}`).join('\n')}`;
     return await transact(

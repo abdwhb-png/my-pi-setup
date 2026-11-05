@@ -101,3 +101,26 @@ test('refuses symlinked preferences', () => {
         reconcileProfiles(root, { 'linked.json': {} }, { 'linked.json': {} }),
     ).toThrow('regular JSON object');
 });
+
+test('rollback admits a machine-only property previously used by that installation', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-profile-admitted-'));
+    roots.push(root);
+    const path = 'agent/settings.json';
+    writeJson(join(root, path), { hideThinkingBlock: true });
+    expect(
+        reconcileProfiles(
+            root,
+            { [path]: { hideThinkingBlock: false } },
+            { [path]: {} },
+            { [path]: { hideThinkingBlock: true } },
+        ).profiles[path],
+    ).toEqual({ hideThinkingBlock: true });
+    expect(() =>
+        reconcileProfiles(
+            root,
+            { [path]: { hideThinkingBlock: false } },
+            { [path]: {} },
+            { [path]: {} },
+        ),
+    ).toThrow('Incompatible local preference');
+});

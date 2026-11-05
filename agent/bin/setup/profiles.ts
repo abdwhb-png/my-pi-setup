@@ -123,6 +123,7 @@ export function reconcileProfiles(
     root: string,
     base: ProfileDefaults,
     incoming: ProfileDefaults,
+    restoredMachinePreferences: ProfileDefaults = {},
 ): { profiles: ProfileDefaults; preserved: string[] } {
     const preserved: string[] = [];
     function merge(
@@ -131,6 +132,7 @@ export function reconcileProfiles(
         current: unknown,
         next: unknown,
         location: string[],
+        priorValue: unknown,
     ): unknown {
         if (
             path === 'agent/settings.json' &&
@@ -152,7 +154,13 @@ export function reconcileProfiles(
             preserved.push(`${path}#/${location.join('/')}`);
             return absent;
         }
-        if (before !== absent && next === absent) conflict(path, location);
+        // Rollback may restore a version predating a delivered default for an existing machine preference.
+        if (
+            before !== absent &&
+            next === absent &&
+            (priorValue === absent || kind(priorValue) !== kind(current))
+        )
+            conflict(path, location);
         if (next !== absent && kind(current) !== kind(next))
             conflict(path, location);
         if (
@@ -175,6 +183,7 @@ export function reconcileProfiles(
                         valueAt(current, key),
                         valueAt(next, key),
                         [...location, key],
+                        record(priorValue) ? valueAt(priorValue, key) : absent,
                     );
                     return value === absent ? [] : [[key, value]];
                 }),
@@ -187,7 +196,10 @@ export function reconcileProfiles(
     for (const [path, before] of Object.entries(base)) {
         const current = readProfile(root, path);
         const next = Object.hasOwn(incoming, path) ? incoming[path]! : absent;
-        const result = merge(path, before, current, next, []);
+        const priorValue = Object.hasOwn(restoredMachinePreferences, path)
+            ? restoredMachinePreferences[path]
+            : absent;
+        const result = merge(path, before, current, next, [], priorValue);
         if (result !== absent) profiles[path] = object(result);
     }
     for (const [path, value] of Object.entries(incoming))

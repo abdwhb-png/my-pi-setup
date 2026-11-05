@@ -74,14 +74,26 @@ function pointCurrent(runtimeRoot: string, releaseRoot: string): void {
 }
 
 describe("pi-runtime-store", () => {
-  it('retains runtime resources referenced by a portable installation snapshot', async () => {
+  it('refuses runtime cleanup for an unknown installation-state version', async () => {
+    const { homeDir, runtimeRoot } = createFixture();
+    try {
+      const release = createRelease(runtimeRoot, 'retained');
+      chmodSync(join(runtimeRoot, 'releases'), 0o755);
+      activateRelease(release, runtimeRoot);
+      writeFileSync(join(homeDir, '.pi/.pi-setup-state.json'), JSON.stringify({ schemaVersion: 99, managed: {} }));
+      await expect(cleanupRuntimes(join(homeDir, '.pi'))).rejects.toThrow('setup installation state');
+      expect(existsSync(release)).toBe(true);
+    } finally { rmSync(homeDir, { recursive: true, force: true }); }
+  });
+
+  it.each([1, 2])('retains runtime resources referenced by a portable installation snapshot (schema %s)', async (schemaVersion) => {
     const { homeDir, runtimeRoot } = createFixture();
     const root = join(homeDir, '.pi');
     try {
       const snapshot = createRelease(runtimeRoot, 'snapshot');
       const current = createRelease(runtimeRoot, 'current');
       chmodSync(join(runtimeRoot, 'releases'), 0o755); activateRelease(current, runtimeRoot);
-      writeFileSync(join(root, '.pi-setup-state.json'), JSON.stringify({ schemaVersion: 1, managed: {
+      writeFileSync(join(root, '.pi-setup-state.json'), JSON.stringify({ schemaVersion, managed: {
         'runtime/pi-core/releases/snapshot/runtime-manifest.json': 'snapshot fingerprint',
       } }));
       const report = await cleanupRuntimes(root);

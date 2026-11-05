@@ -12,11 +12,17 @@ Slow Mode now uses one content review for write/edit and a serial, cancellable r
 
 RED tests demonstrated the duplicate write confirmation, the old operator's refusal of any edited profile, the missing nested-provider format and its permissive invalid input handling, a partially discarded model rule, and unsupported UI decisions approving a shell command. Their focused GREEN runs passed after the changes.
 
-The final affected suites passed 393 tests with four explicit integration skips (397 discovered tests). The skips are the installed footer/roles checks, fresh child CLI startup and the native CPA catalog contract; real installed-runtime qualification belongs in GitHub Actions. Tests use temporary profiles and deterministic model playbooks. The full packaging contract also passed alone in approximately four seconds after an earlier concurrent run hit its 20-second timeout.
+The initial affected suites passed 393 tests with four explicit integration skips (397 discovered tests). After the CI corrections, the expanded affected suites passed 414 tests with four explicit integration skips (418 discovered tests), including runtime storage and cleanup contracts. The skips are the installed footer/roles checks, fresh child CLI startup and the native CPA catalog contract; real installed-runtime qualification belongs in GitHub Actions. Tests use temporary profiles and deterministic model playbooks. The full packaging contract also passed alone in approximately four seconds after an earlier concurrent run hit its 20-second timeout.
 
 The broader standard run completed with 5,981 passes, 120 skips and nine failures. One was the newly added partial-model-rule regression observed before its strict validation fix; its later focused run passed. Eight failures remain in unchanged surfaces: the portable-home meta check sees the CI fixture account path, the subagents success fixture references an absent installed entrypoint, four footer tests provide an incomplete API mock, the brainstorm verifier fixture lacks its tool-selection resolver, and the native runtime fixture fails its directory trust checks. Footer/brainstorm and runtime failures were reproduced in separate focused runs. These failures are retained evidence, not a green full-suite result; they were not suppressed or added to an allowlist.
 
 Repository and portability TypeScript checks, lint and ownership checks are recorded separately from runtime qualification. Existing lint warnings are not treated as newly introduced errors.
+
+## First CI findings
+
+Run `42016771058` on `eaebc1d243f126e6055d3d67e19662481643902d` passed lint, resource classification, host-tool discovery, installed runtime checks and the affected regression suites, then exposed two missed contracts. Rollback rejected a machine-only preference that existed in the older installation before an incoming release began delivering a default for it. Runtime cleanup also rejected installation-state schema version 2. Both findings were reproduced in focused RED tests. Rollback now uses the preserved older installation's actual profiles as evidence that such a property was already present there, while forward updates retain their removed-property refusal. The runtime reference reader accepts versions 1 and 2 and still refuses unknown versions. Cleanup is now an explicit blocking CI check.
+
+The runtime reference reader belongs to this repository's storage layer, not pi-core or the native engine. Changing it invalidates the workflow's conservative native-reuse guard, so the corrected commit requires a fresh native qualification rather than weakening that guard.
 
 ## CI contracts
 

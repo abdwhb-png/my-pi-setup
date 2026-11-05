@@ -513,10 +513,12 @@ test('updates and rollback preserve local preferences while adopting new default
             nested: { a: 3, b: 4 },
             optional: true,
             added: true,
+            machineOnly: false,
         });
         await installBundle({ root, bundle: first, release: 'one', provision });
         writeJson(join(root, 'agent/settings.json'), {
             defaultModel: 'machine',
+            machineOnly: true,
             theme: 'old',
             nested: { a: 9, b: 2 },
         });
@@ -546,6 +548,7 @@ test('updates and rollback preserve local preferences while adopting new default
             JSON.parse(readFileSync(join(root, 'agent/settings.json'), 'utf8')),
         ).toEqual({
             defaultModel: 'machine',
+            machineOnly: true,
             theme: 'new',
             nested: { a: 9, b: 4 },
             added: true,
@@ -563,6 +566,7 @@ test('updates and rollback preserve local preferences while adopting new default
             JSON.parse(readFileSync(join(root, 'agent/settings.json'), 'utf8')),
         ).toEqual({
             defaultModel: 'machine',
+            machineOnly: true,
             theme: 'old',
             nested: { a: 9, b: 2 },
         });

@@ -450,7 +450,7 @@ export function readRuntimeUsage(
     if (existsSync(installation)) {
         const state = readJsonObject(installation);
         if (
-            state.schemaVersion !== 1 ||
+            (state.schemaVersion !== 1 && state.schemaVersion !== 2) ||
             !state.managed ||
             typeof state.managed !== "object" ||
             Array.isArray(state.managed)

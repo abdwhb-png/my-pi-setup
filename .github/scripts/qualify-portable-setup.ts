@@ -16,6 +16,7 @@ import {
     unlinkSync,
 } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
+import { cleanupRuntimes } from '../../agent/bin/setup/cleanup.ts';
 import {
     packDistribution,
     downloadDraftDistribution,
@@ -743,7 +744,10 @@ if (!profileOnly) {
             ).includes('survives'),
         );
     run(process.execPath, [join(target, 'bin/pi-setup'), 'check'], home);
-    passed('real update, idempotency, rollback and post-rollback integrity');
+    await cleanupRuntimes(target, true);
+    passed(
+        'real update, idempotency, rollback, runtime cleanup and post-rollback integrity',
+    );
     const incompatibleSettingsPath = join(next, 'setup/agent/settings.json');
     const validSettings = readFileSync(incompatibleSettingsPath);
     writeJson(incompatibleSettingsPath, {
