@@ -1,13 +1,19 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, afterAll, expect, test, mock } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireRuntimeStorageLock, runtimeChildStdio } from './runtime-storage.ts';
+const fs = { ...await import('node:fs') };
+afterAll(() => { mock.module('node:fs', () => fs); });
+const readDirectory = fs.readdirSync;
+let processInventory: number[] | undefined;
+mock.module('node:fs', () => ({ ...fs, readdirSync: (...args: Parameters<typeof fs.readdirSync>) =>
+    args[0] === '/proc' && processInventory ? processInventory.map(String) : Reflect.apply(readDirectory, fs, args) }));
+const { acquireRuntimeStorageLock, runtimeChildStdio } = await import('./runtime-storage.ts');
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { processInventory = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function installation() {
     const home = mkdtempSync(join(tmpdir(), 'runtime-lock-test-')); roots.push(home);
     const root = join(home, '.pi'); mkdirSync(root, { mode: 0o700 }); return root;
@@ -64,4 +70,33 @@ test('an in-flight child keeps the kernel lock after its parent closes its descr
         }
     }
     const recovered = acquireRuntimeStorageLock(root); recovered.release();
+});
+
+test.each(['valid', 'missing', 'wrong-boot'] as const)('foreign runtime pin %s retains the appropriate legacy fallback', async (pinState) => {
+    const root = installation();
+    const foreign = installation();
+    const release = join(foreign, 'runtime/pi-core/releases/fixture');
+    const cli = join(release, 'node_modules/pi-coding-agent/dist/cli.js');
+    mkdirSync(join(cli, '..'), { recursive: true, mode: 0o700 });
+    const storage = new URL('./runtime-storage.ts', import.meta.url).href;
+    writeFileSync(cli, `import {pinRuntimeEntry} from ${JSON.stringify(storage)};pinRuntimeEntry(${JSON.stringify(foreign)},()=>${JSON.stringify(cli)});process.stdout.write('ready');setInterval(()=>{},1000);`);
+    const child = spawn(process.execPath, [cli], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+        await once(child.stdout!, 'data');
+        processInventory = [child.pid!];
+        const { runtimeProcessIdentity, readRuntimeUsage } = await import('./runtime-storage.ts');
+        const identity = runtimeProcessIdentity(child.pid!)!;
+        const file = join(`${foreign}.runtime-users`, `${child.pid}-${identity.started}.json`);
+        if (pinState === 'missing') rmSync(file);
+        if (pinState === 'wrong-boot') {
+            const record = JSON.parse(readFileSync(file, 'utf8'));
+            record.boot = '00000000-0000-0000-0000-000000000000';
+            writeFileSync(file, JSON.stringify(record));
+        }
+        const lock = acquireRuntimeStorageLock(root);
+        try { expect(readRuntimeUsage(lock, true).legacyPi).toBe(pinState !== 'valid'); }
+        finally { lock.release(); }
+    } finally {
+        const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+    }
 });

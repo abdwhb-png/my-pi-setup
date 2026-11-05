@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fileURLToPath } from "node:url";
 
+import { nodeJspiArguments } from "./testing/node-jspi.ts";
 import type { AnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 type PythonWorkerResponse =
@@ -20,7 +21,7 @@ async function runPythonWorker(
     const child = Bun.spawn(
         [
             "node",
-            "--experimental-wasm-jspi",
+            ...nodeJspiArguments("node"),
             "--experimental-loader",
             loaderPath,
             workerPath,

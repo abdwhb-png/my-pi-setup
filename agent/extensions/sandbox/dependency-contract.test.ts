@@ -1,3 +1,4 @@
+import { nodeJspiArguments } from "./analysis/testing/node-jspi.ts";
 import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -281,7 +282,7 @@ describe("sandbox dependency contract", () => {
         const child = Bun.spawn(
             [
                 "node",
-                "--experimental-wasm-jspi",
+                ...nodeJspiArguments("node"),
                 "--experimental-loader",
                 loaderPath,
                 "--input-type=module",

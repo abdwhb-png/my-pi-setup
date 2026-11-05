@@ -112,6 +112,7 @@ export function fixedWorkerCommand(
                   dependencies.nodePath,
                   `--wasm-max-mem-pages=${Math.floor(request.limits.memoryBytes / WASM_PAGE_BYTES)}`,
                   "--no-warnings",
+                  // The sealed distribution pins Node 24; its paths exist only after sandbox mounting.
                   "--experimental-wasm-jspi",
                   "--experimental-loader",
                   join(analysisDirectory, "eryx-loader.mjs"),

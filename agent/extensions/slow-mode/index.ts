@@ -28,6 +28,7 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { isDangerous } from "../_shared/command-execution/guard";
 import { createWidget } from "../_shared/fancy-footer.ts";
 import { createMcpRefResolver } from "../_shared/mcp/ref-resolver.ts";
+import { redactTextPreservingContext } from "../_shared/secret-redaction.ts";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import {
     resolvePath,
@@ -448,8 +449,15 @@ export default function slowMode(pi: ExtensionAPI) {
                                       edits: [
                                           {
                                               oldText:
-                                                  review.originalFileContent,
-                                              newText: review.editedContent,
+                                                  review.originalFileContent.replace(
+                                                      /^\uFEFF/,
+                                                      "",
+                                                  ),
+                                              newText:
+                                                  review.editedContent.replace(
+                                                      /^\uFEFF/,
+                                                      "",
+                                                  ),
                                           },
                                       ],
                                   }
@@ -639,10 +647,16 @@ export default function slowMode(pi: ExtensionAPI) {
                     reason: "Slow-mode review did not approve the tool call.",
                 };
             });
-        } catch {
+        } catch (error) {
+            const cancelled =
+                error instanceof Error && error.name === "AbortError";
+            const diagnostic =
+                error instanceof Error ? error.message : "Unknown review error";
             return {
                 block: true,
-                reason: "Slow-mode review was cancelled or failed; the tool was not approved.",
+                reason: cancelled
+                    ? "Slow-mode review was cancelled; the tool was not approved."
+                    : `Slow-mode review failed: ${redactTextPreservingContext(diagnostic)}; the tool was not approved.`,
             };
         }
     });

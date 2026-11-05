@@ -586,6 +586,7 @@ if (!profileOnly) {
     };
     legacyState.schemaVersion = 1;
     delete legacyState.profileDefaults;
+    delete legacyState.profilePreferences;
     delete legacyState.previousProfileDefaults;
     writeJson(join(target, '.pi-setup-state.json'), legacyState);
     writeJson(catalogPath, {

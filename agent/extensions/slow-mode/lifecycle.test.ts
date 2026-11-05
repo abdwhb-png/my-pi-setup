@@ -397,3 +397,44 @@ test("a failed review is reported and does not strand the next write", async () 
     expect(existsSync(join(f.root, "failed.txt"))).toBe(false);
     expect(readFileSync(join(f.root, "next.txt"), "utf8")).toBe("second");
 });
+
+
+test("external multi-edit preserves exactly one UTF-8 BOM", async () => {
+    const previousVisual = process.env.VISUAL;
+    const f = await fixture();
+    let running: Promise<void> | undefined;
+    try {
+        const editor = join(f.root, "fixture-editor");
+        writeFileSync(editor, "#!/usr/bin/env bun\nimport {appendFileSync} from 'node:fs';appendFileSync(process.argv[2], 'approved extra\\n');\n");
+        chmodSync(editor, 0o700);
+        process.env.VISUAL = editor;
+        writeFileSync(join(f.root, "edit.txt"), "\uFEFFfirst\nsecond\n");
+        running = f.t.run(when("Edit fixture", [calls("edit", {
+            path: "edit.txt", edits: [{ oldText: "first", newText: "changed first" }, { oldText: "second", newText: "changed second" }],
+        }), says("Finished.")]));
+        await until(() => f.reviews.length === 1);
+        // Legacy Ctrl+E opens the external editor.
+        f.reviews[0]!.component.handleInput?.("\x05");
+        await until(() => f.reviews.length === 2);
+        f.reviews[1]!.component.handleInput?.("y");
+        await running;
+        expect(f.t.events.toolResults[0]!.isError).toBe(false);
+        expect(readFileSync(join(f.root, "edit.txt"), "utf8")).toBe("\uFEFFchanged first\nchanged second\napproved extra\n");
+    } finally {
+        if (previousVisual === undefined) delete process.env.VISUAL;
+        else process.env.VISUAL = previousVisual;
+        await f.mode("off");
+        await running;
+    }
+});
+
+test("a failed generic review blocks execution and preserves a redacted diagnostic", async () => {
+    const f = await fixture(false, { read: true });
+    const runner = f.t.session.extensionRunner!;
+    runner.setUIContext({ ...runner.getUIContext(), custom: async () => { throw new Error("review-ui-probe-failure Bearer fixture-secret"); } }, "tui");
+    await f.t.run(when("Read fixture", [calls("read", { path: "unread.txt" }), says("Finished.")]));
+    const result = f.t.events.toolResults[0]!;
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("review-ui-probe-failure");
+    expect(JSON.stringify(result)).not.toContain("fixture-secret");
+});

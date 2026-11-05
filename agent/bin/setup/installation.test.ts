@@ -570,7 +570,7 @@ test('updates and rollback preserve local preferences while adopting new default
             theme: 'old',
             nested: { a: 9, b: 2 },
         });
-        expect(readInstallation(root).schemaVersion).toBe(2);
+        expect(readInstallation(root).schemaVersion).toBe(3);
     } finally {
         rmSync(home, { recursive: true, force: true });
     }
@@ -641,7 +641,7 @@ test.each(['matching', 'wrong', 'missing'])(
                         readFileSync(join(root, 'agent/settings.json'), 'utf8'),
                     ).defaultModel,
                 ).toBe('machine');
-                expect(readInstallation(root).schemaVersion).toBe(2);
+                expect(readInstallation(root).schemaVersion).toBe(3);
             } else {
                 await expect(updating).rejects.toThrow(
                     variant === 'wrong'

@@ -313,6 +313,15 @@ export function readRuntimeUsage(
     lock.assertHeld();
     const paths = new Map<string, string>();
     const live = new Set<number>();
+    const retain = (record: RuntimeUse): boolean => {
+        const owner = runtimeProcessIdentity(record.pid);
+        if (owner?.started !== record.started || owner.boot !== record.boot)
+            return false;
+        live.add(record.pid);
+        for (const ref of record.paths)
+            paths.set(ref, `live session PID ${record.pid}`);
+        return true;
+    };
     const users = `${lock.root}.runtime-users`;
     if (existsSync(users)) {
         ownedDirectory(users);
@@ -321,15 +330,7 @@ export function readRuntimeUsage(
             if (!/^\d+-\d+\.json$/.test(name))
                 throw new Error(`Unexpected runtime usage resource: ${path}`);
             const record = readRuntimeUse(path);
-            const owner = runtimeProcessIdentity(record.pid);
-            if (
-                owner?.started === record.started &&
-                owner.boot === record.boot
-            ) {
-                live.add(record.pid);
-                for (const ref of record.paths)
-                    paths.set(ref, `live session PID ${record.pid}`);
-            } else if (!dryRun) rmSync(path);
+            if (!retain(record) && !dryRun) rmSync(path);
         }
     }
     const processes = new Map<number, { parent: number; pi: boolean }>();
@@ -386,6 +387,26 @@ export function readRuntimeUsage(
                     (arg.includes("/pi-coding-agent/") &&
                         /\/cli\.(js|ts)$/.test(arg)),
             );
+            // A modern Pi process may pin its runtimes in another installation.
+            // Infer only recognized layouts, then require its secure identity-bound record.
+            for (const arg of absolute) {
+                const match = arg.match(
+                    /^(.*)\/(?:runtime\/pi-core\/releases\/.*\/(?:cli\.js|pi)|agent\/.*\/pi-coding-agent\/.*\/cli\.(?:js|ts)|bin\/pi)$/,
+                );
+                if (!match || match[1] === lock.root) continue;
+                const identity = runtimeProcessIdentity(pid);
+                if (!identity) continue;
+                const foreignUsers = `${match[1]}.runtime-users`;
+                const file = join(
+                    foreignUsers,
+                    `${pid}-${identity.started}.json`,
+                );
+                if (!existsSync(file)) continue;
+                ownedDirectory(foreignUsers);
+                const record = readRuntimeUse(file);
+                if (record.paths.some((ref) => releaseForPath(match[1]!, ref)))
+                    retain(record);
+            }
             processes.set(pid, { parent, pi });
         } catch (error) {
             if (
@@ -450,7 +471,9 @@ export function readRuntimeUsage(
     if (existsSync(installation)) {
         const state = readJsonObject(installation);
         if (
-            (state.schemaVersion !== 1 && state.schemaVersion !== 2) ||
+            (state.schemaVersion !== 1 &&
+                state.schemaVersion !== 2 &&
+                state.schemaVersion !== 3) ||
             !state.managed ||
             typeof state.managed !== "object" ||
             Array.isArray(state.managed)

@@ -37,6 +37,8 @@ import {
     readProfile,
     reconcileProfiles,
     type ProfileDefaults,
+    type ProfilePreferences,
+    readProfilePreferences,
 } from './profiles.ts';
 
 const STATE = '.pi-setup-state.json';
@@ -48,7 +50,8 @@ const GENERATED_DIRECTORIES = [
     'agent/git',
 ];
 interface InstallationState {
-    schemaVersion: 1 | 2;
+    schemaVersion: 1 | 2 | 3;
+    profilePreferences?: ProfilePreferences;
     profileDefaults?: ProfileDefaults;
     previousProfileDefaults?: ProfileDefaults;
     release: string;
@@ -82,7 +85,9 @@ export function readInstallation(root: string): InstallationState {
         );
     const value = json(join(root, STATE));
     if (
-        (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+        (value.schemaVersion !== 1 &&
+            value.schemaVersion !== 2 &&
+            value.schemaVersion !== 3) ||
         typeof value.release !== 'string'
     )
         throw new Error('Unmanaged or invalid Pi installation');
@@ -101,7 +106,7 @@ export function readInstallation(root: string): InstallationState {
     )
         throw new Error('Invalid previous release reference');
     let profileDefaults: ProfileDefaults | undefined;
-    if (value.schemaVersion === 2) {
+    if (value.schemaVersion === 2 || value.schemaVersion === 3) {
         profileDefaults = {};
         for (const [path, defaults] of Object.entries(
             object(value.profileDefaults),
@@ -121,7 +126,15 @@ export function readInstallation(root: string): InstallationState {
                 throw new Error(`Missing profile baseline: ${path}`);
     }
     return {
-        schemaVersion: value.schemaVersion === 2 ? 2 : 1,
+        schemaVersion: value.schemaVersion,
+        ...(value.schemaVersion === 3
+            ? {
+                  profilePreferences: readProfilePreferences(
+                      value.profilePreferences,
+                      profileDefaults!,
+                  ),
+              }
+            : {}),
         ...(profileDefaults ? { profileDefaults } : {}),
         ...(value.previousProfileDefaults !== undefined
             ? {
@@ -240,7 +253,13 @@ export async function installBundle(
     const baseline = previous
         ? await previousDefaults(root, previous, options.loadPreviousBundle)
         : {};
-    const reconciled = reconcileProfiles(root, baseline, defaults);
+    const reconciled = reconcileProfiles(
+        root,
+        baseline,
+        defaults,
+        {},
+        previous?.profilePreferences,
+    );
     const profilePath = join(
         options.bundle,
         'setup/agent/config/sandbox.development.example.json',
@@ -335,6 +354,7 @@ export async function installBundle(
         options.update ? 'Updated' : 'Installed',
         {
             profileDefaults: defaults,
+            profilePreferences: reconciled.preferences,
             inspectedInventory: inspected,
             previousProfileDefaults: baseline,
         },
@@ -403,6 +423,7 @@ async function transact(
     action: string,
     transactionState: {
         profileDefaults: ProfileDefaults;
+        profilePreferences: ProfilePreferences;
         inspectedInventory?: Record<string, string>;
         previousProfileDefaults: ProfileDefaults;
     },
@@ -514,10 +535,11 @@ async function transact(
                 ),
             );
             writeJson(join(root, STATE), {
-                schemaVersion: 2,
+                schemaVersion: 3,
                 release,
                 managed,
                 profileDefaults: transactionState.profileDefaults,
+                profilePreferences: transactionState.profilePreferences,
                 previousProfileDefaults:
                     transactionState.previousProfileDefaults,
                 ...(hadTarget ? { previousId: id } : {}),
@@ -623,6 +645,7 @@ export async function rollbackInstallation(
         currentDefaults,
         targetDefaults,
         restoredMachinePreferences,
+        state.profilePreferences,
     );
     if (dryRun)
         return `Would restore ${old.release}\n${reconciled.preserved.map((path) => `Preserve local: ${path}`).join('\n')}`;
@@ -651,6 +674,7 @@ export async function rollbackInstallation(
         'Restored',
         {
             profileDefaults: targetDefaults,
+            profilePreferences: reconciled.preferences,
             inspectedInventory: inspected,
             previousProfileDefaults: currentDefaults,
         },

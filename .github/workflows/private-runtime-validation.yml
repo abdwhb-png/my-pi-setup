@@ -96,6 +96,13 @@ jobs:
         run: |
           env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
             bun test --isolate scripts/configure-sandbox.test.ts extensions/_shared/package-install/finalizer.test.ts extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
+      - name: Run setup and extension regression suites
+        working-directory: .pi/agent
+        run: |
+          bun test --isolate bin/setup extensions/slow-mode \
+            extensions/_shared/fancy-footer.test.ts extensions/_shared/runtime-storage.test.ts \
+            extensions/brainstorm-forcer/index.test.ts extensions/__tests__/coverage.test.ts \
+            extensions/__tests__/pi-subagents-runtime.integration.test.ts
       - name: Build the static engine
         working-directory: projects/zerobox
         run: |

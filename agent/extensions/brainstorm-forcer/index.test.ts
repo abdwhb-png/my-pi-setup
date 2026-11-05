@@ -328,7 +328,10 @@ describe("brainstorm-forcer redesign", () => {
     const agentsDir = join(root, ".pi", "agents");
     const manager = createCapabilityCeilingManager();
     await mkdir(agentsDir, { recursive: true });
-    await writeFile(join(isolatedAgentDir!, "settings.json"), JSON.stringify({ packages: [dirname(fileURLToPath(import.meta.resolve("pi-subagents")))] }));
+    const resolver = join(isolatedAgentDir!, "fixture-tool-resolver.ts");
+    // Isolate naming precedence from host tool expansion, covered by its provider tests.
+    await writeFile(resolver, 'export function resolveTools(request) { return request.selections.map(() => ({ ok: true, selectors: ["read"] })); }');
+    await writeFile(join(isolatedAgentDir!, "settings.json"), JSON.stringify({ packages: [dirname(fileURLToPath(import.meta.resolve("pi-subagents")))], subagents: { toolSelectionResolver: resolver } }));
     await writeFile(
       join(agentsDir, "code-analysis.scout.md"),
       "---\nname: scout\npackage: code-analysis\ndescription: Colliding project scout\ntools: '@inspect'\n---\n",

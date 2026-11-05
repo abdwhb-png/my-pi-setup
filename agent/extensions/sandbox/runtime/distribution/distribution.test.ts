@@ -1,7 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, afterAll, expect, test, mock } from "bun:test";
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { pinPrivateRuntimeEntry } from '../runtime-bundle.ts';
+const fs = { ...await import('node:fs') };
+afterAll(() => { mock.module('node:fs', () => fs); });
+const readDirectory = fs.readdirSync;
+const processInventory = new Set<number>([process.pid]);
+mock.module('node:fs', () => ({ ...fs, readdirSync: (...args: Parameters<typeof fs.readdirSync>) =>
+    args[0] === '/proc' ? [...processInventory].map(String) : Reflect.apply(readDirectory, fs, args) }));
+const { pinPrivateRuntimeEntry } = await import('../runtime-bundle.ts');
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +19,7 @@ const { stageRuntimeRelease, cleanupZeroboxRuntimeStore } = await import("./stag
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const fixtureRoots: string[] = [];
 afterEach(async () => {
+    processInventory.clear(); processInventory.add(process.pid);
     for (const parent of fixtureRoots.splice(0)) {
         await rm(parent, { recursive: true, force: true });
         await rm(`${parent}.runtime-users`, { recursive: true, force: true });
@@ -91,6 +98,7 @@ test('legacy live Pi sessions defer Zerobox collection until they exit', async (
     const script = join(f.parent, 'bin/pi');
     await writeFile(script, 'process.stdout.write("ready");setInterval(()=>{},1000);');
     const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+    processInventory.add(child.pid!);
     try {
         await once(child.stdout!, 'data');
         for (const version of ['first', 'second', 'third']) {

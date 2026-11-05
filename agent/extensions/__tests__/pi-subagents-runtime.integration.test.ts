@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	calls,
 	createTestSession,
@@ -9,7 +9,7 @@ import {
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 const FANOUT_CHILD_EXTENSION_PATH = resolve(
@@ -20,6 +20,9 @@ const PI_SUBAGENTS_ENTRY_PATH = fileURLToPath(import.meta.resolve("pi-subagents"
 describe("pi-subagents on the current Pi runtime", () => {
 	let testSession: TestSession | undefined;
 	let previousParentSessionEnv: string | undefined;
+	beforeEach(() => {
+		previousParentSessionEnv = process.env[PARENT_SESSION_ENV];
+	});
 
 	afterEach(() => {
 		testSession?.dispose();
@@ -58,11 +61,10 @@ describe("pi-subagents on the current Pi runtime", () => {
 	}, { timeout: 15_000 });
 
 	it("keeps successful results successful and emits the settled lifecycle", async () => {
-		previousParentSessionEnv = process.env[PARENT_SESSION_ENV];
 		let settledEvents = 0;
 
 		testSession = await createTestSession({
-			extensions: [join(dirname(PI_SUBAGENTS_ENTRY_PATH), "src/extension/index.js")],
+			extensions: [PI_SUBAGENTS_ENTRY_PATH],
 			extensionFactories: [
 				(pi) => {
 					pi.on("agent_settled", () => {

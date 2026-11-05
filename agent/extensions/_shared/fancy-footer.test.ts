@@ -1,11 +1,17 @@
-import { describe, it, expect, mock, spyOn } from "bun:test";
+import { describe, it, expect, mock, beforeEach, afterAll } from "bun:test";
 
-// Mock the runtime module since we only have a type shim
+const api = { ...await import("pi-fancy-footer/api") };
+afterAll(() => { mock.module("pi-fancy-footer/api", () => api); });
+const contribute = mock();
+const discovery = mock();
+const refresh = mock();
+beforeEach(() => { contribute.mockReset(); discovery.mockReset(); refresh.mockReset(); });
+
 mock.module("pi-fancy-footer/api", () => ({
-  defineFancyFooterWidget: <T>(x: T) => x,
-  contributeFancyFooterWidgets: mock(),
-  requestFancyFooterWidgetDiscovery: mock(),
-  requestFancyFooterRefresh: mock(),
+  ...api,
+  contributeFancyFooterWidgets: contribute,
+  requestFancyFooterWidgetDiscovery: discovery,
+  requestFancyFooterRefresh: refresh,
 }));
 
 // Type-level imports (resolved from the .d.ts shim)
@@ -119,7 +125,7 @@ describe("createWidget", () => {
     const mockPi = { events: { on: mock(), emit: mock() } } as any;
     const { createWidget } = await import("./fancy-footer");
     const { requestFancyFooterRefresh } = await import("pi-fancy-footer/api");
-    (requestFancyFooterRefresh as any).mockImplementationOnce(() => {
+    refresh.mockImplementationOnce(() => {
       throw new Error("This extension ctx is stale after session replacement or reload.");
     });
 
@@ -136,12 +142,12 @@ describe("createWidget", () => {
     const mockPi = { events: { on: mock(), emit: mock() } } as any;
     const { createWidget } = await import("./fancy-footer");
 
+    contribute.mockImplementationOnce(() => { throw new Error("Footer unavailable"); });
     const w = createWidget(mockPi, {
       id: "test.fallback.throw",
       render: () => "hello",
     });
-    // simulate inactive fallback mode
-    (w as any).isActive = false;
+    expect(w.active).toBe(false);
 
     const ctx = {
       hasUI: true,
@@ -153,10 +159,21 @@ describe("createWidget", () => {
     } as any;
     expect(() => w.update(ctx, "fallback")).not.toThrow();
     expect(() => w.remove(ctx)).not.toThrow();
+    expect(ctx.ui.setWidget).toHaveBeenCalledTimes(2);
   });
 
-  it("update falls back to setWidget when not active", () => {
-    // We can't easily mock a failed import to test the fallback path,
-    // but the code path is clear: if contribute throws, isActive = false.
+  it("update falls back to setWidget when contribution fails", async () => {
+    contribute.mockImplementationOnce(() => { throw new Error("Footer unavailable"); });
+    const { createWidget } = await import("./fancy-footer");
+    const w = createWidget({ events: { on: mock(), emit: mock() } } as any, { id: "test.fallback", render: () => "hello" });
+    const ctx = { hasUI: true, ui: { setWidget: mock() } } as any;
+    expect(w.active).toBe(false);
+    w.update(ctx, "fallback");
+    expect(ctx.ui.setWidget).toHaveBeenLastCalledWith("test.fallback", ["fallback"]);
+    w.update(ctx, null);
+    expect(ctx.ui.setWidget).toHaveBeenLastCalledWith("test.fallback", undefined);
+    w.remove(ctx);
+    expect(ctx.ui.setWidget).toHaveBeenCalledTimes(3);
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

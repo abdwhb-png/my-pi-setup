@@ -48,6 +48,9 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git sudo unzip xz-utils libstdc++6
           useradd -m -s /bin/bash qualifier
+          qualifier_home=$(getent passwd qualifier | cut -d: -f6)
+          test -n "$qualifier_home"
+          echo "QUALIFICATION_OUTPUT=$qualifier_home/qualification" >> "$GITHUB_ENV"
           echo 'qualifier ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/qualifier
           chmod 440 /etc/sudoers.d/qualifier
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -66,12 +69,12 @@ jobs:
           install -m 755 "$(command -v bun)" /usr/local/bin/bun
           sudo -u qualifier env PATH="/usr/local/bin:$PATH" GITHUB_ACTIONS=true \
             QUALIFICATION_PLATFORM=ubuntu QUALIFICATION_TOOL_LAYOUT="$TOOL_LAYOUT" \
-            bash .github/scripts/qualify-portable-setup.sh tools-only /home/qualifier/qualification
+            bash .github/scripts/qualify-portable-setup.sh tools-only "$QUALIFICATION_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: portable-tools-clean-${{ matrix.layout }}-evidence
-          path: /home/qualifier/qualification/evidence/
+          path: ${{ env.QUALIFICATION_OUTPUT }}/evidence/
           if-no-files-found: warn
           retention-days: 14
 
@@ -200,7 +203,9 @@ jobs:
         run: |
           $source = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:GITHUB_WORKSPACE").Trim()
           $runtime = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:RUNNER_TEMP/native-runtime").Trim()
-          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_TOOL_LAYOUT=${{ matrix.repetition == 1 && 'system' || 'mise' }} QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "set -euo pipefail; git config --global --add safe.directory '$source/.git'; git clone --no-local '$source' /home/qualifier/source; cd /home/qualifier/source; bash .github/scripts/qualify-portable-setup.sh '$runtime' /home/qualifier/qualification"
+          $qualifierHome = ((wsl -d Ubuntu-24.04 --exec getent passwd qualifier).Trim() -split ":")[5]
+          if (-not $qualifierHome) { throw "Cannot resolve qualifier home" }
+          wsl -d Ubuntu-24.04 -u qualifier --exec env GITHUB_ACTIONS=true CI=true QUALIFICATION_TOOL_LAYOUT=${{ matrix.repetition == 1 && 'system' || 'mise' }} QUALIFICATION_PLATFORM=wsl2 QUALIFICATION_SOURCE_SHA=$env:GITHUB_SHA bash -lc "set -euo pipefail; git config --global --add safe.directory '$source/.git'; git clone --no-local '$source' '$qualifierHome/source'; cd '$qualifierHome/source'; bash .github/scripts/qualify-portable-setup.sh '$runtime' '$qualifierHome/qualification'"
           if ($LASTEXITCODE -ne 0) { throw "WSL2 qualification failed" }
       - name: Collect WSL2 evidence
         if: always()
@@ -208,7 +213,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/wsl-evidence" | Out-Null
           $destination = (wsl -d Ubuntu-24.04 --exec wslpath -a "$env:RUNNER_TEMP/wsl-evidence").Trim()
-          wsl -d Ubuntu-24.04 -u root --exec bash -lc "if test -d /home/qualifier/qualification/evidence; then cp -a /home/qualifier/qualification/evidence/. '$destination/'; fi"
+          $qualifierHome = ((wsl -d Ubuntu-24.04 --exec getent passwd qualifier).Trim() -split ":")[5]
+          if (-not $qualifierHome) { throw "Cannot resolve qualifier home" }
+          wsl -d Ubuntu-24.04 -u root --exec bash -lc "if test -d '$qualifierHome/qualification/evidence'; then cp -a '$qualifierHome/qualification/evidence'/. '$destination/'; fi"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

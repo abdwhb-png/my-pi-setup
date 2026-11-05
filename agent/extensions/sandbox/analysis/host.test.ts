@@ -97,7 +97,7 @@ function dependencies() {
             return () => ++time;
         })(),
         bunPath: "/trusted/bun",
-        nodePath: "/usr/bin/node",
+        nodePath: "/__zerobox/analysis/bin/node",
         prlimitPath: "/usr/bin/prlimit",
         sandboxRoot: dirname(fileURLToPath(import.meta.url)),
     };
@@ -199,7 +199,7 @@ describe("analysis sandbox host", () => {
         expect(harness.childInput().outputBytes).toBe(64 * 1024 + 6);
     });
 
-    it("uses only the fixed Node JSPI worker for Python", async () => {
+    it("constructs the pinned Node command without launching private paths before mounting", async () => {
         const harness = dependencies();
         const request = normalizeAnalysisRequest({
             id: "call-python",
@@ -210,7 +210,7 @@ describe("analysis sandbox host", () => {
         await executeAnalysisHostRequest(request, harness.deps);
 
         const command = harness.preparedCommand() as { args: string[] };
-        expect(command.args).toContain("/usr/bin/node");
+        expect(command.args).toContain("/__zerobox/analysis/bin/node");
         expect(command.args).toContain("--as=12884901888");
         expect(command.args).toContain("--wasm-max-mem-pages=16384");
         expect(command.args).toContain("--experimental-wasm-jspi");

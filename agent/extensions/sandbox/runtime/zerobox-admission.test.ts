@@ -12,10 +12,10 @@ test("backend requires the pinned bundle and publishes context only after matchi
  const parent=await mkdtemp(join(tmpdir(),"z-"));const root=join(parent,"bundle");
  const sha=(value:string)=>createHash("sha256").update(value).digest("hex");
  const lease=await createPrivateTempLease({rootDir:join(parent,"r")});
- for(const path of ["bin","helper","components/shell/bin","components/analysis"])await mkdir(join(root,path),{recursive:true});
+ for(const path of ["bin","helper","components/shell/bin","components/analysis"])await mkdir(join(root,path),{recursive:true,mode:0o700});
  for(const [path,value] of Object.entries({"bin/zerobox":"engine","helper/zerobox-linux-sandbox":"helper","components/shell/bin/bash":"bash","components/shell/bin/env":"env"}))await writeFile(join(root,path),value,{mode:0o700});
  const manifest=JSON.stringify({schema:1,target:"x86_64-unknown-linux-gnu",version:"test",helper:{path:"helper/zerobox-linux-sandbox",sha256:sha("helper")},components:{shell:{root:"components/shell",files:[{path:"bin/bash",sha256:sha("bash")},{path:"bin/env",sha256:sha("env")}]},analysis:{root:"components/analysis",files:[]}}});
- await writeFile(join(root,"manifest.json"),manifest);
+ await writeFile(join(root,"manifest.json"),manifest,{mode:0o600});
  const cwd=join(parent,"project");await mkdir(cwd);
  const policy:SandboxPolicy={name:"bash-general",strict:true,tmpNamespace:"lease-private",filesystem:{allowRead:[cwd],allowWrite:[cwd],denyRead:[],denyWrite:[],denyReadGlobs:[],denyWriteGlobs:[]},network:{mode:"deny-all",allow:[],allowHost:[],deny:[]},resources:{unixSockets:[],tcpPublications:[]},docker:{mode:"disabled"},environment:{inherit:[],set:{HOME:"/home/sandbox",PATH:"/__zerobox/runtime/bin"},deny:[]}};
  const report={schema:1 as const,runtime:{target:"x86_64-unknown-linux-gnu" as const,version:"test",manifestSha256:sha(manifest),component:"shell" as const},helperSha256:sha("helper"),kernelMounts: [{ destination: "/__zerobox/runtime", root: "/bundle/shell", source: "/dev/test", filesystem: "ext4", access: "ro" as const }], mounts:[{source:join(root,"components/shell"),destination:"/__zerobox/runtime",access:"ro" as const,origin:"runtime" as const}],filesystem:policy.filesystem,network:{...policy.network,allowLocalBinding:false},resources:policy.resources!,path:["/__zerobox/runtime/bin"],environment:{inherit:[],set:["HOME","PATH"],deny:[]},home:{path:"/home/sandbox",namespace:"lease-private" as const},tmp:{path:"/tmp" as const,namespace:"lease-private" as const},docker:policy.docker};
