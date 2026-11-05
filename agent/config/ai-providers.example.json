@@ -1,6 +1,11 @@
 {
     "providers": {
-        "cpa": true
+        "cpa": {
+            "enabled": true,
+            "baseUrl": "http://localhost:8317/v1",
+            "refreshTtlMs": 30000,
+            "silentCatalogDiff": false
+        }
     },
     "modelRules": [
         {
@@ -18,13 +23,43 @@
                     "input": 1,
                     "output": 2,
                     "cacheRead": 0.1,
-                    "cacheWrite": 0
+                    "cacheWrite": 0,
+                    "tiers": [
+                        {
+                            "inputTokensAbove": 64000,
+                            "input": 2,
+                            "output": 4,
+                            "cacheRead": 0.2,
+                            "cacheWrite": 0
+                        }
+                    ]
+                },
+                "api": "openai-completions",
+                "name": "Fictional example model",
+                "baseUrl": "https://provider.example.test/v1",
+                "thinkingLevelMap": {
+                    "minimal": null,
+                    "high": "high"
+                },
+                "compat": {
+                    "supportsDeveloperRole": false
+                },
+                "samplingParams": {
+                    "temperature": 0.5
+                },
+                "headers": {
+                    "X-Example-Header": "example"
                 }
             }
         },
         {
-            "match": { "id": "example-model-exact" },
-            "metadata": { "contextWindow": 256000 }
+            "match": {
+                "id": "example-model-exact"
+            },
+            "metadata": {
+                "contextWindow": 256000
+            }
         }
-    ]
+    ],
+    "maxVisibleRows": 20
 }

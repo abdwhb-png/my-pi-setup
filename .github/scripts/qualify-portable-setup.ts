@@ -199,6 +199,15 @@ if (privateProfile) {
         ...localConnections,
     }))
         writeJson(join(source, 'agent', name), value);
+    writeJson(join(source, 'agent/config/ai-providers.json'), {
+        providers: {
+            cpa: {
+                enabled: false,
+                baseUrl: 'http://127.0.0.1:18317/v1',
+                refreshTtlMs: 30000,
+            },
+        },
+    });
     for (const packageSource of sources) {
         run(
             process.execPath,
@@ -277,6 +286,7 @@ if (privateProfile) {
             'bin/setup',
             'extensions/ai-providers',
             'extensions/notify',
+            'extensions/slow-mode',
             'bin/pi-cpa-startup.integration.test.ts',
             'bin/pi-fork-cli.test.ts',
             'bin/pi-fork-release.test.ts',
@@ -573,6 +583,9 @@ if (!profileOnly) {
             ),
         ),
     };
+    legacyState.schemaVersion = 1;
+    delete legacyState.profileDefaults;
+    delete legacyState.previousProfileDefaults;
     writeJson(join(target, '.pi-setup-state.json'), legacyState);
     writeJson(catalogPath, {
         ...json(catalogPath),
@@ -624,12 +637,59 @@ if (!profileOnly) {
         join(target, 'agent/sessions/ci-marker'),
         'preserve local sessions',
     );
+    const settingsPath = join(target, 'agent/settings.json');
+    writeJson(settingsPath, { ...json(settingsPath), hideThinkingBlock: true });
+    const footerLocalPath = join(target, 'agent/fancy-footer.local.json');
+    const hidden = json(footerLocalPath).extensionStatusHiddenIds;
+    const machineHidden = [
+        ...(Array.isArray(hidden) ? hidden : []),
+        'machine-only-fixture',
+    ];
+    writeJson(footerLocalPath, {
+        ...json(footerLocalPath),
+        extensionStatusHiddenIds: machineHidden,
+    });
+    const cpaPath = join(target, 'agent/config/ai-providers.json');
+    if (!privateProfile) {
+        const config = json(cpaPath);
+        const providers = object(config.providers);
+        writeJson(cpaPath, {
+            ...config,
+            providers: {
+                ...providers,
+                cpa: {
+                    ...object(providers.cpa),
+                    baseUrl: 'http://127.0.0.1:28317/v1',
+                },
+            },
+        });
+    }
+    const assertMachinePreferences = () => {
+        assert.equal(json(settingsPath).hideThinkingBlock, true);
+        assert.deepEqual(
+            json(footerLocalPath).extensionStatusHiddenIds,
+            machineHidden,
+        );
+        if (!privateProfile)
+            assert.equal(
+                object(object(json(cpaPath).providers).cpa).baseUrl,
+                'http://127.0.0.1:28317/v1',
+            );
+    };
     const next = join(work, 'bundle-two');
     cpSync(bundle, next, { recursive: true, verbatimSymlinks: true });
     writeFileSync(
         join(next, 'setup/agent/prompts/qualification-version.md'),
         'Synthetic update marker',
     );
+    writeJson(join(next, 'setup/agent/settings.json'), {
+        ...json(join(next, 'setup/agent/settings.json')),
+        hideThinkingBlock: false,
+    });
+    writeJson(join(next, 'setup/agent/fancy-footer.json'), {
+        ...json(join(next, 'setup/agent/fancy-footer.json')),
+        gaugeWidth: 18,
+    });
     rmSync(join(next, 'manifest.json'));
     writeJson(join(next, 'manifest.json'), {
         ...manifest,
@@ -641,8 +701,14 @@ if (!profileOnly) {
         release: 'qualification-two',
         update: true,
         bindings,
+        loadPreviousBundle: async (release) => {
+            assert.equal(release, 'qualification-one');
+            return bundle;
+        },
     });
     assert(existsSync(join(target, 'agent/prompts/qualification-version.md')));
+    assertMachinePreferences();
+    assert.equal(json(join(target, 'agent/fancy-footer.json')).gaugeWidth, 18);
     assertLocalConnections();
     assert.equal(
         await installBundle({
@@ -656,6 +722,10 @@ if (!profileOnly) {
     );
     await rollbackInstallation(target);
     assert.equal(readInstallation(target).release, 'qualification-one');
+    assertMachinePreferences();
+    passed(
+        'machine preferences survive real update and rollback while defaults advance',
+    );
     assertLocalConnections();
     passed(
         'local connections and a refreshed model catalog survive runtime initialization, update and rollback',
@@ -674,6 +744,38 @@ if (!profileOnly) {
         );
     run(process.execPath, [join(target, 'bin/pi-setup'), 'check'], home);
     passed('real update, idempotency, rollback and post-rollback integrity');
+    const incompatibleSettingsPath = join(next, 'setup/agent/settings.json');
+    const validSettings = readFileSync(incompatibleSettingsPath);
+    writeJson(incompatibleSettingsPath, {
+        ...json(incompatibleSettingsPath),
+        hideThinkingBlock: { incompatible: true },
+    });
+    rmSync(join(next, 'manifest.json'));
+    writeJson(join(next, 'manifest.json'), {
+        ...validateBundle(bundle),
+        files: inventory(next),
+    });
+    const beforeConflict = inventory(target);
+    await assert.rejects(
+        installBundle({
+            root: target,
+            bundle: next,
+            release: 'qualification-two',
+            update: true,
+            bindings,
+        }),
+        /Incompatible local preference/,
+    );
+    assert.deepEqual(inventory(target), beforeConflict);
+    writeFileSync(incompatibleSettingsPath, validSettings);
+    rmSync(join(next, 'manifest.json'));
+    writeJson(join(next, 'manifest.json'), {
+        ...validateBundle(bundle),
+        files: inventory(next),
+    });
+    passed(
+        'incompatible preferences stop before activation without changing the installed tree',
+    );
     const originalLauncher = readFileSync(join(target, 'bin/pi'));
     writeFileSync(join(target, 'bin/pi'), '\n// local change\n', { flag: 'a' });
     await assert.rejects(

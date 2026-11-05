@@ -21,6 +21,7 @@ export type ReviewResult =
  * Options for the review UI component
  */
 export interface ReviewOptions {
+    signal?: AbortSignal;
     /**
      * What kind of change is under review. `TOOL` covers any other tool call
      * (e.g. `ssh_write`), which has nothing to diff or open externally.
@@ -55,275 +56,321 @@ export async function showReview(
     const { matchesKey, Key, decodeKittyPrintable } =
         await import("@earendil-works/pi-tui");
 
-    return ctx.ui.custom<ReviewResult>((tui, theme, _kb, done) => {
-        let scrollOffset = 0;
-        let cachedLines: string[] | undefined;
+    const signal = opts.signal;
+    let close: ((result: ReviewResult) => void) | undefined;
+    const abort = () => close?.("reject");
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+        if (signal?.aborted) return "reject";
+        return await ctx.ui.custom<ReviewResult>(
+            (tui, theme, _kb, complete) => {
+                let completed = false;
+                const done = (result: ReviewResult) => {
+                    if (completed) return;
+                    completed = true;
+                    complete(result);
+                };
+                close = done;
+                if (signal?.aborted) {
+                    done("reject");
+                    return { render: () => [], invalidate() {} };
+                }
+                let scrollOffset = 0;
+                let cachedLines: string[] | undefined;
 
-        let currentBody = opts.body;
-        let bodyLines = currentBody.split("\n");
-        const maxVisible = 30; // Show up to 30 lines at once
-        let maxScroll = Math.max(0, bodyLines.length - 5);
+                let currentBody = opts.body;
+                let bodyLines = currentBody.split("\n");
+                const maxVisible = 30; // Show up to 30 lines at once
+                let maxScroll = Math.max(0, bodyLines.length - 5);
 
-        let reasonMode = false;
-        let reasonBuffer = "";
+                let reasonMode = false;
+                let reasonBuffer = "";
 
-        let renderVersion = 0;
-        let cachedVersion = -1;
+                let renderVersion = 0;
+                let cachedVersion = -1;
 
-        function clampScroll(offset: number) {
-            scrollOffset = Math.max(0, Math.min(maxScroll, offset));
-        }
-
-        function refresh() {
-            renderVersion++;
-            tui.requestRender();
-        }
-
-        function invalidate() {
-            cachedLines = undefined;
-            cachedVersion = -1;
-        }
-
-        function openExternal() {
-            try {
-                if (opts.operation === "EDIT" && opts.oldPath && opts.newPath) {
-                    openExternalDiff(opts.oldPath, opts.newPath, opts.filePath);
-                } else if (opts.stagePath) {
-                    openExternalFile(opts.stagePath);
+                function clampScroll(offset: number) {
+                    scrollOffset = Math.max(0, Math.min(maxScroll, offset));
                 }
 
-                if (
-                    opts.allowEdit &&
-                    opts.operation === "WRITE" &&
-                    opts.stagePath
-                ) {
+                function refresh() {
+                    renderVersion++;
+                    tui.requestRender();
+                }
+
+                function invalidate() {
+                    cachedLines = undefined;
+                    cachedVersion = -1;
+                }
+
+                function openExternal() {
                     try {
-                        const editedContent = readFileSync(
-                            opts.stagePath,
-                            "utf-8",
-                        );
-                        currentBody = editedContent;
-                        bodyLines = currentBody.split("\n");
-                        maxScroll = Math.max(0, bodyLines.length - 5);
-                        scrollOffset = Math.min(scrollOffset, maxScroll);
+                        if (
+                            opts.operation === "EDIT" &&
+                            opts.oldPath &&
+                            opts.newPath
+                        ) {
+                            openExternalDiff(
+                                opts.oldPath,
+                                opts.newPath,
+                                opts.filePath,
+                            );
+                        } else if (opts.stagePath) {
+                            openExternalFile(opts.stagePath);
+                        }
+
+                        if (
+                            opts.allowEdit &&
+                            opts.operation === "WRITE" &&
+                            opts.stagePath
+                        ) {
+                            try {
+                                const editedContent = readFileSync(
+                                    opts.stagePath,
+                                    "utf-8",
+                                );
+                                currentBody = editedContent;
+                                bodyLines = currentBody.split("\n");
+                                maxScroll = Math.max(0, bodyLines.length - 5);
+                                scrollOffset = Math.min(
+                                    scrollOffset,
+                                    maxScroll,
+                                );
+                            } catch {}
+                        }
                     } catch {}
+                    refresh();
                 }
-            } catch {}
-            refresh();
-        }
 
-        function handleReasonInput(data: string) {
-            if (matchesKey(data, Key.enter)) {
-                const reason = reasonBuffer.trim();
-                done({
-                    action: "rejected",
-                    reason: reason.length > 0 ? reason : "(no reason given)",
-                });
-                return;
-            }
-            if (matchesKey(data, Key.escape)) {
-                reasonMode = false;
-                reasonBuffer = "";
-                invalidate();
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.backspace)) {
-                reasonBuffer = reasonBuffer.slice(0, -1);
-                refresh();
-                return;
-            }
-            if (data.length === 1 && data >= " " && data <= "~") {
-                reasonBuffer += data;
-                refresh();
-                return;
-            }
-            const printable = decodeKittyPrintable?.(data);
-            if (printable) {
-                reasonBuffer += printable;
-                refresh();
-            }
-        }
-
-        function handleInput(data: string) {
-            if (reasonMode) {
-                handleReasonInput(data);
-                return;
-            }
-
-            if (data === "y" || matchesKey(data, Key.enter)) {
-                done("approve");
-                return;
-            }
-            if (data === "a") {
-                done("approve-auto");
-                return;
-            }
-            if (
-                data === "n" ||
-                matchesKey(data, Key.escape) ||
-                matchesKey(data, Key.ctrl("c"))
-            ) {
-                done("reject");
-                return;
-            }
-            if (data === "r") {
-                reasonMode = true;
-                reasonBuffer = "";
-                invalidate();
-                refresh();
-                return;
-            }
-            if (
-                opts.allowEdit &&
-                opts.operation === "EDIT" &&
-                matchesKey(data, Key.ctrl("e"))
-            ) {
-                done("edit");
-                return;
-            }
-            if (matchesKey(data, Key.ctrl("o"))) {
-                openExternal();
-                return;
-            }
-
-            if (matchesKey(data, Key.up)) {
-                clampScroll(scrollOffset - 1);
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.down)) {
-                clampScroll(scrollOffset + 1);
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.pageUp)) {
-                clampScroll(scrollOffset - 15);
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.pageDown)) {
-                clampScroll(scrollOffset + 15);
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.home)) {
-                scrollOffset = 0;
-                refresh();
-                return;
-            }
-            if (matchesKey(data, Key.end)) {
-                scrollOffset = maxScroll;
-                refresh();
-                return;
-            }
-        }
-
-        function render(width: number): string[] {
-            if (cachedLines && cachedVersion === renderVersion)
-                return cachedLines;
-
-            const lines: string[] = [];
-            const add = (s: string) => lines.push(truncateToWidth(s, width));
-
-            add(theme.fg("accent", "─".repeat(width)));
-
-            const colors = createUiColors(theme);
-            add(colors.warning(" ⚠ SLOW MODE — review before applying"));
-
-            const [labelColor, labelText] =
-                OPERATION_LABELS[opts.operation];
-            add(theme.fg(labelColor, labelText));
-
-            add(` ${theme.fg("accent", opts.filePath)}`);
-            lines.push("");
-
-            const visible = bodyLines.slice(
-                scrollOffset,
-                scrollOffset + maxVisible,
-            );
-            const hasAnsiCodes =
-                opts.operation === "EDIT" && /\x1b\[[0-9;]*m/.test(opts.body);
-
-            for (const rawLine of visible) {
-                const line = rawLine.replace(/\t/g, "    ");
-                if (opts.operation === "EDIT" && hasAnsiCodes) {
-                    add(` ${line}`);
-                } else if (opts.operation === "EDIT") {
-                    if (line.startsWith("---") || line.startsWith("+++")) {
-                        add(` ${theme.fg("dim", line)}`);
-                    } else if (line.startsWith("@@")) {
-                        add(` ${theme.fg("accent", line)}`);
-                    } else if (line.startsWith("+")) {
-                        add(` ${theme.fg("success", line)}`);
-                    } else if (line.startsWith("-")) {
-                        add(` ${theme.fg("error", line)}`);
-                    } else {
-                        add(` ${theme.fg("text", line)}`);
+                function handleReasonInput(data: string) {
+                    if (matchesKey(data, Key.enter)) {
+                        const reason = reasonBuffer.trim();
+                        done({
+                            action: "rejected",
+                            reason:
+                                reason.length > 0
+                                    ? reason
+                                    : "(no reason given)",
+                        });
+                        return;
                     }
-                } else if (opts.operation === "BASH") {
-                    if (line.startsWith("⚠")) {
-                        add(` ${colors.danger(line)}`);
-                    } else if (line.startsWith("$")) {
-                        add(` ${theme.fg("accent", line)}`);
-                    } else {
-                        add(` ${theme.fg("text", line)}`);
+                    if (matchesKey(data, Key.escape)) {
+                        reasonMode = false;
+                        reasonBuffer = "";
+                        invalidate();
+                        refresh();
+                        return;
                     }
-                } else {
-                    add(` ${theme.fg("text", line)}`);
+                    if (matchesKey(data, Key.backspace)) {
+                        reasonBuffer = reasonBuffer.slice(0, -1);
+                        refresh();
+                        return;
+                    }
+                    if (data.length === 1 && data >= " " && data <= "~") {
+                        reasonBuffer += data;
+                        refresh();
+                        return;
+                    }
+                    const printable = decodeKittyPrintable?.(data);
+                    if (printable) {
+                        reasonBuffer += printable;
+                        refresh();
+                    }
                 }
-            }
 
-            if (bodyLines.length > maxVisible) {
-                const total = bodyLines.length;
-                const end = Math.min(scrollOffset + maxVisible, total);
-                add(
-                    theme.fg(
-                        "dim",
-                        ` (lines ${scrollOffset + 1}–${end} of ${total} — ↑↓/PgUp/PgDn to scroll)`,
-                    ),
-                );
-            }
+                function handleInput(data: string) {
+                    if (reasonMode) {
+                        handleReasonInput(data);
+                        return;
+                    }
 
-            lines.push("");
+                    if (data === "y" || matchesKey(data, Key.enter)) {
+                        done("approve");
+                        return;
+                    }
+                    if (data === "a") {
+                        done("approve-auto");
+                        return;
+                    }
+                    if (
+                        data === "n" ||
+                        matchesKey(data, Key.escape) ||
+                        matchesKey(data, Key.ctrl("c"))
+                    ) {
+                        done("reject");
+                        return;
+                    }
+                    if (data === "r") {
+                        reasonMode = true;
+                        reasonBuffer = "";
+                        invalidate();
+                        refresh();
+                        return;
+                    }
+                    if (
+                        opts.allowEdit &&
+                        opts.operation === "EDIT" &&
+                        matchesKey(data, Key.ctrl("e"))
+                    ) {
+                        done("edit");
+                        return;
+                    }
+                    if (matchesKey(data, Key.ctrl("o"))) {
+                        openExternal();
+                        return;
+                    }
 
-            if (reasonMode) {
-                add(
-                    colors.warning(
-                        " ⚠ Reject reason — Enter submit • Esc cancel • Backspace delete",
-                    ),
-                );
-                add(` > ${reasonBuffer}`);
-            } else {
-                let hints =
-                    "y/Enter approve • n/Esc reject • r reject w/ reason • a auto-accept (this turn)";
-                // Only advertise Ctrl+O when openExternal() has something to open.
-                const openable =
-                    opts.operation === "EDIT" || opts.stagePath !== undefined;
-                if (opts.allowEdit && opts.operation === "EDIT") {
-                    hints += " • Ctrl+E edit • Ctrl+O view diff";
-                } else if (openable) {
-                    hints += opts.allowEdit
-                        ? " • Ctrl+O edit externally"
-                        : " • Ctrl+O view externally";
+                    if (matchesKey(data, Key.up)) {
+                        clampScroll(scrollOffset - 1);
+                        refresh();
+                        return;
+                    }
+                    if (matchesKey(data, Key.down)) {
+                        clampScroll(scrollOffset + 1);
+                        refresh();
+                        return;
+                    }
+                    if (matchesKey(data, Key.pageUp)) {
+                        clampScroll(scrollOffset - 15);
+                        refresh();
+                        return;
+                    }
+                    if (matchesKey(data, Key.pageDown)) {
+                        clampScroll(scrollOffset + 15);
+                        refresh();
+                        return;
+                    }
+                    if (matchesKey(data, Key.home)) {
+                        scrollOffset = 0;
+                        refresh();
+                        return;
+                    }
+                    if (matchesKey(data, Key.end)) {
+                        scrollOffset = maxScroll;
+                        refresh();
+                        return;
+                    }
                 }
-                hints += " • ↑↓ line • PgUp/PgDn page • Home/End top/bottom";
-                add(theme.fg("dim", ` ${hints}`));
-            }
 
-            add(theme.fg("accent", "─".repeat(width)));
+                function render(width: number): string[] {
+                    if (cachedLines && cachedVersion === renderVersion)
+                        return cachedLines;
 
-            cachedLines = lines;
-            cachedVersion = renderVersion;
-            return lines;
-        }
+                    const lines: string[] = [];
+                    const add = (s: string) =>
+                        lines.push(truncateToWidth(s, width));
 
-        return {
-            render,
-            invalidate,
-            handleInput,
-        };
-    });
+                    add(theme.fg("accent", "─".repeat(width)));
+
+                    const colors = createUiColors(theme);
+                    add(
+                        colors.warning(" ⚠ SLOW MODE — review before applying"),
+                    );
+
+                    const [labelColor, labelText] =
+                        OPERATION_LABELS[opts.operation];
+                    add(theme.fg(labelColor, labelText));
+
+                    add(` ${theme.fg("accent", opts.filePath)}`);
+                    lines.push("");
+
+                    const visible = bodyLines.slice(
+                        scrollOffset,
+                        scrollOffset + maxVisible,
+                    );
+                    const hasAnsiCodes =
+                        opts.operation === "EDIT" &&
+                        /\x1b\[[0-9;]*m/.test(opts.body);
+
+                    for (const rawLine of visible) {
+                        const line = rawLine.replace(/\t/g, "    ");
+                        if (opts.operation === "EDIT" && hasAnsiCodes) {
+                            add(` ${line}`);
+                        } else if (opts.operation === "EDIT") {
+                            if (
+                                line.startsWith("---") ||
+                                line.startsWith("+++")
+                            ) {
+                                add(` ${theme.fg("dim", line)}`);
+                            } else if (line.startsWith("@@")) {
+                                add(` ${theme.fg("accent", line)}`);
+                            } else if (line.startsWith("+")) {
+                                add(` ${theme.fg("success", line)}`);
+                            } else if (line.startsWith("-")) {
+                                add(` ${theme.fg("error", line)}`);
+                            } else {
+                                add(` ${theme.fg("text", line)}`);
+                            }
+                        } else if (opts.operation === "BASH") {
+                            if (line.startsWith("⚠")) {
+                                add(` ${colors.danger(line)}`);
+                            } else if (line.startsWith("$")) {
+                                add(` ${theme.fg("accent", line)}`);
+                            } else {
+                                add(` ${theme.fg("text", line)}`);
+                            }
+                        } else {
+                            add(` ${theme.fg("text", line)}`);
+                        }
+                    }
+
+                    if (bodyLines.length > maxVisible) {
+                        const total = bodyLines.length;
+                        const end = Math.min(scrollOffset + maxVisible, total);
+                        add(
+                            theme.fg(
+                                "dim",
+                                ` (lines ${scrollOffset + 1}–${end} of ${total} — ↑↓/PgUp/PgDn to scroll)`,
+                            ),
+                        );
+                    }
+
+                    lines.push("");
+
+                    if (reasonMode) {
+                        add(
+                            colors.warning(
+                                " ⚠ Reject reason — Enter submit • Esc cancel • Backspace delete",
+                            ),
+                        );
+                        add(` > ${reasonBuffer}`);
+                    } else {
+                        let hints =
+                            "y/Enter approve • n/Esc reject • r reject w/ reason • a auto-accept (this turn)";
+                        // Only advertise Ctrl+O when openExternal() has something to open.
+                        const openable =
+                            opts.operation === "EDIT" ||
+                            opts.stagePath !== undefined;
+                        if (opts.allowEdit && opts.operation === "EDIT") {
+                            hints += " • Ctrl+E edit • Ctrl+O view diff";
+                        } else if (openable) {
+                            hints += opts.allowEdit
+                                ? " • Ctrl+O edit externally"
+                                : " • Ctrl+O view externally";
+                        }
+                        hints +=
+                            " • ↑↓ line • PgUp/PgDn page • Home/End top/bottom";
+                        add(theme.fg("dim", ` ${hints}`));
+                    }
+
+                    add(theme.fg("accent", "─".repeat(width)));
+
+                    cachedLines = lines;
+                    cachedVersion = renderVersion;
+                    return lines;
+                }
+
+                return {
+                    render,
+                    invalidate,
+                    handleInput,
+                };
+            },
+        );
+    } finally {
+        signal?.removeEventListener("abort", abort);
+        close = undefined;
+    }
 }
 
 function openExternalDiff(oldPath: string, newPath: string, label: string) {

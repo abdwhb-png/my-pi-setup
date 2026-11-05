@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { toPortableHomePath } from '../../extensions/_shared/home-path.ts';
 import { deployFork, verifyRuntimeCoherence } from '../pi-fork-release.ts';
 import { PORTABLE_PROFILE_FILES, validateBundle } from './distribution.ts';
 import { json, object, run, runAsync, writeJson } from './files.ts';
+import { materializeProfile } from './profiles.ts';
 import {
     childSetupProgress,
     setupStep,
@@ -202,22 +202,6 @@ export function prepareInstalledProfile(
 ): Record<string, unknown> {
     const settingsPath = join(root, 'agent/settings.json');
     const settings = json(settingsPath);
-    function relocate(value: unknown): unknown {
-        if (
-            typeof value === 'string' &&
-            (value === '~/.pi' || value.startsWith('~/.pi/'))
-        )
-            return toPortableHomePath(root + value.slice(5));
-        if (Array.isArray(value)) return value.map(relocate);
-        if (value && typeof value === 'object')
-            return Object.fromEntries(
-                Object.entries(value).map(([key, item]) => [
-                    key,
-                    relocate(item),
-                ]),
-            );
-        return value;
-    }
     for (const path of Object.keys(files)) {
         if (
             path !== 'setup/agent/settings.json' &&
@@ -225,13 +209,11 @@ export function prepareInstalledProfile(
             PORTABLE_PROFILE_FILES.has(path.slice(6))
         ) {
             const target = join(root, path.slice(6));
-            const value = object(relocate(json(target)));
+            const value = materializeProfile(json(target), root);
             writeJson(target, value);
         }
     }
-    const prepared = object(relocate(settings));
-    // Pi writes this on first interactive launch; initialize it before recording integrity.
-    prepared.lastChangelogVersion = runtimeVersion;
+    const prepared = materializeProfile(settings, root, runtimeVersion);
     writeJson(settingsPath, prepared);
     return prepared;
 }

@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { CONFIG_OWNERS } from '../../extensions/_shared/config-owners.mts';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
 import { redactValue } from '../../extensions/_shared/secret-redaction.ts';
+import { normalizeAiProvidersConfig } from '../../extensions/ai-providers/schema.ts';
 import {
     archiveAsync,
     assertInventory,
@@ -809,6 +810,8 @@ async function captureProfile(
     }
     function save(path: string, value: unknown) {
         const normalized = portable(value);
+        if (path === 'agent/config/ai-providers.json')
+            normalizeAiProvidersConfig(normalized);
         assertPortableProfileValue(path, object(normalized));
         writeJson(join(destination, path), normalized);
     }

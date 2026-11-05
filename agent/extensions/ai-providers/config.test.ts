@@ -1,78 +1,86 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
     mergeAiProvidersConfig,
     normalizeAiProvidersConfig,
 } from './config.ts';
 
 describe('normalizeAiProvidersConfig', () => {
-    test('merges the CPA endpoint without losing it in unrelated project overrides', () => {
-        const global = mergeAiProvidersConfig(
-            { providers: {}, widgets: {}, cpa: {} },
-            normalizeAiProvidersConfig({ cpa: { baseUrl: ' https://proxy.example.test/v1 ' } }),
+    test('the complete published example is accepted without silently dropping fields', () => {
+        const example = JSON.parse(
+            readFileSync(
+                new URL(
+                    '../../config/ai-providers.example.json',
+                    import.meta.url,
+                ),
+                'utf8',
+            ),
         );
-        expect(global.cpa.baseUrl).toBe('https://proxy.example.test/v1');
-        expect(mergeAiProvidersConfig(global, normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 40_000 } })).cpa.baseUrl)
-            .toBe('https://proxy.example.test/v1');
-        expect(mergeAiProvidersConfig(global, normalizeAiProvidersConfig({ cpa: { baseUrl: 'http://127.0.0.1:18317/v1' } })).cpa.baseUrl)
-            .toBe('http://127.0.0.1:18317/v1');
+        expect(normalizeAiProvidersConfig(example)).toEqual(example);
     });
-
-    test('accepts a positive CPA refresh TTL', () => {
-        expect(
-            normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 45_000 } }),
-        ).toEqual({
-            providers: {},
-            widgets: {},
-            cpa: { refreshTtlMs: 45_000 },
-        });
-    });
-
-    test('preserves the global CPA TTL when project config omits CPA settings', () => {
-        const global = mergeAiProvidersConfig(
-            {
-                providers: {},
-                widgets: {},
-                cpa: { refreshTtlMs: 30_000 },
-            },
-            normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 45_000 } }),
-        );
-        const merged = mergeAiProvidersConfig(
-            global,
-            normalizeAiProvidersConfig({ providers: { cpa: true } }),
-        );
-
-        expect(merged.cpa.refreshTtlMs).toBe(45_000);
-    });
-
-    test('accepts a boolean cpa.silentCatalogDiff and defaults to false', () => {
+    test('reads CPA settings from its provider entry', () => {
         const normalized = normalizeAiProvidersConfig({
-            cpa: { silentCatalogDiff: true },
-        });
-        expect(normalized.cpa?.silentCatalogDiff).toBe(true);
-        expect(normalized.providers).toEqual({});
-        expect(normalized.widgets).toEqual({});
-    });
-    test('ignores non-boolean cpa.silentCatalogDiff', () => {
-        expect(
-            normalizeAiProvidersConfig({
-                cpa: { silentCatalogDiff: 'yes' },
-            }).cpa?.silentCatalogDiff,
-        ).toBeUndefined();
-    });
-
-    test('propagates silentCatalogDiff through mergeAiProvidersConfig', () => {
-        const merged = mergeAiProvidersConfig(
-            {
-                providers: {},
-                widgets: {},
+            providers: {
                 cpa: {
-                    refreshTtlMs: 30_000,
-                    silentCatalogDiff: true,
+                    enabled: false,
+                    baseUrl: ' https://proxy.example.test/v1 ',
+                    refreshTtlMs: 45000,
                 },
             },
-            normalizeAiProvidersConfig({ providers: { cpa: true } }),
+        });
+        expect(normalized.providers?.cpa).toEqual({
+            enabled: false,
+            baseUrl: 'https://proxy.example.test/v1',
+            refreshTtlMs: 45000,
+        });
+    });
+
+    test.each([
+        { cpa: { refreshTtlMs: 30000 } },
+        { providers: { cpa: true } },
+        { providers: { cpa: { enabled: 'yes' } } },
+        { providers: { cpa: { refreshTtlMs: 0 } } },
+        {
+            providers: {
+                cpa: { baseUrl: 'https://user:password@example.test/v1' },
+            },
+        },
+        { maxVisibleRows: 0 },
+        { widgets: {} },
+    ])(
+        'rejects unsupported or invalid configuration without printing values (%#)',
+        (raw) => {
+            expect(() => normalizeAiProvidersConfig(raw)).toThrow(
+                'ai-providers',
+            );
+        },
+    );
+    test('merges provider fields without losing endpoint or activation', () => {
+        const global = mergeAiProvidersConfig(
+            { providers: {} },
+            normalizeAiProvidersConfig({
+                providers: {
+                    cpa: {
+                        enabled: false,
+                        baseUrl: 'https://proxy.example.test/v1',
+                        refreshTtlMs: 45000,
+                        silentCatalogDiff: true,
+                    },
+                },
+            }),
         );
-        expect(merged.cpa.silentCatalogDiff).toBe(true);
+        const project = mergeAiProvidersConfig(
+            global,
+            normalizeAiProvidersConfig({
+                providers: { cpa: { refreshTtlMs: 50000 } },
+            }),
+        );
+        expect(project.providers.cpa).toEqual({
+            enabled: false,
+            baseUrl: 'https://proxy.example.test/v1',
+            refreshTtlMs: 50000,
+            silentCatalogDiff: true,
+        });
     });
 
     test('accepts top-level modelRules with provider filter and Pi metadata', () => {
@@ -111,38 +119,35 @@ describe('normalizeAiProvidersConfig', () => {
         ]);
     });
 
-    test('drops malformed modelRules', () => {
-        const normalized = normalizeAiProvidersConfig({
-            modelRules: [
-                { match: { id: '' }, metadata: { contextWindow: 1 } },
-                { match: { id: 'valid' }, metadata: { maxTokens: 0 } },
-                {
-                    match: { id: 'valid-owner', ownedBy: 42 },
-                    metadata: { reasoning: true },
-                },
-                {
-                    match: { id: 'valid-input' },
-                    metadata: { input: ['image'] },
-                },
-                {
-                    match: { id: 'valid-cost' },
-                    metadata: { cost: { input: -1 } },
-                },
-            ],
-        });
-
-        expect(normalized.modelRules).toBeUndefined();
+    test.each([
+        {
+            match: { id: 'fixture' },
+            metadata: { contextWindow: 128000, maxTokens: 0 },
+        },
+        { match: { id: '' }, metadata: { contextWindow: 1 } },
+        { match: { id: 'fixture' }, metadata: { maxTokens: 0 } },
+        {
+            match: { id: 'fixture', ownedBy: 42 },
+            metadata: { reasoning: true },
+        },
+        { match: { id: 'fixture' }, metadata: { input: ['image'] } },
+        { match: { id: 'fixture' }, metadata: { cost: { input: -1 } } },
+    ])('rejects malformed modelRules (%#)', (rule) => {
+        expect(() =>
+            normalizeAiProvidersConfig({ modelRules: [rule] }),
+        ).toThrow('modelRules[0]');
     });
 
     test('merges top-level modelRules from global and project config', () => {
         const global = mergeAiProvidersConfig(
             {
                 providers: {},
-                widgets: {},
                 modelRules: [
-                    { match: { id: 'gpt-5.6-*' }, metadata: { reasoning: true } },
+                    {
+                        match: { id: 'gpt-5.6-*' },
+                        metadata: { reasoning: true },
+                    },
                 ],
-                cpa: { refreshTtlMs: 30_000 },
             },
             {},
         );
@@ -150,14 +155,20 @@ describe('normalizeAiProvidersConfig', () => {
             global,
             normalizeAiProvidersConfig({
                 modelRules: [
-                    { match: { id: 'gpt-5.6-terra' }, metadata: { contextWindow: 372_000 } },
+                    {
+                        match: { id: 'gpt-5.6-terra' },
+                        metadata: { contextWindow: 372_000 },
+                    },
                 ],
             }),
         );
 
         expect(merged.modelRules).toEqual([
             { match: { id: 'gpt-5.6-*' }, metadata: { reasoning: true } },
-            { match: { id: 'gpt-5.6-terra' }, metadata: { contextWindow: 372_000 } },
+            {
+                match: { id: 'gpt-5.6-terra' },
+                metadata: { contextWindow: 372_000 },
+            },
         ]);
     });
 });

@@ -15,10 +15,13 @@ import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-stor
 import {
     LOCAL_CONNECTION_FILES,
     LOCAL_PROFILE_FILES,
+    PORTABLE_PROFILE_FILES,
     validateBundle,
 } from './distribution.ts';
 import {
     assertInventory,
+    fingerprint,
+    digest,
     child,
     inventory,
     json,
@@ -29,6 +32,13 @@ import {
 } from './files.ts';
 import { setupStep, type SetupProgress } from './progress.ts';
 
+import {
+    bundledProfileDefaults,
+    readProfile,
+    reconcileProfiles,
+    type ProfileDefaults,
+} from './profiles.ts';
+
 const STATE = '.pi-setup-state.json';
 const GENERATED_DIRECTORIES = [
     'runtime',
@@ -38,7 +48,9 @@ const GENERATED_DIRECTORIES = [
     'agent/git',
 ];
 interface InstallationState {
-    schemaVersion: 1;
+    schemaVersion: 1 | 2;
+    profileDefaults?: ProfileDefaults;
+    previousProfileDefaults?: ProfileDefaults;
     release: string;
     managed: Record<string, string>;
     previousId?: string;
@@ -52,6 +64,7 @@ export interface InstallationOptions {
     details?: boolean;
     progress?: SetupProgress;
     bindings?: string;
+    loadPreviousBundle?: (release: string) => Promise<string>;
     provision?: (
         root: string,
         bundle: string,
@@ -68,7 +81,10 @@ export function readInstallation(root: string): InstallationState {
             'Unmanaged Pi installation; automatic adoption is not supported',
         );
     const value = json(join(root, STATE));
-    if (value.schemaVersion !== 1 || typeof value.release !== 'string')
+    if (
+        (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+        typeof value.release !== 'string'
+    )
         throw new Error('Unmanaged or invalid Pi installation');
     const managed = object(value.managed);
     const retained: Record<string, string> = {};
@@ -84,8 +100,44 @@ export function readInstallation(root: string): InstallationState {
             !/^[a-f0-9-]{36}$/.test(value.previousId))
     )
         throw new Error('Invalid previous release reference');
+    let profileDefaults: ProfileDefaults | undefined;
+    if (value.schemaVersion === 2) {
+        profileDefaults = {};
+        for (const [path, defaults] of Object.entries(
+            object(value.profileDefaults),
+        )) {
+            if (
+                !PORTABLE_PROFILE_FILES.has(path) ||
+                !Object.hasOwn(retained, path)
+            )
+                throw new Error(`Invalid profile baseline: ${path}`);
+            profileDefaults[path] = object(defaults);
+        }
+        for (const path of Object.keys(retained))
+            if (
+                PORTABLE_PROFILE_FILES.has(path) &&
+                !Object.hasOwn(profileDefaults, path)
+            )
+                throw new Error(`Missing profile baseline: ${path}`);
+    }
     return {
-        schemaVersion: 1,
+        schemaVersion: value.schemaVersion === 2 ? 2 : 1,
+        ...(profileDefaults ? { profileDefaults } : {}),
+        ...(value.previousProfileDefaults !== undefined
+            ? {
+                  previousProfileDefaults: Object.fromEntries(
+                      Object.entries(object(value.previousProfileDefaults)).map(
+                          ([path, defaults]) => {
+                              if (!PORTABLE_PROFILE_FILES.has(path))
+                                  throw new Error(
+                                      `Invalid previous profile baseline: ${path}`,
+                                  );
+                              return [path, object(defaults)];
+                          },
+                      ),
+                  ),
+              }
+            : {}),
         release: value.release,
         managed: retained,
         ...(typeof value.previousId === 'string'
@@ -93,6 +145,61 @@ export function readInstallation(root: string): InstallationState {
             : {}),
     };
 }
+function assertManagedIntegrity(root: string, state: InstallationState): void {
+    assertInventory(
+        root,
+        Object.fromEntries(
+            Object.entries(state.managed).filter(
+                ([path]) => !PORTABLE_PROFILE_FILES.has(path),
+            ),
+        ),
+    );
+    for (const [path, hash] of Object.entries(state.managed)) {
+        if (!PORTABLE_PROFILE_FILES.has(path)) continue;
+        safeParents(root, path);
+        readProfile(root, path);
+        if (fingerprint(child(root, path)).split(':')[0] !== hash.split(':')[0])
+            throw new Error(`Local change to profile permissions: ${path}`);
+    }
+}
+
+async function previousDefaults(
+    root: string,
+    state: InstallationState,
+    loadBundle?: InstallationOptions['loadPreviousBundle'],
+): Promise<ProfileDefaults> {
+    if (state.profileDefaults) return state.profileDefaults;
+    const profiles = Object.keys(state.managed).filter((path) =>
+        PORTABLE_PROFILE_FILES.has(path),
+    );
+    const changed = profiles.filter(
+        (path) => fingerprint(child(root, path)) !== state.managed[path],
+    );
+    if (!changed.length)
+        return Object.fromEntries(
+            profiles.map((path) => [path, readProfile(root, path)]),
+        );
+    if (!loadBundle)
+        throw new Error(
+            `Previous release defaults required for ${state.release}: ${changed.join(', ')}. Use the updated bootstrap operator with access to the verified installed release.`,
+        );
+    const bundle = await loadBundle(state.release);
+    const manifest = validateBundle(bundle);
+    const defaults = bundledProfileDefaults(bundle, root, manifest.files);
+    for (const path of profiles) {
+        const expected = state.managed[path]!.split(':')[1];
+        const value = defaults[path];
+        if (
+            !value ||
+            digest(JSON.stringify(value, null, 2) + '\n') !== expected
+        )
+            throw new Error(
+                `Cannot establish previous release defaults: ${path}. Reconcile with the installed release before retrying.`,
+            );
+    }
+    return Object.fromEntries(profiles.map((path) => [path, defaults[path]!]));
+}
+
 export async function installBundle(
     options: InstallationOptions,
 ): Promise<string> {
@@ -108,7 +215,7 @@ export async function installBundle(
                 ? 'Use update for an existing installation'
                 : 'Use install for a new installation',
         );
-    if (previous) assertInventory(root, previous.managed);
+    if (previous) assertManagedIntegrity(root, previous);
     if (previous?.release === options.release) return 'Already installed';
     for (const path of Object.keys(manifest.files).filter(
         (entry) =>
@@ -124,6 +231,16 @@ export async function installBundle(
         )
             throw new Error(`Unmanaged file collision: ${local}`);
     }
+    const inspected = previous ? inventory(root) : undefined;
+    const defaults = bundledProfileDefaults(
+        options.bundle,
+        root,
+        manifest.files,
+    );
+    const baseline = previous
+        ? await previousDefaults(root, previous, options.loadPreviousBundle)
+        : {};
+    const reconciled = reconcileProfiles(root, baseline, defaults);
     const profilePath = join(
         options.bundle,
         'setup/agent/config/sandbox.development.example.json',
@@ -182,7 +299,7 @@ export async function installBundle(
         }
     }
     if (options.dryRun)
-        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files\nDestination: ${root}\n${[...LOCAL_CONNECTION_FILES.keys()].map((path) => `Keep local: ${path} (preserved, never created or managed)`).join('\n')}${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + (options.details ? '\nRead-only installations: ' + JSON.stringify(discovery.installations, null, 2) : `\nRead-only access: ${Object.keys(discovery.installations).length} tool groups. Use --dry-run --details to inspect all installation roots and files.`) : ''}\nPreview complete; no installation was created or changed.`;
+        return `${previous ? 'Would update' : 'Would install'} ${options.release}: ${Object.keys(manifest.files).length} verified files\nDestination: ${root}\n${[...LOCAL_CONNECTION_FILES.keys()].map((path) => `Keep local: ${path} (preserved, never created or managed)`).join('\n')}${discovery ? '\n' + discovery.tools.map((tool) => `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`).join('\n') + (options.details ? '\nRead-only installations: ' + JSON.stringify(discovery.installations, null, 2) : `\nRead-only access: ${Object.keys(discovery.installations).length} tool groups. Use --dry-run --details to inspect all installation roots and files.`) : ''}\n${reconciled.preserved.map((path) => `Preserve local: ${path}`).join('\n')}\nPreview complete; no installation was created or changed.`;
     return await transact(
         root,
         options.release,
@@ -195,6 +312,8 @@ export async function installBundle(
                         relative(join(options.bundle, 'setup'), source),
                     ),
             });
+            for (const [path, value] of Object.entries(reconciled.profiles))
+                writeJson(child(candidate, path), value);
         },
         async (id) => {
             discovery?.assertUnchanged();
@@ -214,6 +333,11 @@ export async function installBundle(
         },
         options.progress,
         options.update ? 'Updated' : 'Installed',
+        {
+            profileDefaults: defaults,
+            inspectedInventory: inspected,
+            previousProfileDefaults: baseline,
+        },
     );
 }
 
@@ -275,8 +399,13 @@ async function transact(
     release: string,
     prepare: (candidate: string) => Promise<void>,
     provision: (id: string) => Promise<void>,
-    progress?: SetupProgress,
-    action = 'Installed',
+    progress: SetupProgress | undefined,
+    action: string,
+    transactionState: {
+        profileDefaults: ProfileDefaults;
+        inspectedInventory?: Record<string, string>;
+        previousProfileDefaults: ProfileDefaults;
+    },
 ): Promise<string> {
     if (existsSync(root) && lstatSync(root).isSymbolicLink())
         throw new Error('Installation root must not be a symbolic link');
@@ -296,6 +425,14 @@ async function transact(
         hadTarget = existsSync(root);
         old = hadTarget ? readInstallation(root) : undefined;
         baseline = hadTarget ? inventory(root) : {};
+        if (
+            transactionState.inspectedInventory &&
+            JSON.stringify(baseline) !==
+                JSON.stringify(transactionState.inspectedInventory)
+        )
+            throw new Error(
+                'Installation changed during preflight; retry while Pi is stopped',
+            );
         writeFileSync(
             journal,
             JSON.stringify({
@@ -377,9 +514,12 @@ async function transact(
                 ),
             );
             writeJson(join(root, STATE), {
-                schemaVersion: 1,
+                schemaVersion: 2,
                 release,
                 managed,
+                profileDefaults: transactionState.profileDefaults,
+                previousProfileDefaults:
+                    transactionState.previousProfileDefaults,
                 ...(hadTarget ? { previousId: id } : {}),
             });
         });
@@ -462,12 +602,19 @@ export async function rollbackInstallation(
     root = resolve(root);
     assertSetupIdle(root);
     const state = readInstallation(root);
-    assertInventory(root, state.managed);
+    assertManagedIntegrity(root, state);
     if (!state.previousId) throw new Error('No previous setup release');
     const previous = `${root}.setup-${state.previousId}/previous`;
     const old = readInstallation(previous);
-    assertInventory(previous, old.managed);
-    if (dryRun) return `Would restore ${old.release}`;
+    assertManagedIntegrity(previous, old);
+    const inspected = inventory(root);
+    const currentDefaults = await previousDefaults(root, state);
+    const targetDefaults =
+        state.previousProfileDefaults ??
+        (await previousDefaults(previous, old));
+    const reconciled = reconcileProfiles(root, currentDefaults, targetDefaults);
+    if (dryRun)
+        return `Would restore ${old.release}\n${reconciled.preserved.map((path) => `Preserve local: ${path}`).join('\n')}`;
     return await transact(
         root,
         old.release,
@@ -485,9 +632,17 @@ export async function rollbackInstallation(
                 });
             }
         },
-        async () => {},
+        async () => {
+            for (const [path, value] of Object.entries(reconciled.profiles))
+                writeJson(child(root, path), value);
+        },
         progress,
         'Restored',
+        {
+            profileDefaults: targetDefaults,
+            inspectedInventory: inspected,
+            previousProfileDefaults: currentDefaults,
+        },
     );
 }
 

@@ -33,14 +33,17 @@ const catalog = {
 mock.module('../_shared/models-dev/catalog', () => ({
     getModelsDevCatalog: () => catalog,
 }));
+const { validateCpaBaseUrl } = await import('./config.ts');
 mock.module('./config.ts', () => ({
+    validateCpaBaseUrl,
     isProviderEnabled: (name: string) => name === 'cpa',
-    isWidgetEnabled: () => false,
     loadAiProvidersConfig: () => ({
         modelRules: [],
-        cpa: {
-            refreshTtlMs: 30_000,
-            silentCatalogDiff: true,
+        providers: {
+            cpa: {
+                refreshTtlMs: 30_000,
+                silentCatalogDiff: true,
+            },
         },
     }),
 }));

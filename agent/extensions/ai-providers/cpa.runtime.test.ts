@@ -54,8 +54,13 @@ test.skipIf(!enabled)(
             writeFileSync(
                 join(root, 'config/ai-providers.json'),
                 JSON.stringify({
-                    providers: { cpa: true },
-                    cpa: { refreshTtlMs: 0, silentCatalogDiff: true },
+                    providers: {
+                        cpa: {
+                            enabled: true,
+                            refreshTtlMs: 30_000,
+                            silentCatalogDiff: true,
+                        },
+                    },
                 }),
             );
             globalThis.fetch = Object.assign(

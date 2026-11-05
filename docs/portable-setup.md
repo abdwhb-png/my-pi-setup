@@ -121,11 +121,11 @@ The Pi distribution contains the CPA client and save-tokens adapters. It does no
 
 | Service | Default base URL | Configuration key | Environment override |
 | --- | --- | --- | --- |
-| CPA | `http://localhost:8317/v1` | `cpa.baseUrl` | `CLIPROXY_BASE_URL` |
+| CPA | `http://localhost:8317/v1` | `providers.cpa.baseUrl` | `CLIPROXY_BASE_URL` |
 | Headroom | `http://127.0.0.1:8787` | `compressor.backends.headroom.baseUrl` | `HEADROOM_COMPRESSOR_BASE_URL` |
 | Edgee | `http://127.0.0.1:8320` | `compressor.backends.edgee.baseUrl` | `EDGEE_COMPRESSOR_BASE_URL` |
 
-CPA settings belong in `~/.pi/agent/config/ai-providers.json`; compression settings belong in `~/.pi/agent/config/save-tokens.json`. Trusted projects can override them in the corresponding `<cwd>/.pi/config/` files. Precedence is exported environment, trusted project configuration, global configuration, then the defaults above. Empty environment overrides are ignored. Save-tokens uses only its selected backend; no automatic switch to another service occurs.
+CPA settings belong under `providers.cpa` in `~/.pi/agent/config/ai-providers.json` (see the [configuration reference](../agent/extensions/ai-providers/README.md)); compression settings belong in `~/.pi/agent/config/save-tokens.json`. Trusted projects can override them in the corresponding `<cwd>/.pi/config/` files. Precedence is exported environment, trusted project configuration, global configuration, then the defaults above. Empty environment overrides are ignored. Save-tokens uses only its selected backend; no automatic switch to another service occurs.
 
 For example, if a tunnel exposes the services on these VPS-side ports, start Pi with the matching addresses:
 
@@ -210,7 +210,11 @@ Stop Pi before changing its installation. Use a shell whose working directory is
 ~/.pi/bin/pi-setup rollback
 ```
 
-The operator records installed file fingerprints and refuses modified managed files or collisions with local additions. It does not merge personal configuration automatically. Reconcile the reported differences with the maintained profile before retrying. Installing the already active release is a no-op after integrity checking. Running Pi processes and interrupted setup transactions block activation.
+The operator keeps the delivered defaults for each portable JSON preference file. Updates compare those defaults with the current machine configuration and the incoming defaults: machine changes take precedence, unchanged properties receive the new defaults, local property deletions are retained, and arrays are preserved as complete values. This applies to extension configurations, Pi settings, keybindings and footer preferences. Continue editing their normal files; no extra override file is required. For example, a machine-specific CPA endpoint and hidden footer statuses survive while unrelated defaults receive updates. `--dry-run` reports preserved property paths without printing their values.
+
+Incompatible property types, removal of a customized property, invalid JSON and conflicting package/resource declarations stop the update before activation. Code and executable integrity checks remain strict, and unmanaged file collisions are still refused. Reconcile the reported property before retrying. Running Pi processes and interrupted setup transactions block activation. Installing the already active release is a no-op after integrity checking.
+
+Installation state now uses schema version 2. Update the bootstrap checkout from `main` before operating on it; an older operator cannot read the new state. When upgrading a version-1 installation with modified preferences, the new operator downloads the verified installed release to reconstruct its original defaults and checks them against the recorded fingerprints. It never adopts the edited files as defaults. If the release is unavailable or its defaults cannot be verified, the update stops with a reconciliation error. Downloaded reference archives are temporary and removed after the operation. After rolling back to a release containing a version-1 operator, continue using the updated bootstrap operator to manage schema-version-2 state. A rollback requiring an incompatible configuration format is refused; configuration formats are never silently converted.
 
 Updates use a sibling staging directory and preserve the previous complete installation. This favors recoverability over disk efficiency: allow enough disk space for the current installation, a staging copy, the previous installation and downloaded assets. User data is retained locally in these owner-only backups; backups are never included in a distribution. Older backups are not automatically pruned.
 
@@ -220,7 +224,7 @@ Activation writes a journal outside the target. The daily launcher and `pi-fork`
 bun ~/pi-bootstrap/bin/pi-setup recover
 ```
 
-Recovery refuses a still-running transaction. Rollback restores the previous managed code, profile and runtimes, while keeping current authentication, memory, sessions, sandbox authority and other unmanaged state. It also refuses conflicting edits. Keep the bootstrap checkout until installation and updates have been checked.
+Recovery refuses a still-running transaction. Rollback restores the previous managed code, default profile and runtimes while reapplying current machine preference changes. Current authentication, memory, sessions, sandbox authority and other unmanaged state remain local. Incompatible preferences or modified managed code stop rollback before activation. Keep the bootstrap checkout until installation and updates have been checked.
 
 ## Optional global memory transfer
 

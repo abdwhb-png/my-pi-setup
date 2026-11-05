@@ -479,6 +479,213 @@ test('updates preserve local changes by refusing conflicts, and dry runs never i
     }
 });
 
+test('updates and rollback preserve local preferences while adopting new defaults', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-profile-customization-'));
+    const root = join(home, '.pi');
+    const provision = async () => {};
+    function profileBundle(version: string, profile: object) {
+        const input = bundle(home, version);
+        writeJson(join(input, 'setup/agent/settings.json'), profile);
+        writeJson(join(input, 'setup/agent/fancy-footer.local.json'), {
+            responsive: { enabled: true },
+            extensionStatusHiddenIds: [],
+        });
+        const manifest = JSON.parse(
+            readFileSync(join(input, 'manifest.json'), 'utf8'),
+        );
+        rmSync(join(input, 'manifest.json'));
+        writeJson(join(input, 'manifest.json'), {
+            ...manifest,
+            files: inventory(input),
+        });
+        return input;
+    }
+    try {
+        const first = profileBundle('custom-one', {
+            defaultModel: 'base',
+            theme: 'old',
+            nested: { a: 1, b: 2 },
+            optional: true,
+        });
+        const second = profileBundle('custom-two', {
+            defaultModel: 'new-base',
+            theme: 'new',
+            nested: { a: 3, b: 4 },
+            optional: true,
+            added: true,
+        });
+        await installBundle({ root, bundle: first, release: 'one', provision });
+        writeJson(join(root, 'agent/settings.json'), {
+            defaultModel: 'machine',
+            theme: 'old',
+            nested: { a: 9, b: 2 },
+        });
+        writeJson(join(root, 'agent/fancy-footer.local.json'), {
+            responsive: { enabled: false },
+            extensionStatusHiddenIds: ['fixture'],
+        });
+        const before = inventory(root);
+        const preview = await installBundle({
+            root,
+            bundle: second,
+            release: 'two',
+            provision,
+            update: true,
+            dryRun: true,
+        });
+        expect(preview).toContain('Preserve local');
+        expect(inventory(root)).toEqual(before);
+        await installBundle({
+            root,
+            bundle: second,
+            release: 'two',
+            provision,
+            update: true,
+        });
+        expect(
+            JSON.parse(readFileSync(join(root, 'agent/settings.json'), 'utf8')),
+        ).toEqual({
+            defaultModel: 'machine',
+            theme: 'new',
+            nested: { a: 9, b: 4 },
+            added: true,
+        });
+        expect(
+            JSON.parse(
+                readFileSync(
+                    join(root, 'agent/fancy-footer.local.json'),
+                    'utf8',
+                ),
+            ).responsive.enabled,
+        ).toBe(false);
+        await rollbackInstallation(root);
+        expect(
+            JSON.parse(readFileSync(join(root, 'agent/settings.json'), 'utf8')),
+        ).toEqual({
+            defaultModel: 'machine',
+            theme: 'old',
+            nested: { a: 9, b: 2 },
+        });
+        expect(readInstallation(root).schemaVersion).toBe(2);
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test.each(['matching', 'wrong', 'missing'])(
+    'legacy modified preferences require verified previous defaults (%s)',
+    async (variant) => {
+        const home = mkdtempSync(join(tmpdir(), 'pi-profile-v1-'));
+        const root = join(home, '.pi');
+        const provision = async () => {};
+        try {
+            const first = bundle(home, 'legacy-profile');
+            const second = bundle(home, 'next-profile');
+            await installBundle({
+                root,
+                bundle: first,
+                release: 'old',
+                provision,
+            });
+            const state = JSON.parse(
+                readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+            );
+            delete state.profileDefaults;
+            state.schemaVersion = 1;
+            writeJson(join(root, '.pi-setup-state.json'), state);
+            writeJson(join(root, 'agent/settings.json'), {
+                defaultModel: 'machine',
+            });
+            const before = inventory(root);
+            const requested: string[] = [];
+            const loadPreviousBundle =
+                variant === 'missing'
+                    ? undefined
+                    : async (release: string) => {
+                          requested.push(release);
+                          if (variant === 'wrong') {
+                              writeJson(
+                                  join(first, 'setup/agent/settings.json'),
+                                  { defaultModel: 'wrong-reference' },
+                              );
+                              const manifest = JSON.parse(
+                                  readFileSync(
+                                      join(first, 'manifest.json'),
+                                      'utf8',
+                                  ),
+                              );
+                              rmSync(join(first, 'manifest.json'));
+                              writeJson(join(first, 'manifest.json'), {
+                                  ...manifest,
+                                  files: inventory(first),
+                              });
+                          }
+                          return first;
+                      };
+            const updating = installBundle({
+                root,
+                bundle: second,
+                release: 'new',
+                update: true,
+                provision,
+                loadPreviousBundle,
+            });
+            if (variant === 'matching') {
+                await updating;
+                expect(
+                    JSON.parse(
+                        readFileSync(join(root, 'agent/settings.json'), 'utf8'),
+                    ).defaultModel,
+                ).toBe('machine');
+                expect(readInstallation(root).schemaVersion).toBe(2);
+            } else {
+                await expect(updating).rejects.toThrow(
+                    variant === 'wrong'
+                        ? 'Cannot establish previous release defaults'
+                        : 'Previous release defaults required',
+                );
+                expect(inventory(root)).toEqual(before);
+            }
+            expect(requested).toEqual(variant === 'missing' ? [] : ['old']);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    },
+);
+
+test('incompatible preferences stop before provisioning and leave every file intact', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-profile-refusal-'));
+    const root = join(home, '.pi');
+    try {
+        const first = bundle(home, 'compatible');
+        const second = bundle(home, 'incompatible');
+        await installBundle({
+            root,
+            bundle: first,
+            release: 'one',
+            provision: async () => {},
+        });
+        writeJson(join(root, 'agent/settings.json'), {
+            packages: ['local-package'],
+        });
+        const before = inventory(root);
+        await expect(
+            installBundle({
+                root,
+                bundle: second,
+                release: 'two',
+                update: true,
+                provision: async () => {
+                    throw new Error('must not provision');
+                },
+            }),
+        ).rejects.toThrow('Incompatible local preference');
+        expect(inventory(root)).toEqual(before);
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
 test('interrupted activation recovery restores the previous directory', async () => {
     const home = mkdtempSync(join(tmpdir(), 'pi-setup-recover-'));
     const root = join(home, '.pi');

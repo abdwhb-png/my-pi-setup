@@ -12,11 +12,10 @@ import {
     mkdtempSync,
     writeFileSync,
     readFileSync,
-    unlinkSync,
     rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, basename, join, resolve, extname } from "node:path";
+import { dirname, basename, join, resolve } from "node:path";
 import type {
     ExtensionAPI,
     ExtensionContext,
@@ -48,6 +47,8 @@ import {
     type ReviewResult,
 } from "./slow-mode-ui.ts";
 
+import { ReviewQueue } from "./review-queue.ts";
+
 const WIDGET_ID = "slow-mode";
 
 export default function slowMode(pi: ExtensionAPI) {
@@ -55,6 +56,7 @@ export default function slowMode(pi: ExtensionAPI) {
         process.argv.includes("--mode") && process.argv.includes("rpc");
 
     let enabled = false;
+    const reviews = new ReviewQueue();
 
     /** Per-tool slow-mode config. Map key = tool name, value = slow mode active for this tool. */
     let toolConfig = new Map<string, boolean>();
@@ -166,6 +168,10 @@ export default function slowMode(pi: ExtensionAPI) {
     });
 
     pi.on("session_start", async (_event, ctx) => {
+        reviews.cancel();
+        await reviews.idle();
+        enabled = false;
+        clearAutoAccept();
         originalWrite = createWriteTool(ctx.cwd);
         originalEdit = createEditTool(ctx.cwd);
 
@@ -180,13 +186,23 @@ export default function slowMode(pi: ExtensionAPI) {
             const e = entries[i];
             if (e.type === "custom" && e.customType === "slow-mode") {
                 enabled = (e.data as { enabled: boolean }).enabled;
-                w.update(ctx, buildWidgetText(enabled, toolConfig));
                 break;
             }
         }
+        w.update(ctx, buildWidgetText(enabled, toolConfig));
     });
 
+    pi.on("session_before_switch", async () => {
+        reviews.cancel();
+        await reviews.idle();
+    });
+    pi.on("session_before_fork", async () => {
+        reviews.cancel();
+        await reviews.idle();
+    });
     pi.on("session_shutdown", async () => {
+        reviews.cancel();
+        await reviews.idle();
         if (_tmpDir) {
             try {
                 rmSync(_tmpDir, { recursive: true });
@@ -246,6 +262,10 @@ export default function slowMode(pi: ExtensionAPI) {
                 enabled = !enabled;
             }
 
+            if (!enabled) {
+                reviews.cancel();
+                clearAutoAccept();
+            }
             w.update(ctx, buildWidgetText(enabled, toolConfig));
 
             pi.appendEntry("slow-mode", { enabled });
@@ -281,68 +301,77 @@ export default function slowMode(pi: ExtensionAPI) {
                 );
             }
 
-            const filePath = params.path;
-            const content = params.content;
-            if (!filePath || content == null) {
+            return reviews.run(signal, async (signal) => {
+                const filePath = params.path;
+                const content = params.content;
+                if (!filePath || content == null) {
+                    return originalWrite.execute(
+                        toolCallId,
+                        params,
+                        signal,
+                        onUpdate,
+                    );
+                }
+
+                const key = autoAcceptKey("write", params);
+                if (isAutoAccepted("write", key)) {
+                    return originalWrite.execute(
+                        toolCallId,
+                        params,
+                        signal,
+                        onUpdate,
+                    );
+                }
+
+                const review = await reviewWrite(
+                    toolCallId,
+                    filePath,
+                    content,
+                    ctx,
+                    signal,
+                );
+
+                signal.throwIfAborted();
+                if (review.autoAccept) {
+                    recordAutoAccept("write", key);
+                }
+
+                if (!review.approved) {
+                    throw new Error(
+                        review.reason
+                            ? `User rejected the write: ${review.reason}`
+                            : "User rejected the write in slow mode review.",
+                    );
+                }
+
+                if (
+                    review.editedContent != null &&
+                    review.editedContent !== content
+                ) {
+                    editedCalls.set(toolCallId, {
+                        original: content,
+                        edited: review.editedContent,
+                    });
+                    ctx.ui.notify("Using edited content", "info");
+                    const modifiedParams = {
+                        ...params,
+                        content: review.editedContent,
+                    };
+                    return originalWrite.execute(
+                        toolCallId,
+                        modifiedParams,
+                        signal,
+                        onUpdate,
+                    );
+                }
+
                 return originalWrite.execute(
                     toolCallId,
                     params,
                     signal,
                     onUpdate,
                 );
-            }
-
-            const key = autoAcceptKey("write", params);
-            if (isAutoAccepted("write", key)) {
-                return originalWrite.execute(
-                    toolCallId,
-                    params,
-                    signal,
-                    onUpdate,
-                );
-            }
-
-            const review = await reviewWrite(
-                toolCallId,
-                filePath,
-                content,
-                ctx,
-            );
-
-            if (review.autoAccept) {
-                recordAutoAccept("write", key);
-            }
-
-            if (!review.approved) {
-                throw new Error(
-                    review.reason
-                        ? `User rejected the write: ${review.reason}`
-                        : "User rejected the write in slow mode review.",
-                );
-            }
-
-            if (
-                review.editedContent != null &&
-                review.editedContent !== content
-            ) {
-                editedCalls.set(toolCallId, {
-                    original: content,
-                    edited: review.editedContent,
-                });
-                ctx.ui.notify("Using edited content", "info");
-                const modifiedParams = {
-                    ...params,
-                    content: review.editedContent,
-                };
-                return originalWrite.execute(
-                    toolCallId,
-                    modifiedParams,
-                    signal,
-                    onUpdate,
-                );
-            }
-
-            return originalWrite.execute(toolCallId, params, signal, onUpdate);
+            });
         },
     });
 
@@ -364,76 +393,86 @@ export default function slowMode(pi: ExtensionAPI) {
                 );
             }
 
-            const filePath = params.path;
-            if (!filePath) {
-                return originalEdit.execute(
-                    toolCallId,
-                    params,
-                    signal,
-                    onUpdate,
-                );
-            }
-
-            const key = autoAcceptKey("edit", params);
-            if (isAutoAccepted("edit", key)) {
-                return originalEdit.execute(
-                    toolCallId,
-                    params,
-                    signal,
-                    onUpdate,
-                );
-            }
-
-            const review = await reviewEdit(toolCallId, params, ctx);
-
-            if (review.autoAccept) {
-                recordAutoAccept("edit", key);
-            }
-
-            if (!review.approved) {
-                throw new Error(
-                    review.reason
-                        ? `User rejected the edit: ${review.reason}`
-                        : "User rejected the edit in slow mode review.",
-                );
-            }
-
-            if (review.editedContent != null) {
-                if (review.wroteDirectly) {
-                    editedCalls.set(toolCallId, {
-                        original: review.originalNewText!,
-                        edited: review.editedContent,
-                    });
-                    return {
-                        content: [
-                            {
-                                type: "text" as const,
-                                text: "Applied via slow mode review (content was edited externally).",
-                            },
-                        ],
-                        details: undefined,
-                    };
-                }
-                if (review.editedContent !== review.originalNewText) {
-                    editedCalls.set(toolCallId, {
-                        original: review.originalNewText!,
-                        edited: review.editedContent,
-                    });
-                    ctx.ui.notify("Using edited content", "info");
-                    const modifiedParams = constructModifiedEditParams(
-                        params,
-                        review.editedContent,
-                    );
+            return reviews.run(signal, async (signal) => {
+                const filePath = params.path;
+                if (!filePath) {
                     return originalEdit.execute(
                         toolCallId,
-                        modifiedParams,
+                        params,
                         signal,
                         onUpdate,
                     );
                 }
-            }
 
-            return originalEdit.execute(toolCallId, params, signal, onUpdate);
+                const key = autoAcceptKey("edit", params);
+                if (isAutoAccepted("edit", key)) {
+                    return originalEdit.execute(
+                        toolCallId,
+                        params,
+                        signal,
+                        onUpdate,
+                    );
+                }
+
+                const review = await reviewEdit(
+                    toolCallId,
+                    params,
+                    ctx,
+                    signal,
+                );
+
+                signal.throwIfAborted();
+                if (review.autoAccept) {
+                    recordAutoAccept("edit", key);
+                }
+
+                if (!review.approved) {
+                    throw new Error(
+                        review.reason
+                            ? `User rejected the edit: ${review.reason}`
+                            : "User rejected the edit in slow mode review.",
+                    );
+                }
+
+                if (review.editedContent != null) {
+                    if (review.editedContent !== review.originalNewText) {
+                        editedCalls.set(toolCallId, {
+                            original: review.originalNewText!,
+                            edited: review.editedContent,
+                        });
+                        ctx.ui.notify("Using edited content", "info");
+                        const modifiedParams =
+                            review.originalFileContent !== undefined
+                                ? {
+                                      ...params,
+                                      edits: [
+                                          {
+                                              oldText:
+                                                  review.originalFileContent,
+                                              newText: review.editedContent,
+                                          },
+                                      ],
+                                  }
+                                : constructModifiedEditParams(
+                                      params,
+                                      review.editedContent,
+                                  );
+                        return originalEdit.execute(
+                            toolCallId,
+                            modifiedParams,
+                            signal,
+                            onUpdate,
+                        );
+                    }
+                }
+
+                return originalEdit.execute(
+                    toolCallId,
+                    params,
+                    signal,
+                    onUpdate,
+                );
+            });
         },
     });
 
@@ -479,102 +518,131 @@ export default function slowMode(pi: ExtensionAPI) {
         // Defaults populate write/edit/bash/safe_bash so they are reviewed out of the box.
         if (toolConfig.get(event.toolName) !== true) return;
 
-        if (event.toolName === "bash" || event.toolName === "safe_bash") {
-            const input = event.input as { command?: unknown };
-            const command =
-                typeof input.command === "string" ? input.command : undefined;
-            if (command == null) return;
+        if (event.toolName === "write" || event.toolName === "edit") return;
+        try {
+            return await reviews.run(ctx.signal, async (signal) => {
+                if (
+                    event.toolName === "bash" ||
+                    event.toolName === "safe_bash"
+                ) {
+                    const input = event.input as { command?: unknown };
+                    const command =
+                        typeof input.command === "string"
+                            ? input.command
+                            : undefined;
+                    if (command == null) return;
 
-            const key = autoAcceptKey(
-                event.toolName,
-                event.input as Record<string, unknown>,
-            );
-            if (isAutoAccepted(event.toolName, key)) {
-                return;
-            }
+                    const key = autoAcceptKey(
+                        event.toolName,
+                        event.input as Record<string, unknown>,
+                    );
+                    if (isAutoAccepted(event.toolName, key)) {
+                        return;
+                    }
 
-            const danger = isDangerous(command);
-            const body = danger
-                ? `⚠ DANGEROUS (${danger})\n\n$ ${command}`
-                : `$ ${command}`;
+                    const danger = isDangerous(command);
+                    const body = danger
+                        ? `⚠ DANGEROUS (${danger})\n\n$ ${command}`
+                        : `$ ${command}`;
 
-            pi.events.emit("slow-mode:waiting", {});
-            let decision: ReviewResult;
-            try {
-                decision = await showReview(ctx, {
-                    operation: "BASH",
-                    filePath: event.toolName,
-                    body,
-                    allowEdit: false,
-                });
-            } finally {
-                pi.events.emit("slow-mode:resolved", {});
-            }
+                    pi.events.emit("slow-mode:waiting", {});
+                    let decision: ReviewResult;
+                    try {
+                        decision = await showReview(ctx, {
+                            signal,
+                            operation: "BASH",
+                            filePath: event.toolName,
+                            body,
+                            allowEdit: false,
+                        });
+                    } finally {
+                        pi.events.emit("slow-mode:resolved", {});
+                    }
 
-            if (decision === "approve") {
-                return;
-            }
-            if (decision === "approve-auto") {
-                recordAutoAccept(event.toolName, key);
-                return;
-            }
-            if (decision === "edit") {
-                return;
-            }
-            if (decision === "reject") {
+                    signal.throwIfAborted();
+                    if (decision === "approve") {
+                        return;
+                    }
+                    if (decision === "approve-auto") {
+                        recordAutoAccept(event.toolName, key);
+                        return;
+                    }
+                    if (decision === "reject") {
+                        return {
+                            block: true as const,
+                            reason: "User rejected the bash command in slow mode review.",
+                        };
+                    }
+                    return {
+                        block: true as const,
+                        reason:
+                            typeof decision === "object" &&
+                            decision.action === "rejected"
+                                ? `User rejected the bash command: ${decision.reason}`
+                                : "Slow-mode review did not approve the tool call.",
+                    };
+                }
+
+                // ---- Generic config-based slow mode for any other tool ----
+                const input = event.input as Record<string, unknown>;
+                const bodyLines = [`Tool: ${event.toolName}`];
+                for (const [key, value] of Object.entries(input)) {
+                    const valStr =
+                        typeof value === "string"
+                            ? value
+                            : JSON.stringify(value);
+                    bodyLines.push(`  ${key}: ${valStr}`);
+                }
+                const body = bodyLines.join("\n");
+
+                pi.events.emit("slow-mode:waiting", {});
+                let decision: ReviewResult;
+                try {
+                    decision = await showReview(ctx, {
+                        signal,
+                        operation: "TOOL",
+                        filePath: event.toolName,
+                        body,
+                        allowEdit: false,
+                    });
+                } finally {
+                    pi.events.emit("slow-mode:resolved", {});
+                }
+
+                signal.throwIfAborted();
+                if (decision === "approve" || decision === "approve-auto") {
+                    if (decision === "approve-auto") {
+                        recordAutoAccept(
+                            event.toolName,
+                            autoAcceptKey(event.toolName, input),
+                        );
+                    }
+                    return;
+                }
+                if (decision === "reject") {
+                    return {
+                        block: true as const,
+                        reason: `User rejected the ${event.toolName} tool call in slow mode review.`,
+                    };
+                }
+                if (
+                    typeof decision === "object" &&
+                    decision.action === "rejected"
+                ) {
+                    return {
+                        block: true as const,
+                        reason: `User rejected the ${event.toolName} tool call: ${decision.reason}`,
+                    };
+                }
                 return {
                     block: true as const,
-                    reason: "User rejected the bash command in slow mode review.",
+                    reason: "Slow-mode review did not approve the tool call.",
                 };
-            }
-            return {
-                block: true as const,
-                reason: `User rejected the bash command: ${decision.reason}`,
-            };
-        }
-
-        // ---- Generic config-based slow mode for any other tool ----
-        const input = event.input as Record<string, unknown>;
-        const bodyLines = [`Tool: ${event.toolName}`];
-        for (const [key, value] of Object.entries(input)) {
-            const valStr =
-                typeof value === "string" ? value : JSON.stringify(value);
-            bodyLines.push(`  ${key}: ${valStr}`);
-        }
-        const body = bodyLines.join("\n");
-
-        pi.events.emit("slow-mode:waiting", {});
-        let decision: ReviewResult;
-        try {
-            decision = await showReview(ctx, {
-                operation: "TOOL",
-                filePath: event.toolName,
-                body,
-                allowEdit: false,
             });
-        } finally {
-            pi.events.emit("slow-mode:resolved", {});
-        }
-
-        if (decision === "approve" || decision === "approve-auto") {
-            if (decision === "approve-auto") {
-                recordAutoAccept(
-                    event.toolName,
-                    autoAcceptKey(event.toolName, input),
-                );
-            }
-            return;
-        }
-        if (decision === "reject") {
+        } catch {
             return {
-                block: true as const,
-                reason: `User rejected the ${event.toolName} tool call in slow mode review.`,
-            };
-        }
-        if (typeof decision === "object" && decision.action === "rejected") {
-            return {
-                block: true as const,
-                reason: `User rejected the ${event.toolName} tool call: ${decision.reason}`,
+                block: true,
+                reason: "Slow-mode review was cancelled or failed; the tool was not approved.",
             };
         }
     });
@@ -591,55 +659,62 @@ export default function slowMode(pi: ExtensionAPI) {
         filePath: string,
         content: string,
         ctx: ExtensionContext,
+        signal: AbortSignal,
     ): Promise<WriteReviewResult> {
         const relPath = resolvePath(ctx.cwd, filePath);
-        const stagePath = join(tmpDir(), relPath);
-
-        ensureDir(dirname(stagePath));
-        writeFileSync(stagePath, content, "utf-8");
-
+        const stageDir = mkdtempSync(join(tmpDir(), "write-"));
+        const stagePath = join(stageDir, basename(relPath));
         pi.events.emit("slow-mode:waiting", {});
-        const result = await showReview(ctx, {
-            operation: "WRITE",
-            filePath: relPath,
-            stagePath,
-            body: content,
-            allowEdit: true,
-        });
-        pi.events.emit("slow-mode:resolved", {});
+        try {
+            ensureDir(dirname(stagePath));
+            writeFileSync(stagePath, content, "utf-8");
 
-        let editedContent: string | null = null;
-        let autoAcceptVal = false;
-        let reason: string | null = null;
+            const result = await showReview(ctx, {
+                signal,
+                operation: "WRITE",
+                filePath: relPath,
+                stagePath,
+                body: content,
+                allowEdit: true,
+            });
 
-        if (result === "approve" || result === "approve-auto") {
-            autoAcceptVal = result === "approve-auto";
-            try {
-                const readBack = readFileSync(stagePath, "utf-8");
-                if (readBack !== content) {
-                    editedContent = readBack;
-                }
-            } catch {}
-        } else if (result === "reject") {
-        } else if (typeof result === "object" && result.action === "rejected") {
-            reason = result.reason;
+            let editedContent: string | null = null;
+            let autoAcceptVal = false;
+            let reason: string | null = null;
+
+            if (result === "approve" || result === "approve-auto") {
+                autoAcceptVal = result === "approve-auto";
+                try {
+                    const readBack = readFileSync(stagePath, "utf-8");
+                    if (readBack !== content) {
+                        editedContent = readBack;
+                    }
+                } catch {}
+            } else if (result === "reject") {
+            } else if (
+                typeof result === "object" &&
+                result.action === "rejected"
+            ) {
+                reason = result.reason;
+            }
+
+            return {
+                approved: result === "approve" || result === "approve-auto",
+                editedContent,
+                autoAccept: autoAcceptVal,
+                reason,
+            };
+        } finally {
+            pi.events.emit("slow-mode:resolved", {});
+            rmSync(stageDir, { recursive: true, force: true });
         }
-
-        cleanup(stagePath);
-
-        return {
-            approved: result === "approve" || result === "approve-auto",
-            editedContent,
-            autoAccept: autoAcceptVal,
-            reason,
-        };
     }
 
     interface EditReviewResult {
         approved: boolean;
         editedContent: string | null;
         originalNewText: string | null;
-        wroteDirectly: boolean;
+        originalFileContent?: string;
         autoAccept: boolean;
         reason: string | null;
     }
@@ -651,6 +726,7 @@ export default function slowMode(pi: ExtensionAPI) {
             edits: Array<{ oldText: string; newText: string }>;
         },
         ctx: ExtensionContext,
+        signal: AbortSignal,
     ): Promise<EditReviewResult> {
         const filePath = params.path;
         const patches = extractEditPatches(params);
@@ -659,7 +735,6 @@ export default function slowMode(pi: ExtensionAPI) {
                 approved: true,
                 editedContent: null,
                 originalNewText: null,
-                wroteDirectly: false,
                 autoAccept: false,
                 reason: null,
             };
@@ -684,7 +759,6 @@ export default function slowMode(pi: ExtensionAPI) {
                         approved: true,
                         editedContent: null,
                         originalNewText: null,
-                        wroteDirectly: false,
                         autoAccept: false,
                         reason: null,
                     };
@@ -698,7 +772,6 @@ export default function slowMode(pi: ExtensionAPI) {
                     approved: true,
                     editedContent: null,
                     originalNewText: null,
-                    wroteDirectly: false,
                     autoAccept: false,
                     reason: null,
                 };
@@ -706,95 +779,86 @@ export default function slowMode(pi: ExtensionAPI) {
             newText = extracted.newText;
         }
 
-        const base = basename(relPath);
-        const ext = extname(base);
-        const nameWithoutExt = base.slice(0, -ext.length || undefined);
-        const ts = Date.now();
-        const oldPath = join(tmpDir(), `${nameWithoutExt}-${ts}.old${ext}`);
-        const newPath = join(tmpDir(), `${nameWithoutExt}-${ts}.new${ext}`);
-        ensureDir(tmpDir());
-        writeFileSync(oldPath, oldText, "utf-8");
-        writeFileSync(newPath, newText, "utf-8");
-
+        const stageDir = mkdtempSync(join(tmpDir(), "edit-"));
+        const oldPath = join(stageDir, "old");
+        const newPath = join(stageDir, "new");
         pi.events.emit("slow-mode:waiting", {});
+        try {
+            writeFileSync(oldPath, oldText, "utf-8");
+            writeFileSync(newPath, newText, "utf-8");
 
-        let approved = false;
-        let autoAcceptVal = false;
-        let reason: string | null = null;
+            let approved = false;
+            let autoAcceptVal = false;
+            let reason: string | null = null;
 
-        reviewLoop: while (true) {
-            const currentOldText = readFileSync(oldPath, "utf-8");
-            const currentNewText = readFileSync(newPath, "utf-8");
-            const diff = generateUnifiedDiff(
-                relPath,
-                currentOldText,
-                currentNewText,
-            );
-            const renderedDiff = renderWithDelta(diff);
+            reviewLoop: while (true) {
+                const currentOldText = readFileSync(oldPath, "utf-8");
+                const currentNewText = readFileSync(newPath, "utf-8");
+                const diff = generateUnifiedDiff(
+                    relPath,
+                    currentOldText,
+                    currentNewText,
+                );
+                const renderedDiff = renderWithDelta(diff);
 
-            const decision = await showReview(ctx, {
-                operation: "EDIT",
-                filePath: relPath,
-                body: renderedDiff,
-                stagePath: newPath,
-                oldPath,
-                newPath,
-                allowEdit: true,
-            });
+                const decision = await showReview(ctx, {
+                    signal,
+                    operation: "EDIT",
+                    filePath: relPath,
+                    body: renderedDiff,
+                    stagePath: newPath,
+                    oldPath,
+                    newPath,
+                    allowEdit: true,
+                });
 
-            switch (decision) {
-                case "approve":
-                case "approve-auto":
-                    approved = true;
-                    autoAcceptVal = decision === "approve-auto";
-                    break reviewLoop;
-                case "reject":
-                    approved = false;
-                    break reviewLoop;
-                case "edit":
-                    openExternalFile(newPath);
-                    continue;
-                default:
-                    if (
-                        typeof decision === "object" &&
-                        decision.action === "rejected"
-                    ) {
-                        reason = decision.reason;
+                switch (decision) {
+                    case "approve":
+                    case "approve-auto":
+                        approved = true;
+                        autoAcceptVal = decision === "approve-auto";
+                        break reviewLoop;
+                    case "reject":
                         approved = false;
                         break reviewLoop;
-                    }
-            }
-        }
-
-        let editedContent: string | null = null;
-        let wroteDirectly = false;
-
-        if (approved) {
-            try {
-                const editedNewText = readFileSync(newPath, "utf-8");
-                if (editedNewText !== newText) {
-                    if (usedRealFile) {
-                        const absolutePath = resolve(ctx.cwd, filePath);
-                        writeFileSync(absolutePath, editedNewText, "utf-8");
-                        wroteDirectly = true;
-                    }
-                    editedContent = editedNewText;
+                    case "edit":
+                        openExternalFile(newPath);
+                        continue;
+                    default:
+                        if (
+                            typeof decision === "object" &&
+                            decision.action === "rejected"
+                        ) {
+                            reason = decision.reason;
+                            approved = false;
+                            break reviewLoop;
+                        }
                 }
-            } catch {}
+            }
+
+            let editedContent: string | null = null;
+
+            if (approved) {
+                try {
+                    const editedNewText = readFileSync(newPath, "utf-8");
+                    if (editedNewText !== newText) {
+                        editedContent = editedNewText;
+                    }
+                } catch {}
+            }
+
+            return {
+                approved,
+                editedContent,
+                originalNewText: newText,
+                originalFileContent: usedRealFile ? oldText : undefined,
+                autoAccept: autoAcceptVal,
+                reason,
+            };
+        } finally {
+            pi.events.emit("slow-mode:resolved", {});
+            rmSync(stageDir, { recursive: true, force: true });
         }
-
-        pi.events.emit("slow-mode:resolved", {});
-        cleanup(oldPath);
-        cleanup(newPath);
-
-        return {
-            approved,
-            editedContent,
-            originalNewText: newText,
-            wroteDirectly,
-            autoAccept: autoAcceptVal,
-            reason,
-        };
     }
 
     function constructModifiedEditParams(
@@ -828,11 +892,5 @@ export default function slowMode(pi: ExtensionAPI) {
 
     function ensureDir(dir: string) {
         mkdirSync(dir, { recursive: true });
-    }
-
-    function cleanup(path: string) {
-        try {
-            unlinkSync(path);
-        } catch {}
     }
 }

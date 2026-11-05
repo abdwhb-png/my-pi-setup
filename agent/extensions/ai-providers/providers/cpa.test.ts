@@ -544,7 +544,7 @@ describe('registerCpaProvider', () => {
         writeFixtureFile(
             configPath,
             JSON.stringify({
-                cpa: { baseUrl: 'http://127.0.0.1:18317/v1' },
+                providers: { cpa: { baseUrl: 'http://127.0.0.1:18317/v1' } },
             }),
         );
         const { pi, registeredProviders } = createMockExtensionAPI();
@@ -576,7 +576,7 @@ describe('registerCpaProvider', () => {
         writeFixtureFile(
             configPath,
             JSON.stringify({
-                cpa: { baseUrl: 'http://127.0.0.1:18317/v1' },
+                providers: { cpa: { baseUrl: 'http://127.0.0.1:18317/v1' } },
             }),
         );
         process.env.CLIPROXY_BASE_URL =
@@ -616,7 +616,7 @@ describe('registerCpaProvider', () => {
             process.env.CLIPROXY_BASE_URL = baseUrl;
             const { pi, registeredProviders } = createMockExtensionAPI();
             expect(() => registerCpaProvider(pi)).toThrow(
-                'Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.',
+                'Invalid ai-providers configuration: providers.cpa.baseUrl (or CLIPROXY_BASE_URL): expected an absolute HTTP(S) URL without credentials, query or fragment. Use providers.cpa for CPA settings and object entries with enabled booleans.',
             );
             expect(registeredProviders).toHaveLength(0);
         },
@@ -626,7 +626,9 @@ describe('registerCpaProvider', () => {
         writeFixtureFile(
             configPath,
             JSON.stringify({
-                cpa: { baseUrl: ' http://127.0.0.1:18317/v1/// ' },
+                providers: {
+                    cpa: { baseUrl: ' http://127.0.0.1:18317/v1/// ' },
+                },
             }),
         );
         process.env.CLIPROXY_BASE_URL = '  ';

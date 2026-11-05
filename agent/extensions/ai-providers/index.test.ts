@@ -22,7 +22,6 @@ mock.module('../_shared/models-dev/catalog', () => ({
 }));
 mock.module('./config.ts', () => ({
     isProviderEnabled: (name: string) => enabled[name] ?? true,
-    isWidgetEnabled: () => true,
 }));
 mock.module('./models-dev.ts', () => ({
     registerModelsDevIntegration: (

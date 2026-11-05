@@ -30,7 +30,7 @@ import type {
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { getModelsDevCatalog } from '../../_shared/models-dev/catalog';
 import { createUiColors } from '../../_shared/ui/ui-colors.ts';
-import { loadAiProvidersConfig } from '../config.ts';
+import { loadAiProvidersConfig, validateCpaBaseUrl } from '../config.ts';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import type { ChatModelConfig } from '../rules/model-rules.ts';
 import type { CatalogDiffCounts } from './catalog-diff.ts';
@@ -259,25 +259,12 @@ export function registerCpaProvider(
 ): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
     const getCatalog = options?.getCatalog ?? getModelsDevCatalog;
-    const cpaConfig = loadAiProvidersConfig().cpa;
-    const baseUrl = (
+    const cpaConfig = loadAiProvidersConfig().providers.cpa ?? {};
+    const baseUrl = validateCpaBaseUrl(
         process.env.CLIPROXY_BASE_URL?.trim() ||
-        cpaConfig.baseUrl ||
-        DEFAULT_BASE_URL
-    ).replace(/\/+$/, '');
-    const endpoint = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
-    if (
-        !endpoint ||
-        !['http:', 'https:'].includes(endpoint.protocol) ||
-        endpoint.username ||
-        endpoint.password ||
-        baseUrl.includes('?') ||
-        baseUrl.includes('#')
-    ) {
-        throw new Error(
-            'Invalid CPA base URL. Set CLIPROXY_BASE_URL or cpa.baseUrl to an absolute HTTP(S) URL without credentials, query parameters or a fragment.',
-        );
-    }
+            cpaConfig.baseUrl ||
+            DEFAULT_BASE_URL,
+    );
     const catalogCache = createCpaCatalogCache({
         cachePath: extensionPath(
             { scope: 'global' },

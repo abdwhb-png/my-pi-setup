@@ -81,8 +81,13 @@ test.skipIf(!enabled)(
                 writeFileSync(
                     join(agentDir, 'config/ai-providers.json'),
                     JSON.stringify({
-                        providers: { cpa: true },
-                        cpa: { refreshTtlMs: 30_000, silentCatalogDiff: true },
+                        providers: {
+                            cpa: {
+                                enabled: true,
+                                refreshTtlMs: 30_000,
+                                silentCatalogDiff: true,
+                            },
+                        },
                         modelRules: [
                             {
                                 match: { id: modelId },

@@ -70,7 +70,7 @@ export function registerProvidersCommand(
                 const modelCount = allModels.filter(
                     (m) => m.provider === provider,
                 ).length;
-                const isEnabledInConfig = config.providers[provider];
+                const isEnabledInConfig = config.providers[provider]?.enabled;
                 const isExtensionManaged = configProviders.includes(provider);
 
                 providerStatusMap.set(provider, {

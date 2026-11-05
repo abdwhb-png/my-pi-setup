@@ -268,6 +268,17 @@ test('bootstrap help loads without installed Pi packages or node_modules', () =>
             resolve(import.meta.dir, '../../extensions/_shared/home-path.ts'),
             join(root, 'agent/extensions/_shared/home-path.ts'),
         );
+        for (const path of [
+            'ai-providers/schema.ts',
+            'ai-providers/rules/model-rules.ts',
+        ]) {
+            const destination = join(root, 'agent/extensions', path);
+            mkdirSync(join(destination, '..'), { recursive: true });
+            cpSync(
+                resolve(import.meta.dir, '../../extensions', path),
+                destination,
+            );
+        }
         const result = spawnSync(
             process.execPath,
             [join(root, 'bin/pi-setup'), '--help'],

@@ -319,6 +319,12 @@ export async function runSetup(
                         dryRun: flags.has('--dry-run'),
                         details: flags.has('--details'),
                         progress,
+                        loadPreviousBundle: (previousRelease) =>
+                            downloadDistribution(
+                                previousRelease,
+                                join(temporary, 'previous-release'),
+                                progress,
+                            ),
                         bindings: flags.has('--bindings')
                             ? inputPath(flags.get('--bindings')!)
                             : undefined,
