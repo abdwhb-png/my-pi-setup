@@ -1,7 +1,7 @@
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile as writeResource } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createBashProcessSupervisor } from "../../_shared/command-execution/exec.ts";
@@ -11,6 +11,65 @@ import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixt
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private-temp.ts";
 import { createSandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
+import { validatePiSandboxConfig } from "./policies.ts";
+
+for (const kind of ["relative-file", "absolute-file", "directory", "ancestor"] as const) {
+    test.skipIf(!hasCandidateRuntime())(
+        `explicit read grants preserve ${kind} symlinks and their access restrictions`,
+        async () => {
+            const root = await mkdtemp("/var/tmp/pi-read-link-");
+            const leaseRoot = await mkdtemp("/var/tmp/z-");
+            const cwd = join(root, "project");
+            const target = join(root, "resource");
+            const alias = join(root, "alias");
+            const supervisor = createBashProcessSupervisor();
+            let service: ReturnType<typeof createSandboxService> | undefined;
+            try {
+                await mkdir(cwd);
+                await mkdir(target);
+                await writeResource(join(target, "visible"), "visible");
+                await writeResource(join(target, "secret"), "secret");
+                const directory = kind === "directory" || kind === "ancestor";
+                await symlink(
+                    directory ? "resource" : kind === "absolute-file" ? join(target, "visible") : "resource/visible",
+                    alias,
+                );
+                const grant = kind === "ancestor" ? join(alias, "visible") : alias;
+                const visible = directory ? join(alias, "visible") : alias;
+                const config = validatePiSandboxConfig({
+                    filesystem: {
+                        allowRead: [grant],
+                        allowWrite: [cwd],
+                        denyRead: kind === "directory" ? [join(alias, "secret")] : [],
+                    },
+                });
+                service = createSandboxService({
+                    backend: createZeroboxBackend(candidateBackendOptions(leaseRoot)),
+                    config,
+                    createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+                    recoverStaleLeases: async () => {
+                        await recoverStalePrivateTempLeases({ rootDir: leaseRoot });
+                    },
+                });
+                await service.startBashSession(cwd);
+                let output = "";
+                const result = await createSandboxedBashOps(service, supervisor).exec(
+                    `test "$(cat ${JSON.stringify(visible)})" = visible && ! cat ${JSON.stringify(join(target, "secret"))} 2>/dev/null && ! printf changed > ${JSON.stringify(visible)} 2>/dev/null`,
+                    cwd,
+                    { timeout: 10, onData: (chunk) => { output += chunk.toString(); } },
+                );
+                expect(result.exitCode, output).toBe(0);
+                expect(await readFile(join(target, "visible"), "utf8")).toBe("visible");
+            } finally {
+                supervisor.shutdown();
+                await service?.shutdown();
+                await rm(root, { recursive: true, force: true });
+                await rm(leaseRoot, { recursive: true, force: true });
+            }
+        },
+        30_000,
+    );
+}
 
 test.skipIf(!hasCandidateRuntime())(
     "a read-only cwd with write denials starts without a FUSE view",
