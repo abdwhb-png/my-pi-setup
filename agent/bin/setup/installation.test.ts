@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LOCAL_PROFILE_FILES } from './distribution.ts';
 import { inventory, writeJson } from './files.ts';
 import {
     installBundle,
@@ -90,6 +91,33 @@ test.each([
         }
     },
 );
+
+test('every declared local profile stays outside the stored installation inventory', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-local-profile-policy-'));
+    const root = join(home, '.pi');
+    try {
+        await installBundle({
+            root,
+            bundle: bundle(home, 'local-policies'),
+            release: 'local-policies',
+            provision: async () => {
+                for (const path of LOCAL_PROFILE_FILES)
+                    writeJson(join(root, path), {});
+            },
+        });
+        const managed = JSON.parse(
+            readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+        ).managed;
+        for (const path of LOCAL_PROFILE_FILES) {
+            expect(existsSync(join(root, path))).toBe(true);
+            expect(managed[path]).toBeUndefined();
+        }
+        expect(managed['bin/pi']).toBeDefined();
+        expect(managed['agent/settings.json']).toBeDefined();
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
 
 test.each(
     ['mcp.json', 'mcp-adapter.json', 'models.json'].flatMap((name) =>
@@ -187,6 +215,64 @@ test.each(['mcp.json', 'mcp-adapter.json', 'models.json'])(
                 provision: async () => {},
             });
             expect(existsSync(join(root, 'agent', name))).toBe(false);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    },
+);
+
+test.each([
+    'agent/models-store.json',
+    'agent/mcp-cache.json',
+    'agent/config/package-finalizer.json',
+])(
+    'runtime-owned %s stays local across provisioning, legacy migration and rollback',
+    async (path) => {
+        const home = mkdtempSync(join(tmpdir(), 'pi-local-runtime-state-'));
+        const root = join(home, '.pi');
+        const file = join(root, path);
+        try {
+            await installBundle({
+                root,
+                bundle: bundle(home, 'old'),
+                release: 'old',
+                provision: async () => {
+                    writeJson(file, { generated: 'initial' });
+                },
+            });
+            expect(
+                JSON.parse(
+                    readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+                ).managed[path],
+            ).toBeUndefined();
+            // Model the ownership recorded by an older installer before normal runtime writes.
+            const oldState = readInstallation(root);
+            writeJson(join(root, '.pi-setup-state.json'), {
+                ...oldState,
+                managed: { ...oldState.managed, [path]: inventory(root)[path] },
+            });
+            writeJson(file, { generated: 'refreshed' });
+            const before = inventory(root)[path];
+            await installBundle({
+                root,
+                bundle: bundle(home, 'new'),
+                release: 'new',
+                update: true,
+                provision: async () => {},
+            });
+            expect(inventory(root)[path]).toBe(before);
+            expect(
+                JSON.parse(
+                    readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+                ).managed[path],
+            ).toBeUndefined();
+            await rollbackInstallation(root);
+            expect(inventory(root)[path]).toBe(before);
+            expect(
+                JSON.parse(
+                    readFileSync(join(root, '.pi-setup-state.json'), 'utf8'),
+                ).managed[path],
+            ).toBeUndefined();
         } finally {
             rmSync(home, { recursive: true, force: true });
         }

@@ -12,7 +12,11 @@ import {
 } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { acquireRuntimeStorageLock } from '../../extensions/_shared/runtime-storage.ts';
-import { LOCAL_CONNECTION_FILES, validateBundle } from './distribution.ts';
+import {
+    LOCAL_CONNECTION_FILES,
+    LOCAL_PROFILE_FILES,
+    validateBundle,
+} from './distribution.ts';
 import {
     assertInventory,
     child,
@@ -72,7 +76,7 @@ export function readInstallation(root: string): InstallationState {
         child(root, path);
         if (typeof hash !== 'string')
             throw new Error('Invalid managed file fingerprint');
-        if (!LOCAL_CONNECTION_FILES.has(path)) retained[path] = hash;
+        if (!LOCAL_PROFILE_FILES.has(path)) retained[path] = hash;
     }
     if (
         value.previousId !== undefined &&
@@ -221,15 +225,13 @@ function localState(path: string): boolean {
         return false;
     return (
         path === STATE ||
-        LOCAL_CONNECTION_FILES.has(path) ||
+        LOCAL_PROFILE_FILES.has(path) ||
         /(^|\/)(auth\.json|trust\.json|.*\.secrets\.json|\.env[^/]*)$/.test(
             path,
         ) ||
         /^agent\/(sessions|pi-hermes-memory|projects-memory|cache|artifacts)\//.test(
             path,
-        ) ||
-        path === 'agent/config/sandbox.json' ||
-        path === 'agent/config/setup-bindings.json'
+        )
     );
 }
 function safeParents(root: string, path: string): void {
