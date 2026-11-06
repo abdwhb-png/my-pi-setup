@@ -30,7 +30,7 @@ runs:
         npm view sfw@2.0.6 version | grep -Fx 2.0.6
         npm install --global --ignore-scripts --no-audit --no-fund sfw@2.0.6
         sfw --version
-        python3 .pi/.github/scripts/restore-pi-runtime.py --agent-root .pi/agent --fixture-root .pi/.github/fixtures/pi-core-1.1.0
+        python3 .pi/.github/scripts/restore-pi-runtime.py --agent-root .pi/agent --fixture-root .pi/.github/fixtures/pi-core-1.5.0
         cd engineering/pi-integrations/pi-fancy-footer
         sfw npm ci --ignore-scripts --no-audit --no-fund
         cd ../pi-mcp-adapter
