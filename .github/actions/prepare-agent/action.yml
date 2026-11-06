@@ -45,10 +45,12 @@ runs:
         cd extensions/sandbox
         sfw bun install --frozen-lockfile --ignore-scripts
         npm view @gotgenes/pi-permission-system@33.0.0 version | grep -Fx 33.0.0
-        sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
+        npm view pi-hermes-memory@0.9.10 version | grep -Fx 0.9.10
+        sfw npm install --prefix "$RUNNER_TEMP/pi-test-packages" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0 pi-hermes-memory@0.9.10
         mkdir -p ../../node_modules/@gotgenes
-        ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
+        ln -s "$RUNNER_TEMP/pi-test-packages/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
         ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
         ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
         mkdir -p ../../npm/node_modules/@gotgenes
-        ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
+        ln -s "$RUNNER_TEMP/pi-test-packages/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
+        ln -s "$RUNNER_TEMP/pi-test-packages/node_modules/pi-hermes-memory" ../../npm/node_modules/pi-hermes-memory
