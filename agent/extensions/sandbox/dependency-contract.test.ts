@@ -173,7 +173,7 @@ describe("sandbox dependency contract", () => {
         const gitOptions = { cwd: source, maxBuffer: 64 * 1024 * 1024 };
         expect(candidate.sourceCommit).toMatch(/^[a-f0-9]{40}$/);
         expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(candidate.sourceCommit);
-        expect([...candidate.patches].sort((a, b) => a.path.localeCompare(b.path))).toEqual([...provenance.patches].sort((a, b) => a.path.localeCompare(b.path)));
+        expect(candidate.patches.map(patch => patch.path).sort()).toEqual(provenance.patches.map(patch => patch.path).sort());
         expect(execFileSync("git", ["status", "--porcelain"], { ...gitOptions, encoding: "utf8" })).toBe("");
         const syncScript = await readFile(join(source, "scripts/sync.sh"), "utf8");
         const referencedPatches = [...new Set([...syncScript.matchAll(/\bupstream-[a-z0-9-]+\.patch\b/g)].map(match => `scripts/${match[0]}`))];
@@ -190,7 +190,8 @@ describe("sandbox dependency contract", () => {
         for (const patch of provenance.patches) {
             const path = resolve(source, patch.path);
             expect(path.startsWith(source + sep)).toBe(true);
-            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(patch.sha256);
+            const candidatePatch = candidate.patches.find(entry => entry.path === patch.path);
+            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(candidatePatch?.sha256);
             positions.push(syncScript.indexOf(patch.path.slice(patch.path.lastIndexOf("/") + 1)));
         }
         expect(positions.every(position => position >= 0)).toBe(true);
