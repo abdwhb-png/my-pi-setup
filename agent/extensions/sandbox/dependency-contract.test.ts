@@ -191,7 +191,8 @@ describe("sandbox dependency contract", () => {
             const path = resolve(source, patch.path);
             expect(path.startsWith(source + sep)).toBe(true);
             const candidatePatch = candidate.patches.find(entry => entry.path === patch.path);
-            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(candidatePatch?.sha256);
+            if (!candidatePatch) throw new Error(`Candidate provenance omits ${patch.path}`);
+            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(candidatePatch.sha256);
             positions.push(syncScript.indexOf(patch.path.slice(patch.path.lastIndexOf("/") + 1)));
         }
         expect(positions.every(position => position >= 0)).toBe(true);
