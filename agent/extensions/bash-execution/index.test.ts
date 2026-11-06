@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { keyText, keyHint } from "@earendil-works/pi-coding-agent";
 import type {
     BashOperations,
     ExtensionAPI,
@@ -120,7 +121,7 @@ describe("bash-execution ownership", () => {
             data: { command: "printf host", execution: {
                 status: "unsandboxed", mode: "host", backend: "local", profile: "none", tmpNamespace: "host", phase: "process", outcome: "succeeded", exitCode: 0,
             } },
-        }, { expanded: false }, theme);
+        }, { expanded: false, keyText, keyHint }, theme);
         expect(view?.render(80).join("\n")).toContain("Host");
         expect(view?.render(80).join("\n")).toContain("exit 0");
     });

@@ -8,11 +8,11 @@ import { extensionPath } from "../_shared/extension-paths.ts";
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, isAbsolute, relative, extname } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
     getActiveRole,
     requiresPlanSubmission,

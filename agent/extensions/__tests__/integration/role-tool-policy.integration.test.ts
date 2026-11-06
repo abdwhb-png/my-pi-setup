@@ -72,7 +72,7 @@ test.each([
             }),
         });
         pi.on("before_agent_start", (event) => {
-            const roleName = event.prompt === "debug" ? "debug" : "pi-agent";
+            const roleName = "prompt" in event && event.prompt === "debug" ? "debug" : "pi-agent";
             pi.events.emit(ROLE_TOOL_POLICY_EVENT, {
                 version: 1,
                 roleName,

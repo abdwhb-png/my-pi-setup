@@ -1,6 +1,7 @@
 import { expect, test, mock } from 'bun:test';
 import { zstdDecompressSync } from 'node:zlib';
-import { Type, type Api, type Model, type StreamOptions } from '@earendil-works/pi-ai';
+import type { Api, Model, StreamOptions } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { injectProviderToolsCatalog } from './provider-catalog.ts';
 

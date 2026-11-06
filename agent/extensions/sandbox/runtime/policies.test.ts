@@ -109,7 +109,7 @@ describe("sandbox policies", () => {
     });
     it("honors an explicit project denial of the host tmp root", () => {
         const config = validatePiSandboxConfig({ filesystem: { allowWrite: ["."], denyRead: ["/tmp"] } });
-        const policy = createBashPolicy({ cwd, lease, config });
+        const policy = createBashPolicy({ cwd: "/workspace/fixture", lease, config });
         expect(policy.filesystem.allowRead).not.toContain("/tmp");
         expect(policy.filesystem.allowWrite).not.toContain("/tmp");
         expect(policy.filesystem.denyRead).toContain("/tmp");

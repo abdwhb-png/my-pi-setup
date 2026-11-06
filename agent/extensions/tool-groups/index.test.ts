@@ -33,7 +33,7 @@ function fixture(options: { active?: string[]; registered?: string[]; groups?: R
     const role = (names?: string[]) => pi.events.emit('pi-roles:tool-policy', { version: 1, roleName: 'fixture', mode: names === undefined ? 'all' : 'set', toolNames: names ?? [] });
     const beforeAgentStart = (selectedTools = active) => {
         const event: BeforeAgentStartEvent = {
-            type: 'before_agent_start', prompt: 'fixture', systemPrompt: '',
+            type: 'before_agent_start', messageType: 'user', prompt: 'fixture', systemPrompt: '',
             systemPromptOptions: {
                 selectedTools: [...selectedTools], hiddenTools: [], toolSnippets: {}, toolGuidelines: {},
                 promptGuidelines: [], appendSystemPrompt: '', sections: {},

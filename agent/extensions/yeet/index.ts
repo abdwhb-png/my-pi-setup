@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
     defineTool,
     type ExtensionAPI,
@@ -11,6 +10,7 @@ import {
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { fuzzyFilter, Text, type TUI } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { fdSearch } from "../_shared/file-search/fd-utils";
 import { getSearchDirectories } from "../_shared/file-search/path-resolver";
 import {

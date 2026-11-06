@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
@@ -433,7 +433,7 @@ it.each(['manual', 'apply-patches'] as const)('%s sends the final pi-agent catal
     expect(session.session.getActiveToolNames()).not.toContain('edit');
     if (route === 'manual') {
         await session.session.prompt('/role pi-agent');
-        await session.session.extensionRunner.emitBeforeAgentStart('apply', undefined, { cwd, customPrompt: 'custom system prompt' });
+        await session.session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: 'apply', images: undefined }, { cwd, customPrompt: 'custom system prompt' });
     } else {
         await session.run(when('/apply-patches', [says('Applied fixture patches.')]));
     }

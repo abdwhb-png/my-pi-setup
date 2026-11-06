@@ -114,7 +114,7 @@ describe("executeCommit with Pi's command executor", () => {
         const { cwd, git, before } = await fixtureRepo();
         const exec: ExtensionAPI["exec"] = (command, args, options) =>
             args[0] === "rev-parse" && args[1] === "--short"
-                ? Promise.resolve({ stdout: "", stderr: "fixture metadata unavailable", code: 128, killed: false })
+                ? Promise.resolve({ stdout: "", stderr: "fixture metadata unavailable", code: 128, killed: false, truncated: false })
                 : realExec(command, args, options);
 
         const result = await executeCommit(exec, ["tracked.txt"], "test: metadata", cwd);
@@ -141,7 +141,7 @@ describe("executeCommit with Pi's command executor", () => {
         const { cwd, git } = await fixtureRepo();
         const exec: ExtensionAPI["exec"] = (command, args, options) =>
             args[0] === "rev-parse" && args[1] === "--short"
-                ? Promise.resolve({ stdout: "", stderr: "", code: 0, killed: false })
+                ? Promise.resolve({ stdout: "", stderr: "", code: 0, killed: false, truncated: false })
                 : realExec(command, args, options);
 
         const result = await executeCommit(exec, ["tracked.txt"], "test: empty SHA", cwd);
@@ -154,7 +154,7 @@ describe("executeCommit with Pi's command executor", () => {
         const { cwd, git } = await fixtureRepo();
         const exec: ExtensionAPI["exec"] = (command, args, options) =>
             args[0] === "rev-parse" && args[1] === "--abbrev-ref"
-                ? Promise.resolve({ stdout: "", stderr: "fixture branch unavailable", code: 128, killed: false })
+                ? Promise.resolve({ stdout: "", stderr: "fixture branch unavailable", code: 128, killed: false, truncated: false })
                 : realExec(command, args, options);
 
         const result = await executeCommit(exec, ["tracked.txt"], "test: branch", cwd);
@@ -184,7 +184,7 @@ describe("executeCommit with Pi's command executor", () => {
         const stderr = "fixture stderr " + "y".repeat(10_000);
         const exec: ExtensionAPI["exec"] = (command, args, options) =>
             args[0] === "add"
-                ? Promise.resolve({ stdout, stderr, code: 128, killed: false })
+                ? Promise.resolve({ stdout, stderr, code: 128, killed: false, truncated: false })
                 : realExec(command, args, options);
 
         const result = await executeCommit(exec, ["tracked.txt"], "test: bounded", cwd);
@@ -255,7 +255,7 @@ describe("propose_commit_plan through Pi's execution pipeline", () => {
         const { cwd, git } = await fixtureRepo();
         const exec: ExtensionAPI["exec"] = (command, args, options) =>
             args[0] === "rev-parse" && args[1] === "--short"
-                ? Promise.resolve({ stdout: "", stderr: "fixture metadata unavailable", code: 128, killed: false })
+                ? Promise.resolve({ stdout: "", stderr: "fixture metadata unavailable", code: 128, killed: false, truncated: false })
                 : realExec(command, args, options);
 
         const result = await commitThroughPi(cwd, exec);

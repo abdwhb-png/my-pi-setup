@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { extensionPath } from "../_shared/extension-paths.ts";
 import { requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
 import { loadPlansConfig } from "../_shared/plans-config.ts";

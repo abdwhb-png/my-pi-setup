@@ -823,22 +823,22 @@ describe('executeCommit', () => {
                 if (cmd === 'git' && args[0] === 'add') {
                     addArgs.push(args);
                     addOpts.push(opts);
-                    return { stdout: '', stderr: '', code: 0, killed: false };
+                    return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'commit') {
                     commitArgs.push(args);
                     commitOpts.push(opts);
-                    return { stdout: '', stderr: '', code: 0, killed: false };
+                    return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (
                     cmd === 'git' &&
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: args[1] === '--short' ? 'abc1234\n' : 'main\n', stderr: '', code: 0, killed: false };
+                    return { stdout: args[1] === '--short' ? 'abc1234\n' : 'main\n', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 throw new Error(
                     'unexpected call: ' + cmd + ' ' + args.join(' '),
@@ -896,10 +896,10 @@ describe('executeCommit', () => {
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'add') {
-                    return { stdout: '', stderr: '', code: 0, killed: false };
+                    return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 throw new Error('nothing to commit');
             },
@@ -928,16 +928,16 @@ describe('executeCommit', () => {
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'add') {
-                    return { stdout: '', stderr: '', code: 0, killed: false };
+                    return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'commit') {
-                    return { stdout: '', stderr: '', code: 0, killed: false };
+                    return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: args[1] === '--short' ? 'def5678\n' : 'main\n', stderr: '', code: 0, killed: false };
+                    return { stdout: args[1] === '--short' ? 'def5678\n' : 'main\n', stderr: '', code: 0, killed: false, truncated: false };
                 }
                 throw new Error('unexpected: ' + cmd + ' ' + args.join(' '));
             },
@@ -1074,12 +1074,12 @@ describe('propose_commit_plan commit feedback', () => {
                             args[0] === 'rev-parse' &&
                             args[1] === '--is-inside-work-tree'
                         )
-                            return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+                            return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
                         if (args[0] === 'rev-parse' && args[1] === '--short')
-                            return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false };
+                            return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false, truncated: false };
                         if (args[0] === 'rev-parse')
-                            return { stdout: 'main\n', stderr: '', code: 0, killed: false };
-                        return { stdout: '', stderr: '', code: 0, killed: false };
+                            return { stdout: 'main\n', stderr: '', code: 0, killed: false, truncated: false };
+                        return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
                     }),
             ),
             appendEntry: mock(),
@@ -1179,8 +1179,8 @@ describe('propose_commit_plan commit feedback', () => {
         );
         const { tool } = registerFeedbackTool(async (_cmd, args) => {
             if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree')
-                return { stdout: 'true\n', stderr: '', code: 0, killed: false };
-            if (args[0] === 'add') return { stdout: '', stderr: '', code: 0, killed: false };
+                return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
+            if (args[0] === 'add') return { stdout: '', stderr: '', code: 0, killed: false, truncated: false };
             throw failErr;
         });
 
@@ -1206,10 +1206,10 @@ describe('propose_commit_plan commit feedback', () => {
         const mockExec = mock(async (_c: string, _a: string[], o?: Record<string, unknown>) => {
             optsSeen.push(o);
             if (optsSeen.length >= 5)
-                return { stdout: 'main\n', stderr: '', code: 0, killed: false };
+                return { stdout: 'main\n', stderr: '', code: 0, killed: false, truncated: false };
             if (_a[0] === 'rev-parse' && _a[1] === '--short')
-                return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false };
-            return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+                return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false, truncated: false };
+            return { stdout: 'true\n', stderr: '', code: 0, killed: false, truncated: false };
         });
 
         await executeCommit(mockExec, ['a.ts'], 'msg', '/test/cwd');

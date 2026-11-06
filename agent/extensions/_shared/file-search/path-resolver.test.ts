@@ -1,7 +1,7 @@
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -97,10 +97,9 @@ describe('getSearchDirectories', () => {
     });
 
     it('expands ~ and treats as absolute', () => {
-        const home = process.env.HOME ?? '/home/user';
-        const result = getSearchDirectories('~/projects/foo', { cwd: '/cwd' });
-        expect(result.dirs).toEqual([join(home, 'projects')]);
-        expect(result.query).toBe('foo');
+        const result = getSearchDirectories('~/fixture-file', { cwd: '/cwd' });
+        expect(result.dirs).toEqual([homedir()]);
+        expect(result.query).toBe('fixture-file');
     });
 
     it('returns CWD + additionalDirectories for relative prefix', () => {

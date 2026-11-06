@@ -12,12 +12,12 @@ import { extensionPath } from "../_shared/extension-paths.ts";
 
 import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { getActiveRole } from "../_shared/pi-roles/index.ts";
 import {
     createArtifactRootRegistry,

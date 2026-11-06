@@ -1,11 +1,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
     type ExtensionAPI,
     type ExtensionContext,
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { extensionPath } from "../_shared/extension-paths.ts";
 import { getActiveRole } from "../_shared/pi-roles/index.ts";
 import {

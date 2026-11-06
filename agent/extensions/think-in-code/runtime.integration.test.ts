@@ -665,13 +665,8 @@ describe("think-in-code real Pi runtime wiring", () => {
             session.events.toolResultsFor("think_artifact_search")[0],
         ];
         expect(results.every((result) => result?.isError === true)).toBe(true);
-        expect(
-            results.every((result) =>
-                result?.text
-                    .toLowerCase()
-                    .includes("must not have additional properties"),
-            ),
-        ).toBe(true);
+        expect(results[0]?.text).toContain("fetch");
+        expect(results[1]?.text).toContain("network");
         expect(state.analysisCalls.length).toBe(0);
     });
 

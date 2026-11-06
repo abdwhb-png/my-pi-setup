@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { getCurrentSystemPrompt, normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { injectProviderToolsCatalog, appendToolsListPrompt, CATALOG_START } from './provider-catalog.ts';
 

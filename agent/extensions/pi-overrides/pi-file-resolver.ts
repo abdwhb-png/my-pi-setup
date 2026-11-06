@@ -811,6 +811,7 @@ export default function (pi: ExtensionAPI): void {
             getFileResolverConfig(),
         );
 
+        if (!("prompt" in event)) return;
         const refs = findUnresolvedAtRefs(event.prompt);
         if (refs.length === 0) return;
 

@@ -56,8 +56,7 @@ test.each([false, true])(
         cleanup.push(() => session.dispose());
         const result =
             await session.session.extensionRunner.emitBeforeAgentStart(
-                "inspect",
-                undefined,
+                { messageType: "user", prompt: "inspect", images: undefined },
                 { cwd: root, skills: [] },
             );
         const prompt = buildSystemPrompt(result.systemPromptOptions);

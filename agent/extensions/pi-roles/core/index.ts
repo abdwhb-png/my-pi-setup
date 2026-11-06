@@ -186,7 +186,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
     pi.on("before_agent_start", async (event, ctx) => {
         debugLog("index", "before_agent_start fired", {
             hasActiveRole: !!state.activeRole,
-            promptLen: event?.prompt?.length ?? 0,
+            promptLen: "prompt" in event ? event.prompt.length : 0,
         });
 
         const switchReq = findUnprocessedSwitchRequest(
