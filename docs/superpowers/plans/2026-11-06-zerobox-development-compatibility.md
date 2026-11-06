@@ -10,7 +10,7 @@ Complete private connected IPC, offline subprocess handling and conventional acc
 - [x] Reproduce offline socket inspection and half-close refusal, then permit `getsockname`, `shutdown` and the read-only `getsockopt(SOL_SOCKET, SO_TYPE)` query without relaxing connection, listener or other socket-option restrictions. Assert exact captured subprocess output as well as exit status.
 - [x] Derive conventional aliases from validated executable shell-manifest entries, reuse the existing per-path alias mechanism and remove whole-directory alias mounts. Preserve explicit grants and denials, normalize merged-directory layouts and share computed aliases with admission reporting.
 - [x] Add candidate-runtime Pi regressions using isolated authority and temporary projects/caches. Cover default pnpm scripts, Node subprocesses, npm/Bun scripts, standard helper lookup and unchanged cache isolation without client-specific runtime branches.
-- [ ] Run focused RED/GREEN checks, then relevant Rust and Pi regression suites. Qualify a source-pinned engine/bundle candidate through existing native CI and WSL contracts. Record provenance, hashes, failures and rollback instructions. Activation and publication remain separate.
+- [x] Run focused RED/GREEN checks, then relevant Rust and Pi regression suites. Qualify a source-pinned engine/bundle candidate through existing native CI and WSL contracts. Record provenance, hashes, failures and rollback instructions. Activation and publication remain separate. Evidence: [development compatibility verification](../../verification/2026-11-06-zerobox-development-compatibility.md).
 
 ## Acceptance
 
