@@ -1,11 +1,11 @@
 # Pi 1.5 migration status
 
-The daily runtime is now Pi 1.5.0, release `1.5.0-7722134adab8-db35f9bcb15f`, with the qualified local harness 0.11.0 artifact. The previous Pi 1.1.0 release is retained. Optional Pi packages were not updated. External publication and remote CI were not performed.
+The daily runtime is now Pi 1.5.0, release `1.5.0-7722134adab8-db35f9bcb15f`, with the published npm harness `@abdwhb-png/pi-test-harness@0.11.0`. The previous Pi 1.1.0 release is retained. Optional Pi packages were not updated. The core runtime remains locally promoted; harness publication and remote CI are recorded in the follow-up below.
 
 ## Source revisions
 
 - Core: `~/engineering/pi-core`, branch `pi-core-v1.5.0`, commit `7722134adab83cbf5d491db7142f10644d23a011`, integrating upstream `v1.5.0` while retaining the fork contracts.
-- Harness: `~/engineering/pi-integrations/pi-test-harness`, branch `pi-1.5-compat`, commit `72d03a60cb36c2a00d802d4759a9b6d7ba083fe3`, unpublished version 0.11.0 with Pi 1.5 peers.
+- Harness: `~/engineering/pi-integrations/pi-test-harness`, released on `main` at `7983deb33d5be8bc06765334915fdc20262c30fb`, tag `v0.11.0`, with Pi 1.5 peers. The initial local qualification used commit `72d03a60cb36c2a00d802d4759a9b6d7ba083fe3`.
 - Setup: prompt access is narrowed for non-user events; schema builders import TypeBox directly; fixtures use the Pi 1.5 event, render and execution-result contracts. Typecheck and type-aware lint share the extension compatibility view through the base tsconfig.
 - The active Pi 1.1 source maps matched 662 source entries in the original fork checkout before integration.
 
@@ -38,7 +38,7 @@ Harness installed-consumer qualification caught stale bundled skill metadata (0.
 
 ## Setup and installed profile qualification
 
-The isolated setup uses the exact packed fork artifacts, the immutable local harness archive, all 51 extension entrypoints, and the existing package selections. It excludes authentication files and sessions. A read-only host filesystem and disabled network protected the real profile during lifecycle qualification. Both a user prompt and a custom message reached the simulated provider; startup, shutdown and resource discovery reported no errors. No paid provider was called.
+The initial isolated setup used the exact packed fork artifacts, the immutable local harness archive, all 51 extension entrypoints, and the existing package selections. It excludes authentication files and sessions. A read-only host filesystem and disabled network protected the real profile during lifecycle qualification. Both a user prompt and a custom message reached the simulated provider; startup, shutdown and resource discovery reported no errors. No paid provider was called.
 
 The original full setup attempt recorded missing metadata/examples/package links in the scratch copy and one obsolete schema-error wording assertion. A subsequent complete run also exposed three remaining test-only TypeBox imports and two fixtures that assumed a real `~/projects` directory and a home outside `/tmp`; these were corrected without changing production policy. These failures were retained in `/tmp/pi15-setup-entire-suite.log`. The corrected assertion still requires both forbidden fields to produce errors without reaching the analysis backend. The fixture copy and package links were completed before the final full run. The home expansion test uses the existing home itself, and the tmp-denial test uses an explicit project path outside the denied root.
 
@@ -56,4 +56,16 @@ The activation record, original dependency files and guarded rollback script are
 
 ## Qualification limits
 
-Remote CI, Node 22/24, Windows, real provider generation, Docker and browser workloads were not rerun. Local simulated lifecycle coverage does not establish those behaviors. The Bun WebAssembly worker lifetime limitation remains documented. No npm package or setup release was published and no Git branch was pushed.
+The initial migration did not rerun remote CI, Node 22/24 or Windows; the harness follow-up below adds that coverage for the package. Real provider generation, Docker and browser workloads remain unverified. The Bun WebAssembly worker lifetime limitation remains documented. The setup and core fork were not externally published; harness publication is recorded below.
+
+## npm harness release follow-up (2026-11-06)
+
+Harness 0.11.0 was additionally qualified against the official Pi 1.5.0 packages before publication. Its existing native shutdown test reproduced the startup callback cleanup regression in official Pi. The harness now cancels at its existing request preparation boundary, before and after the prior asynchronous callback. It no longer throws from Pi's startup notification. All nine shutdown tests and the complete 156-test suite pass without the personal core fix; assertions and timeouts were preserved.
+
+The development dependency audit is clean after updating Vitest to 5.0.3, resolving the affected Vite dependency and applying the documented Minimatch override. Both installed artifact formats pass under Node and Bun. The complete remote CI passed Linux/Windows Node 22/24 and Bun 1.4.3, including installed consumers: [PR qualification](https://github.com/abdwhb-png/pi-test-harness/actions/runs/42187313736), [main qualification](https://github.com/abdwhb-png/pi-test-harness/actions/runs/42188196301).
+
+The [OIDC release workflow](https://github.com/abdwhb-png/pi-test-harness/actions/runs/42188197990) published npm 0.11.0 with provenance and created [v0.11.0](https://github.com/abdwhb-png/pi-test-harness/releases/tag/v0.11.0). Registry metadata appeared before the tarball; installation waited until the archive was accessible and its SHA-512 matched the registry. Bun initially retained the prior local artifact because it had the same package name/version. A forced Socket Firewall installation with the frozen lockfile replaced it. All 13 installed JavaScript modules now match the qualified build byte-for-byte, and the installed session source matches the released source.
+
+The setup pins npm version `0.11.0` in its development dependencies; the local vendor archive and companion files were removed. This is a development dependency, not a configured Pi resource package. The recorded Pi 1.1 rollback preimages remain intact; the activation guard was refreshed for the final dependency files. Release and installation receipts are retained under `~/.pi/agent/artifacts/pi-test-harness-release-0.11.0/`.
+
+Post-installation validation: all 318 harness-consuming setup tests passed across 67 files, with 35 explicit skips and zero failures. Typecheck and `pi-fork verify` passed against the registry installation. The full 6,017-test setup suite was not repeated because only the harness dependency changed; its consumers were rerun.
