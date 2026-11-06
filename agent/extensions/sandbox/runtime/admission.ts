@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+    basename,
+    dirname,
+    isAbsolute,
+    join,
+    relative,
+    resolve,
+} from "node:path";
 import type { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import type {
@@ -70,6 +77,21 @@ function path(value: unknown): value is string {
     return (
         typeof value === "string" && isAbsolute(value) && !value.includes("\0")
     );
+}
+function bundledCommandName(
+    alias: Record<string, unknown>,
+): string | undefined {
+    if (
+        alias.directory !== false ||
+        typeof alias.destination !== "string" ||
+        typeof alias.target !== "string"
+    )
+        return undefined;
+    const name = basename(alias.destination);
+    return ["/bin", "/usr/bin"].includes(dirname(alias.destination)) &&
+        alias.target === `/__zerobox/runtime/bin/${name}`
+        ? name
+        : undefined;
 }
 function failure(message: string, cause?: unknown): SandboxExecutionError {
     return new SandboxExecutionError("protocol-error", {
@@ -262,11 +284,11 @@ export function parseSandboxAdmissionReport(
                     resolve(alias.target) === alias.target &&
                     alias.destination !== "/" &&
                     alias.target !== "/" &&
-                    ![alias.destination, alias.target].some(
-                        (value) =>
-                            value === "/__zerobox" ||
-                            value.startsWith("/__zerobox/"),
-                    ) &&
+                    alias.destination !== "/__zerobox" &&
+                    !alias.destination.startsWith("/__zerobox/") &&
+                    ((!alias.target.startsWith("/__zerobox/") &&
+                        alias.target !== "/__zerobox") ||
+                        bundledCommandName(alias) !== undefined) &&
                     typeof alias.directory === "boolean",
             ))
     )
@@ -310,6 +332,7 @@ export function assertAdmissionMatchesPolicy(
         component: "shell" | "analysis";
         shellRoot: string;
         analysisRoot: string;
+        shellFiles?: readonly string[];
     },
 ): void {
     const report = admission.report;
@@ -398,6 +421,14 @@ export function assertAdmissionMatchesPolicy(
         ...policy.filesystem.allowWrite,
     ];
     for (const alias of report.pathAliases ?? []) {
+        const name = bundledCommandName(alias);
+        const bundledCommand =
+            name !== undefined && runtime.shellFiles?.includes(`bin/${name}`);
+        const conventionalDirectory =
+            alias.directory &&
+            ((alias.destination === "/bin" && alias.target === "/usr/bin") ||
+                (alias.destination === "/usr/bin" && alias.target === "/bin"));
+        if (bundledCommand || conventionalDirectory) continue;
         // An intermediate alias creates an empty directory, not a host read
         // grant. Every actual bind is checked independently below.
         if (

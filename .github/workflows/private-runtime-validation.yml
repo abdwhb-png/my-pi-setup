@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/zerobox
-          ref: 30c3c37e9de354bfb3c666f1af52a275ea7f526c
+          ref: 65c4db8b1dbad1202daebb9205bda9c06b2e9348
           path: projects/zerobox
       - uses: actions/setup-node@v4
         with:
@@ -73,6 +73,14 @@ jobs:
       - name: Qualify with the VPS bubblewrap mount checks
         run: bash .pi/.github/scripts/install-qualification-bwrap.sh
       - uses: ./.pi/.github/actions/prepare-agent
+      - name: Prepare pinned development command fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm view @pnpm/exe.linux-x64@12.8.1 version | grep -Fx 12.8.1
+          sfw npm install --prefix "$RUNNER_TEMP/development-tools" --save-exact --ignore-scripts --no-audit --no-fund @pnpm/exe.linux-x64@12.8.1
+          echo "PI_SANDBOX_PNPM_FIXTURE=$RUNNER_TEMP/development-tools/node_modules/@pnpm/exe.linux-x64/pnpm" >> "$GITHUB_ENV"
+          echo "PI_SANDBOX_NPM_FIXTURE=$(realpath "$(command -v npm)")" >> "$GITHUB_ENV"
       - name: Verify installed integration imports before compiling
         working-directory: .pi/agent
         run: |
@@ -108,6 +116,13 @@ jobs:
         run: |
           sfw cargo fetch --locked
           cargo rustc --offline --locked --release -p zerobox --bin zerobox --target x86_64-unknown-linux-gnu -- -C target-feature=+crt-static
+      - name: Verify native private IPC and runtime alias boundaries
+        working-directory: projects/zerobox
+        run: |
+          cargo fmt --all --check
+          cargo test --offline --locked -p zerobox --lib runtime_bundle -- --test-threads=1
+          cargo test --offline --locked -p zerobox-linux-sandbox --lib runtime_ -- --test-threads=1
+          cargo test --offline --locked -p zerobox --test integration private_ -- --test-threads=1
       - name: Assemble with the pinned Ubuntu builder and verify all inputs
         run: |
           python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py \

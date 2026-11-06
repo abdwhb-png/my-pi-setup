@@ -68,6 +68,28 @@ function policyFor(report: SandboxAdmissionReport): SandboxPolicy {
 }
 const pinned = {manifestSha256:digest, helperSha256:digest, version:"test",target:"x86_64-unknown-linux-gnu" as const,component:"shell" as const,shellRoot:"/bundle/components/shell",analysisRoot:"/bundle/components/analysis"};
 
+test("admission accepts conventional aliases only for declared runtime commands", () => {
+    const original = receipt();
+    const runtime = { ...pinned, shellFiles: ["bin/sed"] };
+    const report = { ...original, pathAliases: [
+        { destination: "/bin", target: "/usr/bin", directory: true },
+        { destination: "/usr/bin/sed", target: "/__zerobox/runtime/bin/sed", directory: false },
+    ] };
+    const parsed = parseSandboxAdmissionReport(report);
+    expect(() => assertAdmissionMatchesPolicy({ report: parsed, sha256: digest }, policyFor(original), runtime)).not.toThrow();
+    for (const alias of [
+        { destination: "/usr/bin/undeclared", target: "/__zerobox/runtime/bin/undeclared", directory: false },
+        { destination: "/etc/sed", target: "/__zerobox/runtime/bin/sed", directory: false },
+        { destination: "/usr/bin/sed", target: "/host/sed", directory: false },
+        { destination: "/bin", target: "/host/tools", directory: true },
+    ]) {
+        expect(() => {
+            const invalid = parseSandboxAdmissionReport({ ...report, pathAliases: [alias] });
+            assertAdmissionMatchesPolicy({ report: invalid, sha256: digest }, policyFor(original), runtime);
+        }).toThrow("alias");
+    }
+});
+
 test("admission requires schema 3 and exactly the submitted scoped write exceptions", () => {
     const original = receipt();
     const exceptions = [{pattern:"/project/node_modules/*",paths:["/project/node_modules/.vite"]}];

@@ -59,6 +59,8 @@ Require PI_SANDBOX_RUNTIME_BUNDLE, PI_SANDBOX_ZEROBOX_BINARY and
 PI_SANDBOX_ZEROBOX_SHA256 for a single private runtime candidate. Set
 PI_SANDBOX_ZEROBOX_SOURCE_ROOT when the source worktree is available to enable
 the candidate-source provenance contract.
+Full execution also requires PI_SANDBOX_PNPM_FIXTURE (native pnpm 12.8.1)
+and PI_SANDBOX_NPM_FIXTURE (npm-cli.js); neither fixture is downloaded by tests.
 EOF
 }
 
@@ -81,6 +83,7 @@ export PI_SANDBOX_LOCAL_NETWORK_CONTRACT=1
 export PI_SANDBOX_REAL_SHELL_MODES_CONTRACT=1
 export PI_SANDBOX_SHELL_BASELINE_CONTRACT=1
 export PI_SANDBOX_INSTALLATIONS_CONTRACT=1
+export PI_SANDBOX_DEVELOPMENT_COMPATIBILITY_CONTRACT=1
 export PI_SANDBOX_GENERIC_COMMAND_CONTRACT=1
 export PI_SANDBOX_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_SFW_MEDIATED_DIRECT_CONTRACT=1
@@ -110,6 +113,7 @@ for contract in \
     extensions/sandbox/runtime/isolation-defaults.integration.test.ts \
     extensions/sandbox/runtime/installations.integration.test.ts \
     extensions/sandbox/runtime/development-cache.integration.test.ts \
+    extensions/sandbox/runtime/development-compatibility.integration.test.ts \
     extensions/sandbox/runtime/revocation.integration.test.ts \
     extensions/sandbox/runtime/linux-contract.integration.test.ts \
     extensions/sandbox/runtime/generic-command.integration.test.ts \

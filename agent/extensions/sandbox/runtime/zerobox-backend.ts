@@ -831,6 +831,10 @@ class ZeroboxBackend implements SandboxBackend {
                                     target: runtime.target,
                                     component,
                                     shellRoot: runtime.components.shell.root,
+                                    shellFiles:
+                                        runtime.components.shell.files.map(
+                                            (file) => file.path,
+                                        ),
                                     analysisRoot:
                                         runtime.components.analysis.root,
                                 },
