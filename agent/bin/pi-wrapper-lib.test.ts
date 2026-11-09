@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -211,6 +211,30 @@ describe("pi-wrapper-lib", () => {
       bun: process.versions.bun,
       args: ["--version"],
     });
+  });
+
+  it("preserves Pi's extension aliases even when the shell enables native Jiti imports", async () => {
+    const mod = await import("./pi-wrapper-lib.ts");
+    const previous = process.env.JITI_TRY_NATIVE;
+    const cwd = mkdtempSync(join(tmpdir(), "pi-fw-jiti-"));
+    const output = join(cwd, "capture.json");
+    const executable = join(cwd, "capture.ts");
+    try {
+      process.env.JITI_TRY_NATIVE = "true";
+      writeFileSync(
+        executable,
+        `#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(output)}, JSON.stringify({ nativeImports: process.env.JITI_TRY_NATIVE }));\n`,
+      );
+      chmodSync(executable, 0o755);
+
+      expect(mod.runRealPi(executable, [], cwd)).toBe(0);
+      expect(JSON.parse(readFileSync(output, "utf-8"))).toEqual({ nativeImports: "false" });
+      expect(process.env.JITI_TRY_NATIVE).toBe("true");
+    } finally {
+      if (previous === undefined) delete process.env.JITI_TRY_NATIVE;
+      else process.env.JITI_TRY_NATIVE = previous;
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("blocks self-update before invoking real Pi", () => {

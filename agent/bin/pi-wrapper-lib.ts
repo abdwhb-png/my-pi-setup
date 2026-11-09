@@ -187,7 +187,12 @@ export async function runPackageFinalizer(cwd: string, options?: { force?: boole
 }
 
 export function runRealPi(realPiPath: string, args: string[], cwd: string, requestedTools?: string[]): number {
-  const env: NodeJS.ProcessEnv = { ...process.env, PI_PACKAGE_FINALIZER_ACTIVE: "1" };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PI_PACKAGE_FINALIZER_ACTIVE: "1",
+    // Bun's native imports bypass Pi's extension compatibility aliases.
+    JITI_TRY_NATIVE: "false",
+  };
   const hostPackageRoot = findPiPackageRootFromExecutable(realPiPath);
   if (hostPackageRoot) {
     env[PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT] = hostPackageRoot;

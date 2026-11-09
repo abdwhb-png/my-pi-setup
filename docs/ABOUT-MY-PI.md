@@ -37,6 +37,8 @@ Subagents, planning workflows, permission gates, sandboxing and MCP integration 
 
 The daily command is `~/.pi/bin/pi`. It launches the promoted, read-only fork release under `~/.pi/runtime/pi-core/releases/`. Adding `~/.pi/bin` to the shell's `PATH` makes it available as `pi`; the [installation guide](./portable-setup.md) includes the Bash and Zsh instructions.
 
+The launcher sets `JITI_TRY_NATIVE=false` in the Pi process so Bun imports pass through Pi's extension compatibility aliases. This prevents internal TypeBox markers from leaking into provider tool schemas. The policy overrides the shell value for Pi and is inherited by local child sessions; it does not change the shell environment. Existing sessions must be restarted to load the policy.
+
 The fork source lives separately under `~/engineering/pi-core`. Editing or building that checkout does not change the daily runtime; promotion must succeed first. For development from the fork source, run `pi-fork deploy` before installing dependencies in `agent/`, because the committed Pi pins refer to release tarballs excluded from Git. A portable installation instead restores its bundled runtime through `pi-setup`.
 
 Bare/self `pi update` is blocked by this installation's launcher. `PI_REAL_BIN` is an explicit development override for testing another executable. These are local policies, not general Pi requirements. [ADR-026](./adr/ADR-026-immutable-local-pi-fork-releases.md) records the runtime isolation and promotion decision.
