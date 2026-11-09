@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/zerobox
-          ref: aefd404b7a4f4d69d2c12f26717f38661e5c51b8
+          ref: 05118dd83ba581d0361df4d5915b76862a8d0d65
           path: projects/zerobox
       - uses: actions/setup-node@v4
         with:
@@ -121,6 +121,7 @@ jobs:
         working-directory: projects/zerobox
         run: |
           cargo fmt --all --check
+          cargo test --offline --locked -p zerobox --lib dynamic_fs::tests -- --test-threads=1
           cargo test --offline --locked -p zerobox --lib runtime_bundle -- --test-threads=1
           cargo test --offline --locked -p zerobox-linux-sandbox --lib runtime_ -- --test-threads=1
           cargo test --offline --locked -p zerobox --test integration private_ -- --test-threads=1
