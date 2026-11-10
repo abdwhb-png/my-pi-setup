@@ -94,6 +94,7 @@ test('accepts every designed run and task state edge', () => {
         ['running', 'failed'],
         ['running', 'cancelled'],
         ['running', 'completed'],
+        ['needs_input', 'cancelled'],
     ];
     for (const [from, to] of runEdges) {
         expect(

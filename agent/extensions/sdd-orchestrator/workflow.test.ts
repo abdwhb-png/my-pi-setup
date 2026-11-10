@@ -806,6 +806,48 @@ test('cancelling an approved run with no active request closes it without emissi
     ).toHaveLength(1);
 });
 
+test.each([false, true])('cancelling a blocked run preserves its history and is idempotent (persisted intent: %s)', (persistedIntent) => {
+    const approved = manifest('light');
+    const initial = snapshot(1);
+    initial.state = 'needs_input';
+    initial.tasks['task-1'].state = 'needs_input';
+    initial.tasks['task-1'].terminalReason = 'invalid_review_output';
+    if (persistedIntent) {
+        initial.cancellation = {
+            requestedAt: '2026-07-21T12:00:00.000Z',
+            requestIds: [],
+        };
+    }
+    const store = new MemoryStore(initial);
+    const client = new QueueDelegationClient([]);
+    const workflow = new SddWorkflow(store, client, () => approved);
+
+    const cancelled = workflow.cancel('run-1');
+
+    expect(cancelled.state).toBe('cancelled');
+    expect(cancelled.tasks).toEqual(initial.tasks);
+    expect(cancelled.cancellation?.requestIds).toEqual([]);
+    expect(workflow.cancel('run-1')).toEqual(cancelled);
+    expect(client.requests).toHaveLength(0);
+    expect(client.cancelled).toHaveLength(0);
+    expect(store.events.filter((event) => event.type === 'cancellation-requested')).toHaveLength(persistedIntent ? 0 : 1);
+    expect(store.events.filter((event) => event.type === 'run-transition')).toEqual([
+        { type: 'run-transition', expectedRevision: persistedIntent ? 0 : 1, to: 'cancelled' },
+    ]);
+});
+
+test('a blocked run with an active request cannot be closed prematurely', () => {
+    const initial = snapshot(1);
+    initial.state = 'needs_input';
+    initial.tasks['task-1'].activeRequestId = 'active-worker';
+    const store = new MemoryStore(initial);
+    const workflow = new SddWorkflow(store, new QueueDelegationClient([]), () => manifest('light'));
+
+    expect(() => workflow.cancel('run-1')).toThrow('Cannot close a blocked SDD run with active requests.');
+    expect(store.saves).toHaveLength(0);
+});
+
+
 test('persisted cancellation prevents run from launching pending work', async () => {
     const approved = manifest('light');
     const initial = snapshot(1);

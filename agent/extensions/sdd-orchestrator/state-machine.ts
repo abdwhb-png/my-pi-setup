@@ -290,7 +290,7 @@ const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
     awaiting_approval: ["approved"],
     approved: ["running"],
     running: ["needs_input", "failed", "cancelled", "completed"],
-    needs_input: [],
+    needs_input: ["cancelled"],
     failed: [],
     cancelled: [],
     completed: [],

@@ -1489,8 +1489,17 @@ export class SddWorkflow {
     cancel(runId: string): RunSnapshot {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
+        if (
+            snapshot.state === "needs_input" &&
+            this.hasActiveRequest(snapshot)
+        ) {
+            throw new Error(
+                "Cannot close a blocked SDD run with active requests.",
+            );
+        }
         if (snapshot.cancellation) {
-            return snapshot.state === "running" &&
+            return (snapshot.state === "running" ||
+                snapshot.state === "needs_input") &&
                 !this.hasActiveRequest(snapshot)
                 ? this.finishRun(runId, "cancelled")
                 : snapshot;
@@ -1502,7 +1511,8 @@ export class SddWorkflow {
                 to: "running",
             });
         }
-        if (snapshot.state !== "running") return snapshot;
+        if (snapshot.state !== "running" && snapshot.state !== "needs_input")
+            return snapshot;
         const requestIds = manifest.tasks
             .map((task) => snapshot.tasks[task.id]?.activeRequestId)
             .filter(
@@ -1918,7 +1928,11 @@ export class SddWorkflow {
         to: "needs_input" | "failed" | "cancelled" | "completed",
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
-        if (snapshot.state !== "running") return snapshot;
+        if (
+            snapshot.state !== "running" &&
+            !(snapshot.state === "needs_input" && to === "cancelled")
+        )
+            return snapshot;
         return this.persist(runId, {
             type: "run-transition",
             expectedRevision: snapshot.revision,
