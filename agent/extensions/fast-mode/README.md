@@ -2,7 +2,7 @@
 
 `/fast-mode on|off|status` controls fast mode for supported models. `/codex-fast-mode` remains an alias. An empty argument reports status. The setting starts disabled and lives in the current extension instance; reloading resets it.
 
-The `fast-mode` widget appears below the editor through the shared `pi-fancy-footer` integration. It shows `fast:on` or `fast:off` only when the selected model is supported, and clears on shutdown. It no longer contributes an extension status. Switching to an unsupported model hides the widget and leaves requests unchanged; switching back preserves the enabled setting. Without the footer integration, the shared helper uses Pi's standard widget API.
+The `fast-mode` widget appears below the editor through the shared `pi-fancy-footer` integration. It shows `fast-mode:openai` when enabled for a supported OpenAI model, or `fast-mode:off` when disabled, and clears on shutdown. The label uses the shared muted color, the separator is dim, and an active provider uses the success color. It no longer contributes an extension status. Switching to an unsupported model hides the widget and leaves requests unchanged; switching back preserves the enabled setting. Without the footer integration, the shared helper uses Pi's standard widget API.
 
 ## Current support
 
@@ -12,6 +12,7 @@ Native `openai` and `openai-codex` providers using `openai-responses`, `openai-c
 
 Add a module under `providers/`, following `providers/openai.ts`, and include its exported definition in the static list in `provider-registry.ts`:
 
+- `id`: the stable lowercase provider identifier displayed by the widget.
 - `label`: the provider name used in command notifications.
 - `supports(model)`: check the provider, transport, and any model restrictions.
 - `apply(payload)`: return a request with the provider's documented fast-mode fields, preserving unrelated fields.

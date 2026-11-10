@@ -22,6 +22,11 @@
             "row": 2,
             "placement": "aboveEditor"
         },
+        "session-status-bar.session": {
+            "row": 3,
+            "placement": "aboveEditor",
+            "align": "right"
+        },
         "brainstorm-forcer": {
             "row": 3,
             "align": "left",

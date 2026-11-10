@@ -92,6 +92,7 @@ describe("session-status-bar extension wiring", () => {
 
     for (const w of widgetDefs) {
       expect(w.placement).toBe("belowEditor");
+      expect(w.styled).toBe(true);
       expect(typeof w.render).toBe("function");
     }
   });
@@ -116,6 +117,42 @@ describe("session-status-bar extension wiring", () => {
         createUiColors(renderCtx.theme),
       ),
     );
+  });
+
+  it("keeps fallback content when a session label changes", async () => {
+    const { pi, handlers } = createMockPi();
+    sessionFactory(pi);
+    const ctx = createMockCtx();
+    for (const handler of handlers.get("session_start") ?? [])
+      await handler({}, ctx);
+    ctx.sessionManager.getSessionName = () => "Renamed fixture session";
+    for (const handler of handlers.get("session_info_changed") ?? [])
+      await handler({}, ctx);
+    expect(fakeHandle.update).toHaveBeenLastCalledWith(
+      ctx,
+      expect.stringContaining("Renamed fixture session"),
+    );
+    for (const handler of handlers.get("session_shutdown") ?? [])
+      await handler({}, ctx);
+  });
+
+  it("reports unexpected path errors once instead of silently hiding refresh failures", async () => {
+    const { pi, handlers } = createMockPi();
+    sessionFactory(pi);
+    const ctx = createMockCtx();
+    ctx.cwd = "/invalid\0path/repo";
+    ctx.ui.notify = mock();
+    for (const handler of handlers.get("session_start") ?? [])
+      await handler({}, ctx);
+    for (const handler of handlers.get("agent_end") ?? [])
+      await handler({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Session status bar refresh failed:"),
+      "warning",
+    );
+    for (const handler of handlers.get("session_shutdown") ?? [])
+      await handler({}, ctx);
   });
 
   it("render closure produces segment content after state refresh", () => {

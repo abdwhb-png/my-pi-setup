@@ -7,7 +7,8 @@
     "defaultIconColor": "text",
     "widgets": {
         "location": {
-            "row": 0
+            "row": 0,
+            "enabled": false
         },
         "git-status": {
             "enabled": false
@@ -86,7 +87,10 @@
             "position": 1
         },
         "session-status-bar.cwd": {
-            "enabled": false
+            "enabled": true,
+            "row": 0,
+            "align": "left",
+            "position": 0
         },
         "session-status-bar.model": {
             "enabled": false,
@@ -100,10 +104,6 @@
         "session-status-bar.tokens": {
             "row": 1
         },
-        "session-status-bar.session": {
-            "row": 2,
-            "align": "right"
-        },
         "dangerous-mode": {
             "row": 1,
             "position": 0,
@@ -116,6 +116,11 @@
         "browser-tools": {
             "row": 2,
             "position": 3,
+            "align": "left"
+        },
+        "fast-mode": {
+            "row": 2,
+            "position": 4,
             "align": "left"
         },
         "audit-mode": {

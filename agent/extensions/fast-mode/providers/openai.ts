@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const openaiFastMode = {
+    id: "openai",
     label: "OpenAI",
     supports(model: NonNullable<ExtensionContext["model"]>): boolean {
         return (

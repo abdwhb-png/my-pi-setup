@@ -17,7 +17,7 @@ mock.module("./transport.ts", () => ({
     }),
 }));
 
-const { default: notifyExtension } = await import("../notify.ts");
+const { default: notifyExtension } = await import("./index.ts");
 
 interface TestContext {
     cwd: string;

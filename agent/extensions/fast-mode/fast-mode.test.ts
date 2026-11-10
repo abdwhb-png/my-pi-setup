@@ -4,7 +4,7 @@ import {
     type TestSession,
 } from "@abdwhb-png/pi-test-harness";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
     FANCY_FOOTER_DISCOVER_WIDGETS_EVENT,
     type FancyFooterWidgetContribution,
@@ -65,9 +65,11 @@ function discoverWidget() {
     return widgets[0]!;
 }
 
-function render(widget: FancyFooterWidgetContribution) {
-    // Fast mode renders its session state without reading the footer context.
-    return widget.render({} as Parameters<typeof widget.render>[0]);
+function render(
+    widget: FancyFooterWidgetContribution,
+    theme: Pick<Theme, "fg"> = { fg: (_role, text) => text },
+) {
+    return widget.render({ theme } as Parameters<typeof widget.render>[0]);
 }
 
 const payload = {
@@ -76,6 +78,34 @@ const payload = {
     stream: true,
     service_tier: "auto",
 };
+
+test("names and styles the active fast-mode provider through the shared color roles", async () => {
+    await selectModel();
+    const widget = discoverWidget();
+    await t.session.prompt("/fast-mode on");
+    const roles: Array<[string, string]> = [];
+    const theme = {
+        fg: (role: Parameters<Theme["fg"]>[0], text: string) => {
+            roles.push([role, text]);
+            return text;
+        },
+    };
+    expect(render(widget, theme)).toBe("fast-mode:openai");
+    expect(roles).toEqual([
+        ["muted", "fast-mode"],
+        ["dim", ":"],
+        ["success", "openai"],
+    ]);
+    expect(widget.styled).toBe(true);
+    await t.session.prompt("/fast-mode off");
+    roles.length = 0;
+    expect(render(widget, theme)).toBe("fast-mode:off");
+    expect(roles).toEqual([
+        ["muted", "fast-mode"],
+        ["dim", ":"],
+        ["dim", "off"],
+    ]);
+});
 
 test("contributes a footer widget instead of an extension status", async () => {
     await selectModel();
@@ -91,7 +121,7 @@ test("fast mode is off by default and on/off commands control priority without m
     const widget = discoverWidget();
     expect(await runner().emitBeforeProviderRequest(payload)).toEqual(payload);
     await t.session.prompt("/fast-mode on");
-    expect(render(widget)).toContain("on");
+    expect(render(widget)).toBe("fast-mode:openai");
     expect(await runner().emitBeforeProviderRequest(payload)).toEqual({
         ...payload,
         service_tier: "priority",
@@ -136,7 +166,7 @@ test.each([
             "unavailable",
         );
         await selectModel();
-        expect(render(widget)).toContain("on");
+        expect(render(widget)).toBe("fast-mode:openai");
     },
 );
 
@@ -144,17 +174,17 @@ test("retains the Codex command alias and validates arguments without changing s
     await selectModel();
     await t.session.prompt("/codex-fast-mode on");
     const widget = discoverWidget();
-    expect(render(widget)).toContain("on");
+    expect(render(widget)).toBe("fast-mode:openai");
     await t.session.prompt("/fast-mode invalid");
     expect(t.events.uiCallsFor("notify").at(-1)?.args).toEqual([
         expect.stringContaining("Usage: /fast-mode"),
         "warning",
     ]);
-    expect(render(widget)).toContain("on");
+    expect(render(widget)).toBe("fast-mode:openai");
     await t.session.prompt("/fast-mode status");
     expect(t.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("enabled");
     await t.session.prompt("/fast-mode");
-    expect(render(widget)).toContain("on");
+    expect(render(widget)).toBe("fast-mode:openai");
 });
 
 test("offers command completions and clears its widget on shutdown", async () => {

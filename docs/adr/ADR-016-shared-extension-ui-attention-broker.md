@@ -77,7 +77,7 @@ During transition, already-running Pi processes may retain old `Symbol.for("pi-d
 
 ### Refactor existing notification extension
 
-Keep `agent/extensions/notify.ts`, `/notify`, and `PI_NO_NOTIFY=1`. Do not add second notification extension.
+Keep `agent/extensions/notify/index.ts`, `/notify`, and `PI_NO_NOTIFY=1`. Do not add second notification extension.
 
 Notification observer is active only between `agent_start` and final settlement. Idle commands, shortcuts, and user-opened dashboards remain silent.
 

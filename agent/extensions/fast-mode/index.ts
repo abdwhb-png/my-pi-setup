@@ -1,8 +1,10 @@
 import type {
     ExtensionAPI,
     ExtensionContext,
+    Theme,
 } from "@earendil-works/pi-coding-agent";
 import { createWidget } from "../_shared/fancy-footer.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import { getFastModeProvider } from "./provider-registry.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -12,9 +14,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export default function fastMode(pi: ExtensionAPI): void {
     let enabled = false;
     let visible = false;
+    let providerId: string | undefined;
 
-    function widgetText(): string | null {
-        return visible ? `🗲fast:${enabled ? "on" : "off"}` : null;
+    function widgetText(theme: Pick<Theme, "fg">): string | null {
+        if (!visible) return null;
+        const colors = createUiColors(theme);
+        return (
+            colors.muted("fast-mode") +
+            colors.separator(":") +
+            (enabled && providerId
+                ? colors.success(providerId)
+                : colors.subtle("off"))
+        );
     }
 
     const widget = createWidget(pi, {
@@ -26,13 +37,15 @@ export default function fastMode(pi: ExtensionAPI): void {
         order: 11,
         align: "right",
         placement: "belowEditor",
-        render: widgetText,
+        styled: true,
+        render: (ctx) => widgetText(ctx.theme),
     });
 
     function updateWidget(ctx: ExtensionContext, model = ctx.model) {
         const provider = getFastModeProvider(model);
+        providerId = provider?.id;
         visible = ctx.hasUI && provider !== undefined;
-        widget.update(ctx, widgetText());
+        widget.update(ctx, widgetText(ctx.ui.theme));
         return provider;
     }
 
@@ -44,7 +57,7 @@ export default function fastMode(pi: ExtensionAPI): void {
     });
     pi.on("session_shutdown", (_event, ctx) => {
         visible = false;
-        widget.update(ctx, widgetText());
+        widget.update(ctx, widgetText(ctx.ui.theme));
     });
 
     for (const name of ["fast-mode", "codex-fast-mode"]) {

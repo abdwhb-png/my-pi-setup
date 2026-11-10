@@ -1,3 +1,6 @@
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, parse, relative, sep } from "node:path";
 import { loadExtensionConfig } from "./_shared/config-loader.ts";
 /**
  * Session Status Bar Extension
@@ -43,6 +46,85 @@ import { createUiColors } from "./_shared/ui/ui-colors";
 const WIDGET_ID = "session-status-bar";
 const DEFAULT_REFRESH_MS = 3000;
 const MAX_BRANCH_WIDTH = 18;
+const CWD_CACHE_MS = 30_000;
+const PATH_ANCHORS = new Set([
+    ".git",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+    "composer.json",
+]);
+
+type CwdDisplay = { shortCwd: string; compactCwd: string };
+
+async function directoryEntries(path: string) {
+    try {
+        return await readdir(path, { withFileTypes: true });
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            "code" in error &&
+            ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(
+                String(error.code),
+            )
+        ) {
+            // Keep full segments when uniqueness cannot be established safely.
+            return undefined;
+        }
+        throw error;
+    }
+}
+
+async function prepareCwd(cwd: string): Promise<CwdDisplay> {
+    const home = homedir();
+    const inHome = cwd === home || cwd.startsWith(home + sep);
+    const root = inHome ? home : parse(cwd).root;
+    const parts = relative(root, cwd).split(sep).filter(Boolean);
+    const parentPaths: string[] = [];
+    let parent = root;
+    for (const part of parts) {
+        parentPaths.push(parent);
+        parent = join(parent, part);
+    }
+    const directories = await Promise.all(parentPaths.map(directoryEntries));
+    const compact: string[] = [];
+    for (const [index, part] of parts.entries()) {
+        const siblings = directories[index];
+        const children = directories[index + 1];
+        let short = part;
+        if (
+            siblings &&
+            children &&
+            !children.some((entry) => PATH_ANCHORS.has(entry.name))
+        ) {
+            const names = siblings
+                .filter(
+                    (entry) => entry.isDirectory() || entry.isSymbolicLink(),
+                )
+                .map((entry) => entry.name);
+            let prefix = "";
+            for (const character of part) {
+                prefix += character;
+                if (
+                    !names.some(
+                        (name) => name !== part && name.startsWith(prefix),
+                    )
+                ) {
+                    short = prefix;
+                    break;
+                }
+            }
+        }
+        compact.push(short);
+    }
+    const prefix = inHome ? "~" : root.replaceAll(sep, "/");
+    const display = (segments: string[]) =>
+        prefix +
+        (segments.length && !prefix.endsWith("/") ? "/" : "") +
+        segments.join("/");
+    return { shortCwd: display(parts), compactCwd: display(compact) };
+}
 
 type StatusBarConfig = {
     enabled: boolean;
@@ -138,8 +220,8 @@ const SEGMENTS: readonly SegmentDef[] = [
     },
 ];
 
-function loadConfig(): StatusBarConfig {
-    return loadExtensionConfig(process.cwd(), {
+function loadConfig(cwd: string): StatusBarConfig {
+    return loadExtensionConfig(cwd, {
         owner: "sessionStatusBar",
         defaults: DEFAULT_CONFIG,
         normalize: (raw) => raw as Partial<StatusBarConfig>,
@@ -154,6 +236,8 @@ function buildState(
     ctx: ExtensionContext,
     branchName: string | null,
     config: StatusBarConfig,
+    cwdDisplay: CwdDisplay,
+    sessionLabel: string,
 ): StatusBarState {
     const messages = ctx.sessionManager
         .getBranch()
@@ -187,22 +271,17 @@ function buildState(
     const percent =
         contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
 
-    const cwd = ctx.cwd;
-    const home = process.env.HOME || "";
-    const shortCwd =
-        home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
-
     const branch = config.showBranch ? branchName : null;
     const shortBranch = branch ? shortenMiddle(branch, MAX_BRANCH_WIDTH) : "";
 
     return {
-        workspace: { shortCwd, shortBranch },
+        workspace: { ...cwdDisplay, shortBranch },
         context: { tokens: contextTokens, window: contextWindow, percent },
         model: {
             id: ctx.model?.id || "no-model",
             provider: ctx.model?.provider,
         },
-        session: { name: ctx.sessionManager.getSessionName() },
+        session: { name: sessionLabel },
         cost: { totalUsd: totals.cost },
         tokens: {
             input: totals.input,
@@ -217,6 +296,8 @@ function tryBuildStateFromBridge(
     ctx: ExtensionContext,
     branchName: string | null,
     config: StatusBarConfig,
+    cwdDisplay: CwdDisplay,
+    sessionLabel: string,
 ): StatusBarState | undefined {
     try {
         const metrics = getSessionUsageMetrics(ctx);
@@ -230,24 +311,19 @@ function tryBuildStateFromBridge(
         const percent =
             contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
 
-        const cwd = ctx.cwd;
-        const home = process.env.HOME || "";
-        const shortCwd =
-            home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
-
         const branch = config.showBranch ? branchName : null;
         const shortBranch = branch
             ? shortenMiddle(branch, MAX_BRANCH_WIDTH)
             : "";
 
         return {
-            workspace: { shortCwd, shortBranch },
+            workspace: { ...cwdDisplay, shortBranch },
             context: { tokens: contextTokens, window: contextWindow, percent },
             model: {
                 id: ctx.model?.id || "no-model",
                 provider: ctx.model?.provider,
             },
-            session: { name: ctx.sessionManager.getSessionName() },
+            session: { name: sessionLabel },
             cost: { totalUsd: metrics.totalCost },
             tokens: {
                 input: metrics.total.input,
@@ -291,6 +367,45 @@ export default function (pi: ExtensionAPI) {
     let latestCtx: ExtensionContext | null = null;
     let latestState: StatusBarState | null = null;
     let refreshTimer: ReturnType<typeof setInterval> | null = null;
+    let messageTimer: ReturnType<typeof setTimeout> | undefined;
+    let firstUserText: string | undefined;
+    let cwdCache:
+        | { cwd: string; expiresAt: number; display: CwdDisplay }
+        | undefined;
+    let refreshSequence = 0;
+    let lastError: string | undefined;
+
+    function sessionLabel(ctx: ExtensionContext): string {
+        const name = ctx.sessionManager.getSessionName();
+        if (name !== undefined) return name;
+        if (firstUserText === undefined) {
+            // /resume uses the first user text across the file, not only the active branch.
+            for (const entry of ctx.sessionManager.getEntries()) {
+                if (entry.type !== "message" || entry.message.role !== "user")
+                    continue;
+                const content = entry.message.content;
+                const text =
+                    typeof content === "string"
+                        ? content
+                        : content
+                              .flatMap((block) =>
+                                  block.type === "text" ? [block.text] : [],
+                              )
+                              .join(" ");
+                if (text) {
+                    firstUserText = text;
+                    break;
+                }
+            }
+        }
+        return firstUserText ?? "(no messages)";
+    }
+
+    function updateSessionLabel(ctx: ExtensionContext): void {
+        if (!latestState) return;
+        latestState.session.name = sessionLabel(ctx);
+        redrawWidgets(ctx);
+    }
 
     const widgets = SEGMENTS.map((seg) =>
         createWidget(pi, {
@@ -301,6 +416,11 @@ export default function (pi: ExtensionAPI) {
             order: seg.order,
             align: seg.align,
             placement: "belowEditor",
+            styled: true,
+            grow:
+                seg.id === `${WIDGET_ID}.cwd` ||
+                seg.id === `${WIDGET_ID}.session`,
+            minWidth: 12,
             // Gated by config: empty render collapses the widget (footer drops it).
             render: (ctx, availableWidth) => {
                 if (!latestState || !seg.show(config)) return "";
@@ -314,38 +434,90 @@ export default function (pi: ExtensionAPI) {
         }),
     );
 
-    async function refreshState(ctx: ExtensionContext): Promise<void> {
-        config = loadConfig();
-        if (!config.enabled) {
-            latestState = null;
-            return;
-        }
-        const branchName = await getBranch(ctx.cwd).catch(() => null);
-        latestState =
-            tryBuildStateFromBridge(ctx, branchName, config) ??
-            buildState(ctx, branchName, config);
+    function redrawWidgets(ctx: ExtensionContext): void {
+        if (!ctx.hasUI) return;
+        const width = process.stdout.columns || 120;
+        const colors = createUiColors(ctx.ui.theme);
+        const fallbackText = latestState
+            ? buildFallbackLine(latestState, width, config, colors)
+            : colors.warning("Session Status Bar disabled in config");
+        for (const widget of widgets) widget.update(ctx, fallbackText);
     }
 
     async function updateWidget(): Promise<void> {
-        if (!latestCtx?.hasUI) return;
+        const ctx = latestCtx;
+        if (!ctx?.hasUI) return;
+        const sequence = ++refreshSequence;
         try {
-            await refreshState(latestCtx);
-            const width = process.stdout.columns || 120;
-            const colors = createUiColors(latestCtx.ui.theme);
-            const fallbackText = latestState
-                ? buildFallbackLine(latestState, width, config, colors)
-                : colors.warning("Session Status Bar disabled in config");
-            for (const w of widgets) w.update(latestCtx, fallbackText);
-        } catch {
-            // leave previous render in place
+            config = loadConfig(ctx.cwd);
+            const branchName = config.showBranch
+                ? await getBranch(ctx.cwd).catch(() => null)
+                : null;
+            if (
+                !cwdCache ||
+                cwdCache.cwd !== ctx.cwd ||
+                cwdCache.expiresAt <= Date.now()
+            ) {
+                const display = await prepareCwd(ctx.cwd);
+                cwdCache = {
+                    cwd: ctx.cwd,
+                    display,
+                    expiresAt: Date.now() + CWD_CACHE_MS,
+                };
+            }
+            if (sequence !== refreshSequence) return;
+            const label = sessionLabel(ctx);
+            latestState = config.enabled
+                ? (tryBuildStateFromBridge(
+                      ctx,
+                      branchName,
+                      config,
+                      cwdCache.display,
+                      label,
+                  ) ??
+                  buildState(ctx, branchName, config, cwdCache.display, label))
+                : null;
+            redrawWidgets(ctx);
+            lastError = undefined;
+        } catch (error) {
+            if (sequence !== refreshSequence) return;
+            const message =
+                error instanceof Error ? error.message : String(error);
+            if (message !== lastError) {
+                ctx.ui.notify(
+                    `Session status bar refresh failed: ${message}`,
+                    "warning",
+                );
+                lastError = message;
+            }
         }
     }
 
     pi.on("session_start", async (_event, ctx) => {
         latestCtx = ctx;
+        firstUserText = undefined;
+        cwdCache = undefined;
+        if (messageTimer !== undefined) clearTimeout(messageTimer);
         await updateWidget();
         if (refreshTimer) clearInterval(refreshTimer);
         refreshTimer = setInterval(updateWidget, config.refreshMs);
+    });
+
+    pi.on("session_info_changed", (_event, ctx) => {
+        latestCtx = ctx;
+        updateSessionLabel(ctx);
+    });
+
+    pi.on("message_end", (event, ctx) => {
+        if (event.message.role !== "user" || firstUserText !== undefined)
+            return;
+        latestCtx = ctx;
+        if (messageTimer !== undefined) clearTimeout(messageTimer);
+        // message_end precedes Pi's appendMessage; read the persisted entry on the next tick.
+        messageTimer = setTimeout(() => {
+            messageTimer = undefined;
+            if (latestCtx) updateSessionLabel(latestCtx);
+        }, 0);
     });
 
     pi.on("agent_end", async (_event, ctx) => {
@@ -358,8 +530,13 @@ export default function (pi: ExtensionAPI) {
             clearInterval(refreshTimer);
             refreshTimer = null;
         }
+        refreshSequence++;
+        if (messageTimer !== undefined) clearTimeout(messageTimer);
+        messageTimer = undefined;
         latestCtx = null;
         latestState = null;
+        firstUserText = undefined;
+        cwdCache = undefined;
         for (const w of widgets) w.remove(ctx);
     });
 }

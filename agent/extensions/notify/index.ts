@@ -3,7 +3,7 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { createNotificationTransport } from "./notify/transport.ts";
+import { createNotificationTransport } from "./transport.ts";
 
 export default function notify(pi: ExtensionAPI): void {
     const transport = createNotificationTransport();

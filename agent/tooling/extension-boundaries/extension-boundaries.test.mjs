@@ -74,10 +74,10 @@ describe('Pi extension boundary classifier', () => {
         ).toBe(false);
     });
 
-    test('allows one public single-file owner but rejects central multi-owner tests', () => {
+    test('allows one public extension owner but rejects central multi-owner tests', () => {
         const owners = new Set();
         expect(
-            classify('__tests__/notify.test.ts', '../notify.ts', owners)
+            classify('__tests__/notify.test.ts', '../notify/index.ts', owners)
                 .allowed,
         ).toBe(true);
         expect(

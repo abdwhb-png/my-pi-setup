@@ -4,14 +4,14 @@
  * No pi runtime imports — only types — so this module is unit-testable
  * without jiti mocks. The extension wires these into fancy-footer widgets.
  */
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { UiColorsCreation } from "./ui/ui-colors";
 
 const ARROW_DOWN = "↓";
 const ARROW_UP = "↑";
 
 export interface StatusBarState {
-    workspace: { shortCwd: string; shortBranch: string };
+    workspace: { shortCwd: string; compactCwd?: string; shortBranch: string };
     context: { tokens: number; window: number; percent: number };
     model: { id: string; provider?: string };
     session: { name?: string };
@@ -58,7 +58,25 @@ export function renderCwd(
     availableWidth: number,
     colors: StatusBarColors,
 ): string {
-    return colors.meta(shortenMiddle(state.workspace.shortCwd, availableWidth));
+    const width = Math.max(0, Math.min(80, availableWidth));
+    const prefix = "📁 ";
+    const pathWidth = Math.max(0, width - visibleWidth(prefix));
+    let path = state.workspace.shortCwd;
+    if (visibleWidth(path) > pathWidth) {
+        path = state.workspace.compactCwd ?? path;
+    }
+    const parts = path.split("/");
+    while (visibleWidth(path) > pathWidth && parts.length > 1) {
+        parts.shift();
+        path = `…/${parts.join("/")}`;
+    }
+    return colors.meta(
+        truncateToWidth(
+            `${prefix}${truncateToWidth(path, pathWidth, "…")}`,
+            width,
+            "",
+        ),
+    );
 }
 
 export function renderBranch(
@@ -71,7 +89,7 @@ export function renderBranch(
         : "";
 }
 
-export const sessionNamePrefix = "📋->";
+export const sessionNamePrefix = "Session: ";
 
 export function renderSessionName(
     state: StatusBarState,
@@ -80,8 +98,12 @@ export function renderSessionName(
 ): string {
     const name = state.session.name;
     if (!name) return "";
-    const maxName = Math.min(25, Math.max(8, availableWidth - 1));
-    return colors.meta(`${sessionNamePrefix}${shortenMiddle(name, maxName)}`);
+    return truncateToWidth(
+        colors.muted(sessionNamePrefix) +
+            colors.text(name.replace(/\s+/g, " ").trim()),
+        Math.max(0, availableWidth),
+        "…",
+    );
 }
 
 export const buildContextContent = (

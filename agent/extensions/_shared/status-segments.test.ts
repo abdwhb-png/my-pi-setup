@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   formatTokenCount,
   formatUsdCompact,
@@ -16,7 +17,7 @@ import {
   sessionNamePrefix,
   type StatusBarState,
 } from "./status-segments";
-import type { UiColorsCreation } from "./ui/ui-colors";
+import { createUiColors, type UiColorsCreation } from "./ui/ui-colors";
 
 /**
  * Identity color stub: every method returns its first string arg unchanged.
@@ -116,9 +117,41 @@ describe("formatUsdCompact", () => {
 describe("segment renderers", () => {
   const colors = stubColors();
 
-  it("renderCwd applies meta color and shortens to width", () => {
-    const state = makeState({ workspace: { shortCwd: "~/very/long/path/here", shortBranch: "main" } });
-    expect(renderCwd(state, 8, colors)).toBe(shortenMiddle("~/very/long/path/here", 8));
+  it("renderCwd includes the folder icon and respects a Unicode display budget", () => {
+    const state = makeState({
+      workspace: {
+        shortCwd: "~/very/long/path/here",
+        shortBranch: "main",
+      },
+    });
+    const rendered = renderCwd(state, 12, colors);
+    expect(rendered).toStartWith("📁 ");
+    expect(rendered).toContain("here");
+    expect(visibleWidth(rendered)).toBeLessThanOrEqual(12);
+    for (const width of [0, 1, 2, 3, 8]) {
+      expect(
+        visibleWidth(renderCwd(state, width, colors)),
+      ).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it("styles the session label as muted and its title as text", () => {
+    const roles: Array<[string, string]> = [];
+    const colors = createUiColors({ fg: (role, text) => { roles.push([role, text]); return text; } });
+    renderSessionName(makeState(), 80, colors);
+    expect(roles).toEqual([["muted", sessionNamePrefix], ["text", "my-session"]]);
+  });
+
+  it("renderSessionName uses available space beyond 25 characters and never overflows", () => {
+    const title = "A long recognizable session title that should fit";
+    const state = makeState({ session: { name: title } });
+    expect(renderSessionName(state, 80, colors)).toContain(title);
+    expect(renderSessionName(state, 80, colors)).toStartWith("Session: ");
+    for (const width of [0, 1, 5, 12, 20]) {
+      expect(
+        visibleWidth(renderSessionName(state, width, colors)),
+      ).toBeLessThanOrEqual(width);
+    }
   });
 
   it("renderBranch returns the branch string", () => {
