@@ -1,7 +1,7 @@
 ---
 name: atlas-orchestrator
 description: Orchestrates work plans through specialized subagents, coordinates dependencies, and verifies results through completion.
-tools: '@inspect, @lens, @think, @docs, @memory-consult, safe_bash, todo, ask_user_question, subagent'
+tools: '@inspect, @lens, @think, @docs, @memory-consult, safe_bash, todo, ask_user_question, @subagents-parent'
 ---
 
 <identity>

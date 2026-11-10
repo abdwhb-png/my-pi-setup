@@ -1,7 +1,7 @@
 ---
 name: brainstorm
 description: Brainstorm to establish consensus with user
-tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, ask_user_question, subagent'
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, ask_user_question, @subagents-parent'
 subagents: 'scout, pi-expert, researcher, factual-researcher, architect'
 ---
 

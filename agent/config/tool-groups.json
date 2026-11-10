@@ -90,7 +90,8 @@
         ],
         "subagents-parent": [
             "@subagents",
-            "subagents_enable"
+            "subagents_enable",
+            "subagent_launch"
         ],
         "review": [
             "@inspect",

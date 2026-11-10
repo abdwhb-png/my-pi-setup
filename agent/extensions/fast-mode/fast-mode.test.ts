@@ -90,8 +90,9 @@ test("names and styles the active fast-mode provider through the shared color ro
             return text;
         },
     };
-    expect(render(widget, theme)).toBe("fast-mode:openai");
+    expect(render(widget, theme)).toBe("🗲 fast-mode:openai");
     expect(roles).toEqual([
+        ["dim", "🗲 "],
         ["muted", "fast-mode"],
         ["dim", ":"],
         ["success", "openai"],
@@ -99,8 +100,9 @@ test("names and styles the active fast-mode provider through the shared color ro
     expect(widget.styled).toBe(true);
     await t.session.prompt("/fast-mode off");
     roles.length = 0;
-    expect(render(widget, theme)).toBe("fast-mode:off");
+    expect(render(widget, theme)).toBe("🗲 fast-mode:off");
     expect(roles).toEqual([
+        ["dim", "🗲 "],
         ["muted", "fast-mode"],
         ["dim", ":"],
         ["dim", "off"],
@@ -121,7 +123,7 @@ test("fast mode is off by default and on/off commands control priority without m
     const widget = discoverWidget();
     expect(await runner().emitBeforeProviderRequest(payload)).toEqual(payload);
     await t.session.prompt("/fast-mode on");
-    expect(render(widget)).toBe("fast-mode:openai");
+    expect(render(widget)).toBe("🗲 fast-mode:openai");
     expect(await runner().emitBeforeProviderRequest(payload)).toEqual({
         ...payload,
         service_tier: "priority",
@@ -166,7 +168,7 @@ test.each([
             "unavailable",
         );
         await selectModel();
-        expect(render(widget)).toBe("fast-mode:openai");
+        expect(render(widget)).toBe("🗲 fast-mode:openai");
     },
 );
 
@@ -174,17 +176,17 @@ test("retains the Codex command alias and validates arguments without changing s
     await selectModel();
     await t.session.prompt("/codex-fast-mode on");
     const widget = discoverWidget();
-    expect(render(widget)).toBe("fast-mode:openai");
+    expect(render(widget)).toBe("🗲 fast-mode:openai");
     await t.session.prompt("/fast-mode invalid");
     expect(t.events.uiCallsFor("notify").at(-1)?.args).toEqual([
         expect.stringContaining("Usage: /fast-mode"),
         "warning",
     ]);
-    expect(render(widget)).toBe("fast-mode:openai");
+    expect(render(widget)).toBe("🗲 fast-mode:openai");
     await t.session.prompt("/fast-mode status");
     expect(t.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("enabled");
     await t.session.prompt("/fast-mode");
-    expect(render(widget)).toBe("fast-mode:openai");
+    expect(render(widget)).toBe("🗲 fast-mode:openai");
 });
 
 test("offers command completions and clears its widget on shutdown", async () => {

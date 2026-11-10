@@ -76,6 +76,8 @@ the package remains last, and protected read/write boundaries remain intact.
 Concrete tool availability is still validated against the live registry at
 runtime.
 
+Parent roles that delegate through pi-subagents should use `@subagents-parent`. This group includes the deferred `subagent_launch` execution check required before workflow children start. Authorizing that check does not add it to the immediate model catalog; role, CLI, and child ceilings still apply. The optional configuration audit verifies this prerequisite for roles that expose `subagent`, without pinning personal role names or full tool lists.
+
 Pi-lens uses two safety tiers:
 
 - `@lens`: read-only AST, LSP, diagnostics, module reports, and targeted reads.

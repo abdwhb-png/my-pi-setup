@@ -5,6 +5,9 @@
     "gaugeWidth": 10,
     "defaultTextColor": "dim",
     "defaultIconColor": "text",
+    "providerStatus": {
+        "display": "text"
+    },
     "widgets": {
         "location": {
             "row": 0,
@@ -17,7 +20,7 @@
             "enabled": true,
             "align": "right",
             "row": 0,
-            "position": 1
+            "position": 2
         },
         "model": {
             "enabled": true,
@@ -43,7 +46,7 @@
         },
         "provider-status": {
             "row": 1,
-            "position": 0,
+            "position": 10,
             "align": "right"
         },
         "context-capacity": {

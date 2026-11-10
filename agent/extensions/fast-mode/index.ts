@@ -20,6 +20,7 @@ export default function fastMode(pi: ExtensionAPI): void {
         if (!visible) return null;
         const colors = createUiColors(theme);
         return (
+            colors.subtle("🗲 ") +
             colors.muted("fast-mode") +
             colors.separator(":") +
             (enabled && providerId

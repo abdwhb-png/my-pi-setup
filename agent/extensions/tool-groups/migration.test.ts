@@ -8,6 +8,8 @@ import {
     TOOL_GROUPS_PACKAGE_SOURCE,
 } from "../_shared/tool-groups/package-order.ts";
 import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
+import { calculateToolPolicy } from "../_shared/tool-policy/index.ts";
+import { extensionConfigPath } from "../_shared/config-loader.ts";
 
 function agentDir(): string {
     return getAgentDir();
@@ -202,6 +204,42 @@ const auditEnabled = process.env.PI_CONFIGURATION_AUDIT === "1";
 const audit = auditEnabled ? it : it.skip;
 
 describe("tool-groups isolated contracts and optional configuration audit", () => {
+    audit("parent-delegation roles admit deferred workflow launch checks", () => {
+        const groups = readConfiguredGroups();
+        const issues: string[] = [];
+        for (const role of configuredMarkdownTools("roles")) {
+            const registered = availableConcreteNames(groups, [
+                ...role.tools,
+                "subagent_launch",
+            ]).map((name) => ({
+                name,
+                exposure:
+                    name === "subagent_launch"
+                        ? ("deferred" as const)
+                        : ("direct" as const),
+            }));
+            const policy = calculateToolPolicy(
+                {
+                    role: {
+                        version: 1,
+                        roleName: role.name,
+                        mode: "set",
+                        toolNames: role.tools,
+                    },
+                    registered,
+                },
+                [],
+                { groups, resolveMcp: () => [] },
+                [],
+            );
+            if (!policy.names.includes("subagent")) continue;
+            if (!policy.names.includes("subagent_launch"))
+                issues.push(`${role.name}: workflow launch checks are blocked`);
+            expect(policy.activeNames).not.toContain("subagent_launch");
+        }
+        expect(issues).toEqual([]);
+    });
+
     audit("keeps the tool-groups package last", () => {
         const packages = readSettings().packages;
         expect(Array.isArray(packages)).toBe(true);
@@ -227,12 +265,16 @@ describe("tool-groups isolated contracts and optional configuration audit", () =
 
     audit("keeps role tool-policy enforcement active in dangerous mode", () => {
         const dangerousModeConfig = JSON.parse(
-            readFileSync(join(agentDir(), "pi-dangerous-mode.json"), "utf8"),
+            readFileSync(
+                extensionConfigPath("dangerousMode", {
+                    scope: "global",
+                    agentDir: agentDir(),
+                }),
+                "utf8",
+            ),
         ) as { protectedExtensions?: string[] };
 
-        expect(dangerousModeConfig.protectedExtensions).toContain(
-            "*tool-groups*",
-        );
+        expect(dangerousModeConfig.protectedExtensions).toContain("*tool-groups*");
     });
 
     it("accepts valid custom groups without a canonical snapshot", () => {
