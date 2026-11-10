@@ -131,7 +131,7 @@ supported list syntax.
 
 ## Runtime Behaviour
 
-- Each group registers a non-executable placeholder for active-tool APIs used
+- Each group registers a hidden, non-executable placeholder for active-tool APIs used
   after the registry exists.
 - When the package is configured and extensions are enabled, the wrapper
   removes aliased CLI tool options and transports the original list in

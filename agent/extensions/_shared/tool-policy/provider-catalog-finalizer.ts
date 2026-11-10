@@ -1,6 +1,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { claimProviderCatalogRecorder } from "./provider-catalog-state.ts";
+import { findLatestActiveRoleState } from "../pi-roles/protocol.ts";
+import {
+    PROVIDER_CATALOG_ENTRY_TYPE,
+    type ProviderCatalogAuditEntry,
+    claimProviderCatalogRecorder,
+} from "./provider-catalog-state.ts";
 import { injectProviderToolsCatalog } from "./provider-catalog.ts";
 
 /**
@@ -41,6 +46,36 @@ export function registerProviderCatalogFinalizer(pi: ExtensionAPI): void {
                   }
                 : result,
         });
+        const audit: ProviderCatalogAuditEntry = {
+            schemaVersion: 1,
+            provider: model?.provider ?? null,
+            modelId: model?.id ?? null,
+            roleName:
+                findLatestActiveRoleState(ctx.sessionManager.getBranch())
+                    ?.name ?? null,
+            api,
+            injected: customPrompt && result.supported,
+            observation: result.supported
+                ? {
+                      supported: true,
+                      tools: result.tools.map(({ name, deferred }) => ({
+                          name,
+                          deferred: deferred === true,
+                      })),
+                      callableToolNames:
+                          result.callableTools?.map(({ name }) => name) ?? null,
+                      selection: result.selection,
+                  }
+                : result,
+        };
+        try {
+            pi.appendEntry(PROVIDER_CATALOG_ENTRY_TYPE, audit);
+        } catch {
+            ctx.ui.notify(
+                "Tool catalog observation could not be saved to the session.",
+                "warning",
+            );
+        }
         if (!result.supported) {
             if (warning !== result.reason)
                 ctx.ui.notify(

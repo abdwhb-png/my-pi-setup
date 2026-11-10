@@ -342,13 +342,17 @@ export function calculateExtensionFiles(commands: any[]): string[] {
 
 export function buildContextSendMessage(
     files: Array<{ path: string; content: string }>,
+    activeTools: readonly string[],
 ): string {
-    if (files.length === 0) return "";
     const blocks = files.map(
         (f) =>
             `<project_instructions path="${f.path}">\n${f.content}\n</project_instructions>`,
     );
-    return `Read and follow these project instruction files. They take precedence for this repository.\n\n${blocks.join("\n\n")}\n`;
+    const instructions = files.length
+        ? `Read and follow these project instruction files. They take precedence for this repository.\n\n${blocks.join("\n\n")}\n`
+        : "No applied AGENTS.md/CLAUDE.md context files found for this session.\n";
+    const names = activeTools.toSorted((a, b) => a.localeCompare(b));
+    return `${instructions}\nActive tools at message construction (${names.length}): ${names.join(", ") || "(none)"}\nThis is a snapshot; use the current request interfaces for tool calls.\n`;
 }
 
 type ContextToolDiagnostic = {
@@ -894,22 +898,9 @@ export default function contextExtension(pi: ExtensionAPI) {
 
     pi.registerCommand("context-send", {
         description:
-            "Inject applied AGENTS.md/CLAUDE.md contents into the conversation",
+            "Inject applied AGENTS.md/CLAUDE.md contents and the current active tool names into the conversation",
         handler: async (_args, ctx: ExtensionCommandContext) => {
             const files = await loadProjectContextFiles(ctx.cwd);
-            if (files.length === 0) {
-                pi.sendMessage(
-                    {
-                        customType: "context-send",
-                        content:
-                            "No applied AGENTS.md/CLAUDE.md context files found for this session.",
-                        display: true,
-                    },
-                    { triggerTurn: false },
-                );
-                return;
-            }
-
             const content = buildContextSendMessage(
                 files.map((file) => ({
                     path: file.path,
@@ -920,6 +911,7 @@ export default function contextExtension(pi: ExtensionAPI) {
                         sourceKind: "context-send-command",
                     }),
                 })),
+                pi.getActiveTools(),
             );
             pi.sendMessage(
                 {

@@ -539,6 +539,35 @@ afterEach(() => {
 });
 
 describe('context-send command', () => {
+    it('sends current active names and triggers a turn without instruction files', async () => {
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const root = mkdtempSync(join(tmpdir(), 'context-send-empty-'));
+        temporaryDirectories.push(root);
+        try {
+            process.env.PI_CODING_AGENT_DIR = root;
+            const commands = new Map<string, any>();
+            const messages: Array<{ content: string; options: any }> = [];
+            let active = ['write', 'read'];
+            const pi = {
+                events: createEventBus(), on() {},
+                getActiveTools: () => active,
+                registerCommand: (name: string, command: any) => commands.set(name, command),
+                sendMessage: (message: { content: string }, options: any) => messages.push({ ...message, options }),
+            } as unknown as ExtensionAPI;
+            contextExtension(pi);
+            await commands.get('context-send').handler('', { cwd: root });
+            expect(messages[0].content).toContain('Active tools at message construction (2): read, write');
+            expect(messages[0].options.triggerTurn).toBe(true);
+            active = [];
+            await commands.get('context-send').handler('', { cwd: root });
+            expect(messages[1].content).toContain('Active tools at message construction (0): (none)');
+            expect(messages[1].options.triggerTurn).toBe(true);
+        } finally {
+            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        }
+    });
+
     it('requests source-aware Markdown rewriting before sending files', async () => {
         const root = mkdtempSync(join(tmpdir(), 'context-send-markdown-'));
         temporaryDirectories.push(root);
@@ -552,6 +581,7 @@ describe('context-send command', () => {
         const events = createEventBus();
         const pi = {
             events,
+            getActiveTools: () => ['read'],
             on: mock(() => {}),
             registerCommand(
                 name: string,
@@ -591,15 +621,18 @@ describe('buildContextSendMessage', () => {
                 content: '# Proj\n- use bun',
             },
         ];
-        const result = buildContextSendMessage(files);
+        const result = buildContextSendMessage(files, ['write', 'read']);
         expect(result).toContain('Read and follow');
-        expect(result).toBe(
+        expect(result).toContain('Active tools at message construction (2): read, write');
+        expect(result).toContain(
             'Read and follow these project instruction files. They take precedence for this repository.\n\n<project_instructions path="/home/user/.pi/agent/AGENTS.md">\n# Rules\n- be concise\n</project_instructions>\n\n<project_instructions path="/home/user/.pi/proj/AGENTS.md">\n# Proj\n- use bun\n</project_instructions>\n',
         );
     });
 
-    it('should return empty string when no files', () => {
-        expect(buildContextSendMessage([])).toBe('');
+    it('sends an explicit empty tool snapshot without instruction files', () => {
+        const result = buildContextSendMessage([], []);
+        expect(result).toContain('Active tools at message construction (0): (none)');
+        expect(result).toContain('No applied AGENTS.md/CLAUDE.md');
     });
 
     it('should preserve file order', () => {
@@ -613,7 +646,7 @@ describe('buildContextSendMessage', () => {
                 content: 'second',
             },
         ];
-        const result = buildContextSendMessage(files);
+        const result = buildContextSendMessage(files, ['write', 'read']);
         const firstIdx = result.indexOf('first');
         const secondIdx = result.indexOf('second');
         expect(firstIdx).toBeGreaterThan(-1);

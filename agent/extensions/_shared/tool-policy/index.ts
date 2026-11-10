@@ -67,7 +67,7 @@ export function calculateToolPolicy(
             : view.role?.mode === "all"
               ? view.registered.map((tool) => tool.name)
               : [
-                    ...baseline,
+                    ...(config.requested ?? baseline),
                     ...view.registered
                         .filter(
                             (tool) =>

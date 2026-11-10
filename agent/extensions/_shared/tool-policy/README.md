@@ -30,7 +30,7 @@ Read workflow grants and exclusions from the existing shared lease broker.
 ## Calculation and lifecycle
 
 Build the role base from explicit names or the full registered catalog for
-`all`. Without a role, retain Pi's startup baseline. Expand aliases, add
+`all`. Without a role, use explicit CLI requests as the initial selection when present; otherwise retain Pi's startup baseline. Expand aliases, add
 eligible defaults and explicit grants, intersect CLI and child ceilings, then
 apply availability/security exclusions and inactive workflow masks. Preserve
 first-occurrence order and remove duplicates and alias placeholders.
@@ -105,3 +105,13 @@ Do not call paid providers or change a user session for validation.
 
 Distinguish a truthful schema/catalog from model compliance. These tests prove
 availability, restrictions and presentation, not that a model obeys guidance.
+
+## Durable request observations
+
+The finalizer appends one `tool-policy:provider-request` custom session entry per observed provider-request hook invocation, including repeated identical observations. This is metadata observed before dispatch, not a delivery receipt or proof that the provider accepted a request. Retries that do not invoke the hook have no separate observation. Pi supplies the entry identity, timestamp and branch ancestry; observation entries are not model conversation messages.
+
+The version 1 data contract (`ProviderCatalogAuditEntry`) records `schemaVersion`, `provider`, `modelId`, `roleName`, `api`, `injected` and `observation`. Provider, model and branch-local role may be null. A supported observation contains tool names with deferred status, `callableToolNames` and the existing tool-selection mode. Null callable names mean unspecified callability; an empty array means no callable tools. An unsupported observation contains its explicit reason, without substituting a previous catalog or the runtime active list.
+
+No descriptions, schemas, prompts, arguments, headers, credentials or responses are retained by this journal. Session retention remains owned by Pi. Persistence failures produce a warning while preserving normal catalog presentation and request behavior. Existing observations remain in the session file across reload and resume; `/context` continues to display its current in-memory observation rather than replaying old observations as current state.
+
+`/context-send` injects the applied instruction files and an alphabetical snapshot of current active tool names, even when no instruction files exist. It starts a model turn and labels the names as a snapshot, not proof of provider transmission. `/check-tools` is a manually invoked prompt that asks for a relevant operation without side effects before declaring a tool blocker, preserving the current role and authorization. It does not guarantee model compliance.

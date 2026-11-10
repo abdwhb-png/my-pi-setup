@@ -1,7 +1,7 @@
 # pi-codex-compaction
 
 This local extension starts from `@ogulcancelik/pi-codex-compaction` v0.1.4 (MIT, Can Celik).
-It follows the Pi v0.87.1 session projection API.
+It uses the Pi 1.5 session projection API and public Responses serializers.
 The original fork history is preserved at `https://github.com/abdwhb-png/pi-codex-compaction`.
 
 > [!WARNING]
@@ -11,7 +11,7 @@ OpenAI Codex native remote compaction integrated into Pi's existing compaction l
 
 ## Why automatic compaction is enabled by default
 
-Pi's automatic threshold is too late for uninterrupted tool loops. Pi normally checks for compaction after the agent run settles, so repeated assistant → tool → provider turns can pass the configured context limit without giving compaction a chance to run. One observed run reached 361k tokens—132.7% of a 272k limit—with 189 additional tool-use responses and no compaction entry. Requests above 272k enter Codex's long-context pricing tier, which doubles input and cache-read cost and raises output cost by 50%. The extension therefore enables its own 90% turn-boundary threshold by default.
+Pi now checks for threshold compaction between tool execution and the next assistant response. The extension's additional 90% threshold remains an earlier local policy, not a workaround for a missing Pi between-turn check. Pi's own threshold uses `contextWindow - reserveTokens`; both paths enter Pi's compaction lifecycle and use this extension for Codex's remote checkpoint.
 
 ## Why compaction uses Pi's lifecycle
 
@@ -60,6 +60,16 @@ The current conversation is sent to the ChatGPT Codex Responses endpoint. OpenAI
 
 Native checkpoints are model-specific. Switch back to the model that created the checkpoint before continuing. Provider switching is not a portability path because no textual summary is generated.
 
-Pi does not expose a finalized provider payload during `session_before_compact`. The extension mirrors Pi's Codex message conversion and combines it with the latest observed request shape to construct the compaction request. Extensions loaded later that independently rewrite provider payloads can therefore create order-dependent behavior.
+Pi does not expose a finalized provider payload during `session_before_compact`. The extension uses Pi's public Codex-compatible Responses conversion and combines it with the latest observed request shape to construct the compaction request. Extensions loaded later that independently rewrite provider payloads can therefore create order-dependent behavior.
 
 Mid-run compaction uses `ctx.abort()` because Pi does not yet expose a supported way for extensions to stop cleanly between tool turns. The abort happens only after `turn_end`, when tool results are finalized, but it remains a temporary compatibility path until Pi supports turn-boundary compaction directly.
+
+## Tool declarations and existing checkpoints
+
+Checkpoint replay restores the projected system state and subsequent messages through Pi's public Responses serializer. This preserves incremental tool declarations, removals, grammar tools and system instruction updates. Compaction requests derive top-level tools from the same transcript transport rules; they do not turn every registered tool into a new function schema. Older custom-entry checkpoints remain readable.
+
+After updating this extension, use `/reload` in an existing session, retain the model that created its checkpoint, and invoke `/check-tools read package.json` for a read-only availability check. No new compaction or session-file rewrite is required. `/context` can inspect the resulting request catalog. The observation is local evidence of request schemas, not proof that a provider accepted them.
+
+The separate `/codex-fast-mode on|off|status` command requests `service_tier: "priority"` only for the native `openai` and `openai-codex` Responses/Chat Completions transports. It does not select a faster model or prove the actual serving tier. OpenAI documents `priority` as a Fast mode alias and reports the serving tier in the response: https://developers.openai.com/api/docs/guides/fast-mode. No live priority qualification is implied by the offline tests.
+
+Historical snapshots may contain `@group` configuration placeholders. Replay excludes these non-executable aliases from tool additions and removals, without changing the stored session. Other concrete tool names that violate Codex's name syntax fail explicitly rather than being silently removed. Tool-group placeholders now have hidden exposure so later activation requests cannot declare them as model tools.

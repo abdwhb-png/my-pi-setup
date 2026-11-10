@@ -9,16 +9,17 @@ test('custom prompt catalog follows outgoing schemas rather than the earlier act
     const pi = {
         on: (name: string, handler: any) => { hooks.set(name, handler); },
         registerCommand() {},
+        appendEntry() {},
         getActiveTools: () => ['read'],
         getAllTools: () => [{ name: 'read', description: 'old read-only role' }],
     } as unknown as ExtensionAPI;
     contextExtension(pi);
     expect(hooks.has('before_provider_request')).toBe(false);
     registerProviderCatalogFinalizer(pi);
-    hooks.get('before_agent_start')?.({ systemPrompt: 'Custom SYSTEM', systemPromptOptions: { customPrompt: 'Custom SYSTEM' } }, {});
+    hooks.get('before_agent_start')?.({ systemPrompt: 'Custom SYSTEM', systemPromptOptions: { customPrompt: 'Custom SYSTEM' } }, { sessionManager: { getBranch: () => [] } });
     expect(hooks.has('before_provider_request')).toBe(true);
     const payload = { messages: [{ role: 'system', content: 'Custom SYSTEM' }], tools: [{ type: 'function', function: { name: 'edit', description: 'Edit files', parameters: {} } }] };
-    const result = await hooks.get('before_provider_request')!({ payload }, { model: { api: 'openai-completions' }, ui: { notify() {} } });
+    const result = await hooks.get('before_provider_request')!({ payload }, { sessionManager: { getBranch: () => [] }, model: { api: 'openai-completions' }, ui: { notify() {} } });
     expect(result.messages[0].content).toContain('- edit: Edit files');
     expect(result.messages[0].content).not.toContain('- read:');
     expect(result.tools).toEqual(payload.tools);
@@ -34,13 +35,14 @@ test('/context separates current tools from the last request and reports unsuppo
         registerCommand: (name: string, command: any) => commands.set(name, command),
         getActiveTools: () => ['read'], getAllTools: () => [{ name: 'read' }],
         getCommands: () => [], getThinkingLevel: () => 'off',
+        appendEntry() {},
         sendMessage: (message: { content: string }) => { sent = message.content; },
     } as unknown as ExtensionAPI;
     contextExtension(pi);
     registerProviderCatalogFinalizer(pi);
     const ctx = { cwd: tmpdir(), hasUI: false, model: { api: 'openai-completions' },
         ui: { notify: (message: string) => notices.push(message) }, getSystemPrompt: () => 'Do not log this prompt',
-        getContextUsage: () => undefined, sessionManager: { getEntries: () => [] } };
+        getContextUsage: () => undefined, sessionManager: { getEntries: () => [], getBranch: () => [] } };
     hooks.get('before_agent_start')!({ systemPromptOptions: { customPrompt: 'Custom' } }, ctx);
     hooks.get('before_provider_request')!({ payload: { messages: [], tools: [{ type: 'function', function: { name: 'edit' } }] } }, ctx);
     await commands.get('context').handler('', ctx);

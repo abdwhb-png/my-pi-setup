@@ -32,7 +32,9 @@ for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi 
         expect(response).toMatchObject({ service_tier: 'priority' });
         expect(JSON.stringify(response)).toContain('- safe_bash');
 
-        await runner.emitBeforeAgentStart({ messageType: "user", prompt: 'default', images: undefined }, { cwd: session.cwd, customPrompt: 'Pi default prompt' });
+        // The payload below belongs to Zai, so restore its actual model context.
+        session.session.agent.state.model = { ...session.session.agent.state.model, provider: 'zai', id: 'glm-5.2', api: 'openai-completions' };
+        await runner.emitBeforeAgentStart({ messageType: "user", prompt: 'default', images: undefined }, { cwd: session.cwd, customPrompt: undefined });
         expect(await runner.emitBeforeProviderRequest(params)).toEqual(params);
     } finally {
         await session.session.extensionRunner?.emit({ type: 'session_shutdown', reason: 'quit' });

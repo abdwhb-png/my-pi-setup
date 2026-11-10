@@ -97,6 +97,11 @@ describe('tool-groups SDK integration', () => {
             expect(active).toContain('bash');
             expect(active).not.toContain('@inspect');
 
+            // An external writer must not expose non-executable group placeholders.
+            session.setActiveToolsByName(session.getAllTools().map(tool => tool.name));
+            expect(session.getActiveToolNames()).not.toContain('@inspect');
+
+
             session.dispose();
         } finally {
             await rm(tmpDir, { recursive: true, force: true });

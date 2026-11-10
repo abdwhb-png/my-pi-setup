@@ -8,7 +8,6 @@ name: 'factual-researcher'
 skills: 'factual-research, firecrawl, firecrawl-crawl, firecrawl-map, firecrawl-parse, firecrawl-scrape, firecrawl-search'
 systemPromptMode: 'replace'
 tools: '@inspect, safe_bash, @docs, mcp:firecrawl, @web, contact_supervisor'
-turnBudget: '{ "maxTurns": 20, "graceTurns": 8 }'
 ---
 
 Tool references written as `@<group>` identify tool groups rather than callable tools. The harness expands these aliases. If you need to understand a group's membership, consult the effective configuration: global `~/.pi/agent/config/tool-groups.json`, trusted project `.pi/config/tool-groups.json`, using each file's `groups` definitions. Groups may contain nested aliases. Call concrete tools exposed in your current session. Group membership alone does not establish availability.

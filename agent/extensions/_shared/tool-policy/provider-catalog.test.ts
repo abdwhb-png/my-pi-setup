@@ -63,7 +63,7 @@ test('replaces stale lists while retaining unrelated headings and descriptions w
     expect(second.split(CATALOG_START)).toHaveLength(2);
 });
 test('separates deferred schemas and ignores provider-native tools', () => {
-    const payload = { input: [{ type: 'additional_tools', role: 'developer', tools: [{ type: 'function', ...fn }] }], tools: [{ type: 'web_search_preview' }, { type: 'function', name: 'read', parameters: {} }] };
+    const payload = { input: [{ type: 'tool_search_output', role: 'developer', tools: [{ type: 'function', ...fn }] }], tools: [{ type: 'web_search_preview' }, { type: 'function', name: 'read', parameters: {} }] };
     const result = injectProviderToolsCatalog('openai-responses', payload);
     expect(result.supported).toBe(true);
     if (!result.supported) throw new Error(result.reason);
@@ -138,4 +138,12 @@ test('rejects unknown API and malformed schema rather than using live or cached 
     expect(injectProviderToolsCatalog('openai-completions', { messages: [], tools: [{}] }).supported).toBe(false);
     expect(injectProviderToolsCatalog('google-vertex', { messages: [], tools: [] }).supported).toBe(false);
     expect(injectProviderToolsCatalog('openai-completions', { messages: [], tools: [], tool_choice: 'surprise' }).supported).toBe(false);
+});
+
+test('native additional_tools definitions are callable without an extra discovery step', () => {
+    const result = injectProviderToolsCatalog('openai-codex-responses', {
+        instructions: 'fixture', tool_choice: 'auto',
+        input: [{ type: 'additional_tools', role: 'developer', tools: [{ type: 'function', name: 'read', parameters: {} }] }],
+    });
+    expect(result).toMatchObject({ supported: true, callableTools: [{ name: 'read', deferred: false }] });
 });

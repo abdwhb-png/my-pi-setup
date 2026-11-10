@@ -162,3 +162,10 @@ test('preserves an explicitly activated deferred tool across refresh and removes
     p.setRole(role('set', ['read']));
     expect(active).toEqual(['read']);
 });
+
+test('CLI tools define the initial selection without widening an explicit role', () => {
+    const f = fixture({ requested: ['@implement'] });
+    expect(f.active()).toEqual(['read', 'edit', 'write', 'safe_bash']);
+    f.policy.setRole(role('set', ['read']));
+    expect(f.active()).toEqual(['read']);
+});

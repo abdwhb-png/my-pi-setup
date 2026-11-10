@@ -164,6 +164,7 @@ export function createToolGroupsExtension(
             const toolName = `${TOOL_GROUP_PREFIX}${groupName}`;
             pi.registerTool({
                 name: toolName,
+                exposure: "hidden",
                 label: `Group: ${groupName}`,
                 description: `Tool group alias for @${groupName}. Register member tools in tool-groups config.`,
                 parameters: Type.Object({}),

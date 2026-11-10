@@ -47,7 +47,7 @@ describe("openai codex fast mode", () => {
 
   it("toggles priority with slash command and reports status", async () => {
     const { pi, handlers, commands } = createMockAPI();
-    const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
+    const ctx = createCtx({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.6-sol" });
     codexFastMode(pi);
 
     expect(commands.has("codex-fast-mode")).toBe(true);
@@ -72,7 +72,7 @@ describe("openai codex fast mode", () => {
 
   it("shows status on session start only if model is an OpenAI model", async () => {
     const { pi, handlers } = createMockAPI();
-    const openAICtx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
+    const openAICtx = createCtx({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.6-sol" });
     codexFastMode(pi);
 
     const sessionStartHandler = handlers.get("session_start")?.[0];
@@ -132,13 +132,13 @@ describe("openai codex fast mode", () => {
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
 
     // Switch back to OpenAI Codex model -> status reappears as on
-    await modelSelectHandler({ model: { provider: "openai-codex", id: "gpt-5.6-sol" } }, ctx);
+    await modelSelectHandler({ model: { provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.6-sol" } }, ctx);
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", statusText(true));
   });
 
   it("clears status on session shutdown", async () => {
     const { pi, handlers } = createMockAPI();
-    const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
+    const ctx = createCtx({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.6-sol" });
     codexFastMode(pi);
 
     const shutdownHandler = handlers.get("session_shutdown")?.[0];
@@ -147,4 +147,20 @@ describe("openai codex fast mode", () => {
     await shutdownHandler({}, ctx);
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
   });
+});
+it("never applies priority to another provider's Codex-shaped request", async () => {
+  const { pi, handlers, commands } = createMockAPI();
+  codexFastMode(pi);
+  const ctx = createCtx({ provider: "cpa", api: "openai-responses", id: "codex-proxy" });
+  await commands.get("codex-fast-mode").handler("on", ctx);
+  expect(handlers.get("before_provider_request")?.[0]({ payload: codexPayload }, ctx)).toBeUndefined();
+});
+
+it.each(["openai-responses", "openai-completions"])("requests priority for native OpenAI %s without requiring Codex-shaped fields", async (api) => {
+  const { pi, handlers, commands } = createMockAPI();
+  codexFastMode(pi);
+  const ctx = createCtx({ provider: "openai", api, id: "fixture" });
+  await commands.get("codex-fast-mode").handler("on", ctx);
+  const payload = { model: "fixture", messages: [], service_tier: "auto" };
+  expect(handlers.get("before_provider_request")?.[0]({ payload }, ctx)).toEqual({ ...payload, service_tier: "priority" });
 });

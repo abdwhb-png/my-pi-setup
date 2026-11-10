@@ -18,6 +18,26 @@ export interface ProviderCatalogSnapshot {
     observation: ProviderCatalogObservation;
 }
 
+export const PROVIDER_CATALOG_ENTRY_TYPE = "tool-policy:provider-request";
+
+/** Metadata observed before dispatch, not a delivery receipt. */
+export interface ProviderCatalogAuditEntry {
+    schemaVersion: 1;
+    provider: string | null;
+    modelId: string | null;
+    roleName: string | null;
+    api: string;
+    injected: boolean;
+    observation:
+        | {
+              supported: true;
+              tools: Array<{ name: string; deferred: boolean }>;
+              callableToolNames: string[] | null;
+              selection: ToolSelection;
+          }
+        | Extract<CatalogResult, { supported: false }>;
+}
+
 const KEY = Symbol.for("pi.tool-policy.provider-catalog-state.v1");
 type State = {
     generation: symbol;

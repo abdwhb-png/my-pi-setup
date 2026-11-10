@@ -199,11 +199,12 @@ function deferredDefinitions(messages: ProviderPayload): PresentedTool[] {
     return messages.flatMap((message) => {
         if (!record(message)) return [];
         const direct =
-            message.type === "tool_search_output" ||
-            message.type === "additional_tools" ||
-            (message.role === "system" && isArray(message.tools))
-                ? definitions(message.tools, true)
-                : [];
+            message.type === "additional_tools"
+                ? definitions(message.tools)
+                : message.type === "tool_search_output" ||
+                    (message.role === "system" && isArray(message.tools))
+                  ? definitions(message.tools, true)
+                  : [];
         const additional = definitions(message.additional_tools, true);
         // Kimi deferred function definitions are carried by tool-result messages.
         const nested = record(message.tool_response)
