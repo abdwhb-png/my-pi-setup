@@ -83,7 +83,7 @@ describe('Pi extension boundary classifier', () => {
         expect(
             classify(
                 '__tests__/notify.test.ts',
-                '../openai-codex-fast-mode.ts',
+                '../fast-mode/index.ts',
                 owners,
             ).allowed,
         ).toBe(false);

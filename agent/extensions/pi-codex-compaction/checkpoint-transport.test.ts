@@ -6,18 +6,13 @@ import { stream } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { useIsolatedAgentDir } from "../../_shared/testing/config-fixture.ts";
-import { publicExtensionEntrypoint } from "./public-extension-session.ts";
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 
 useIsolatedAgentDir();
 
-test("Codex transport retains tools and priority through a checkpoint and role change", async () => {
+test("Codex compaction alone preserves checkpoint and tool declarations through the transport after a role change", async () => {
     const t = await createTestSession({
-        extensions: [
-            publicExtensionEntrypoint("pi-codex-compaction"),
-            publicExtensionEntrypoint("openai-codex-fast-mode"),
-            publicExtensionEntrypoint("tool-groups"),
-        ],
+        extensions: [import.meta.dir + "/index.ts"],
     });
     try {
         const model: Model<"openai-codex-responses"> = {
@@ -33,7 +28,6 @@ test("Codex transport retains tools and priority through a checkpoint and role c
             },
         };
         t.session.agent.state.model = model;
-        await t.session.prompt("/codex-fast-mode on");
         const manager = t.session.sessionManager;
         manager.appendMessage({
             role: "system",
@@ -127,7 +121,6 @@ test("Codex transport retains tools and priority through a checkpoint and role c
                 },
             ).result();
             expect(transported).toBeDefined();
-            expect(transported?.service_tier).toBe("priority");
             const serialized = JSON.stringify(transported);
             expect(serialized).toContain('"type":"compaction"');
             expect(serialized).toContain('"type":"custom","name":"codemode"');
@@ -145,16 +138,6 @@ test("Codex transport retains tools and priority through a checkpoint and role c
                 expect(serialized).toContain('"name":"edit"');
                 expect(serialized).toContain("no longer available");
             }
-            const latest = manager.getEntries().at(-1);
-            expect(latest).toMatchObject({
-                customType: "tool-policy:provider-request",
-                data: {
-                    observation: {
-                        supported: true,
-                        callableToolNames: expect.arrayContaining(["codemode"]),
-                    },
-                },
-            });
         }
     } finally {
         await t.close();

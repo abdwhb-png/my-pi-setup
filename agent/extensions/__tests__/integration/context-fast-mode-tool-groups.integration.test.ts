@@ -6,12 +6,12 @@ import { publicExtensionEntrypoint } from './public-extension-session.ts';
 
 useIsolatedAgentDir();
 
-for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi hooks preserve context/Codex options across requests and model changes`, async () => {
+for (const order of ['first', 'last'] as const) test(`catalog ${order}: context, fast-mode, and tool-groups preserve request fields across requests and model changes`, async () => {
     const context = publicExtensionEntrypoint('context');
-    const sidecar = publicExtensionEntrypoint('openai-codex-fast-mode');
-    const owner = publicExtensionEntrypoint('tool-groups');
+    const fastMode = publicExtensionEntrypoint('fast-mode');
+    const toolGroups = publicExtensionEntrypoint('tool-groups');
     const session = await createTestSession({ systemPrompt: 'Custom SYSTEM',
-        extensions: order === 'first' ? [context, sidecar, owner] : [sidecar, context, owner] });
+        extensions: order === 'first' ? [context, fastMode, toolGroups] : [fastMode, context, toolGroups] });
     try {
         const runner = session.session.extensionRunner;
         if (!runner) throw new Error('Missing real Pi runner');
@@ -27,7 +27,7 @@ for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi 
         expect(JSON.stringify(next)).toContain('(no immediate function tools)');
 
         session.session.agent.state.model = { ...session.session.agent.state.model, provider: 'openai-codex', id: 'fixture', api: 'openai-codex-responses' };
-        await session.session.prompt('/codex-fast-mode on'); // Extension command, no agent/provider call.
+        await session.session.prompt('/fast-mode on'); // Extension command, no agent/provider call.
         const response = await runner.emitBeforeProviderRequest({ model: 'fixture', stream: true, instructions: 'Custom SYSTEM', input: [], tool_choice: 'auto', prompt_cache_key: 'fixture', tools: [{ type: 'function', name: 'safe_bash', parameters: {} }] });
         expect(response).toMatchObject({ service_tier: 'priority' });
         expect(JSON.stringify(response)).toContain('- safe_bash');

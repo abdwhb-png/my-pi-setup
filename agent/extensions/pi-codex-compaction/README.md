@@ -70,6 +70,8 @@ Checkpoint replay restores the projected system state and subsequent messages th
 
 After updating this extension, use `/reload` in an existing session, retain the model that created its checkpoint, and invoke `/check-tools read package.json` for a read-only availability check. No new compaction or session-file rewrite is required. `/context` can inspect the resulting request catalog. The observation is local evidence of request schemas, not proof that a provider accepted them.
 
-The separate `/codex-fast-mode on|off|status` command requests `service_tier: "priority"` only for the native `openai` and `openai-codex` Responses/Chat Completions transports. It does not select a faster model or prove the actual serving tier. OpenAI documents `priority` as a Fast mode alias and reports the serving tier in the response: https://developers.openai.com/api/docs/guides/fast-mode. No live priority qualification is implied by the offline tests.
-
 Historical snapshots may contain `@group` configuration placeholders. Replay excludes these non-executable aliases from tool additions and removals, without changing the stored session. Other concrete tool names that violate Codex's name syntax fail explicitly rather than being silently removed. Tool-group placeholders now have hidden exposure so later activation requests cannot declare them as model tools.
+
+## Validation
+
+From `agent/`, run `bun test --isolate extensions/pi-codex-compaction/`. The `checkpoint-transport.test.ts` regression loads only this extension through the Pi test harness and captures the serialized Codex HTTP request with a fake fetch. It checks checkpoint replay, grammar tools, historical aliases, and tool changes after a role switch without other extensions or network calls. Multi-extension request-hook compatibility is covered separately under `extensions/__tests__/integration/`.
