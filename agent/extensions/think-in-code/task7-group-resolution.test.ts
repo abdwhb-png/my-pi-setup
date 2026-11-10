@@ -25,7 +25,6 @@ const AVAILABLE: string[] = [
         "ask_user_question",
         "subagent",
         "todo",
-        "signal_loop_success",
         "write_plan",
         "edit_plan",
         "submit_plan",
@@ -70,7 +69,7 @@ describe("Task 7 think_* group resolution", () => {
     });
 
     it("resolves atlas-orchestrator @think (combined inspect + exec)", () => {
-        const atlasTools = "@inspect, @lens, @think, @docs, @memory-consult, safe_bash, todo, ask_user_question, subagent, signal_loop_success"
+        const atlasTools = "@inspect, @lens, @think, @docs, @memory-consult, safe_bash, todo, ask_user_question, subagent"
             .split(",")
             .map((s) => s.trim());
         const result = resolveToolAliases(atlasTools, AVAILABLE, GROUPS);
@@ -126,7 +125,7 @@ describe("Task 7 think_* group resolution", () => {
             GROUPS,
         );
         const askResult = resolveToolAliases(
-            ["@inspect", "@lens", "@web", "@docs", "@memory-consult", "@think-inspect", "ask_user_question", "subagent", "signal_loop_success"],
+            ["@inspect", "@lens", "@web", "@docs", "@memory-consult", "@think-inspect", "ask_user_question", "subagent"],
             AVAILABLE,
             GROUPS,
         );

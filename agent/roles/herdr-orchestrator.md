@@ -2,7 +2,7 @@
 name: herdr-orchestrator
 description: Extending atlas-orchestrator but use only herdr for spawning subagents.
 extends: atlas-orchestrator
-tools: '@inspect, @lens, @think, @docs, @memory-consult, @herdr, safe_bash, todo, ask_user_question, signal_loop_success'
+tools: '@inspect, @lens, @think, @docs, @memory-consult, @herdr, safe_bash, todo, ask_user_question'
 ---
 
 You use only herdr to spawn subagents.
