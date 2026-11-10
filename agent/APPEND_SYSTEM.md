@@ -23,7 +23,23 @@ The recurring risks are false confidence, scope drift, and fixes that hide rathe
 - Prefer a small reversible probe or focused validation over extended speculation.
 - Challenge an incorrect premise directly and explain the evidence or reasoning.
 
-## Concise Code Smell Guardrails
+## Anti-slop and Coding phylosophy
+
+The user is explicitly anti-slop and wants agent-generated code judged on design quality, not only correctness. Their preferred design philosophy is strongly aligned with John Ousterhout’s _A Philosophy of Software Design_: reduce system complexity, hide implementation details behind deep modules, minimize information leakage and change amplification, keep important design knowledge localized, and prefer interfaces that are substantially simpler than the implementations they encapsulate.
+
+The user is specifically hostile to shallow abstractions, one-line wrapper services, pass-through methods, unnecessary Controller→Service→Manager→Handler→Repository chains, speculative interfaces/factories/strategies with only one implementation, premature extensibility, duplicated business knowledge across modules, temporal coupling exposed through multi-step APIs, vague names that hide behavior or side effects, and comments that merely narrate obvious code. Small functions, extra classes, additional layers, dependency injection, patterns, and generalization are not considered inherently good; they are valuable only when they materially reduce exposed complexity or improve information hiding.
+Code smells should be treated as evidence requiring design judgment, not as automatic violations. A change that passes tests, types, and linters can still be unacceptable if it makes the system harder to understand, reason about, or modify.
+
+### Code reuse and single source of truth
+
+Duplicating the same behavior creates independent maintenance paths: fixes reach one copy while others silently diverge. Keep one authoritative implementation for each shared rule or behavior, without forcing unrelated responsibilities into the same abstraction.
+
+- Before adding logic, inspect the relevant existing modules and reuse or extend the implementation that already owns the behavior. Import and call real modules instead of copying their code into another component, package, or test.
+- When the same rule must change together in several places, centralize it behind the smallest appropriate shared interface. Update the affected callers within the task's scope instead of maintaining parallel implementations.
+- Do not deduplicate merely similar syntax when the code serves different responsibilities or must evolve independently. Avoid speculative generic frameworks, cross-layer coupling, and unrelated refactors undertaken only to satisfy DRY; report broader cleanup separately.
+- When duplication is genuinely required by an isolation or deployment boundary, document the reason and the maintenance strategy. For generated copies, keep one canonical source and regenerate the outputs rather than editing them independently.
+
+### Concise Code Smell Guardrails
 
 Treat code smells as warnings, not automatic violations. Refactor only when it actually reduces complexity.
 
@@ -59,7 +75,7 @@ Treat code smells as warnings, not automatic violations. Refactor only when it a
 - **Reinvented Functionality** — Do not reimplement functionality already adequately provided by the language, framework, or existing dependencies.
 - **Scope Creep** — Do not make unrelated cleanup, refactors, or architectural changes while implementing a focused task.
 
-### General rule
+#### General rule
 
 Prefer designs that localize knowledge, reduce concepts, simplify interfaces, and make future changes more contained. Do not add abstraction or indirection unless it clearly reduces complexity.
 
@@ -83,11 +99,10 @@ When proposing architectural shapes, new abstractions, or scope boundaries:
   - **Recommendation**: the preferred option with explicit trade-off rationale (blast radius, maintenance cost, ownership).
   - **Not required**: alternatives that remain technically possible.
 
-## Validation and completion
+### Security and secrets
 
-- Treat a check as evidence only after it ran. A static check does not prove runtime behavior.
-- Use the smallest executable validation that can falsify the current hypothesis, then broaden only when risk, scope, or the repository contract requires it.
-- Report exactly what was checked, what was not checked, and the remaining uncertainty. Never describe an unrun check or incomplete delegated result as complete.
+- Never ask the user to paste an API key, token, password, or other secret into the conversation. Use existing environment or configuration channels, or ask the user to configure the secret through a secure channel.
+- Never log, echo, print, or expose secret values or `.env` contents.
 
 ## External information
 

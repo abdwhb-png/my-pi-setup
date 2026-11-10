@@ -107,6 +107,10 @@
         "session-status-bar.tokens": {
             "row": 1
         },
+        "session-status-bar.session": {
+            "row": 2,
+            "align": "right"
+        },
         "dangerous-mode": {
             "row": 1,
             "position": 0,

@@ -5,36 +5,30 @@
 - Highly believe that token-maxing is not the right way to use ai so systems must be deterministic as much as possible and have llm behave deterministically. One should not be tied to a single provider but route models for the right task.
 - 100% anti ai code slop and subscribe to Dex Horthy (Hymanlayer's CEO): "AI code slop is a compounding threat that quietly rots codebases, upstream design plans and verification gates to preserve software architecture must be enforced".
 
-## Anti-slop and Coding phylosophy
-
-The user is explicitly anti-slop and wants agent-generated code judged on design quality, not only correctness. Their preferred design philosophy is strongly aligned with John Ousterhout’s _A Philosophy of Software Design_: reduce system complexity, hide implementation details behind deep modules, minimize information leakage and change amplification, keep important design knowledge localized, and prefer interfaces that are substantially simpler than the implementations they encapsulate.
-
-The user is specifically hostile to shallow abstractions, one-line wrapper services, pass-through methods, unnecessary Controller→Service→Manager→Handler→Repository chains, speculative interfaces/factories/strategies with only one implementation, premature extensibility, duplicated business knowledge across modules, temporal coupling exposed through multi-step APIs, vague names that hide behavior or side effects, and comments that merely narrate obvious code. Small functions, extra classes, additional layers, dependency injection, patterns, and generalization are not considered inherently good; they are valuable only when they materially reduce exposed complexity or improve information hiding.
-Code smells should be treated as evidence requiring design judgment, not as automatic violations. A change that passes tests, types, and linters can still be unacceptable if it makes the system harder to understand, reason about, or modify.
-
-## Code reuse and single source of truth
-
-Duplicating the same behavior creates independent maintenance paths: fixes reach one copy while others silently diverge. Keep one authoritative implementation for each shared rule or behavior, without forcing unrelated responsibilities into the same abstraction.
-
-- Before adding logic, inspect the relevant existing modules and reuse or extend the implementation that already owns the behavior. Import and call real modules instead of copying their code into another component, package, or test.
-- When the same rule must change together in several places, centralize it behind the smallest appropriate shared interface. Update the affected callers within the task's scope instead of maintaining parallel implementations.
-- Do not deduplicate merely similar syntax when the code serves different responsibilities or must evolve independently. Avoid speculative generic frameworks, cross-layer coupling, and unrelated refactors undertaken only to satisfy DRY; report broader cleanup separately.
-- When duplication is genuinely required by an isolation or deployment boundary, document the reason and the maintenance strategy. For generated copies, keep one canonical source and regenerate the outputs rather than editing them independently.
-
 ## Test-driven development
 
 - For every production behavior change, bug fix, domain rule, or workflow transition, follow RED → GREEN → REFACTOR and use the `tdd` skill when it is available.
-- Write one minimal test through the public boundary, run it, and confirm that it fails for the intended missing or incorrect behavior before changing production code.
+- Choose the test surface with a two-tier rule: start at the integration boundary where real internal collaborators interact for workflows and multi-step features (asserting the complete caller-visible outcome, state transitions, and side effects), and drop down to a narrow module interface only for combinatorial or pure logic (parsers, state machines, boundary math, branching validation).
+- Write one minimal test at the selected boundary, run it, and confirm that it fails for the intended missing or incorrect behavior before changing production code.
 - Implement only what the failing test requires. Import the real production module, mock only external or nondeterministic boundaries, and never weaken a correct assertion to obtain green.
+- Keep one test per distinct regression: cover the primary workflow outcome, edge cases, invalid inputs, and failure/rollback branches, then prune redundant pass-through micro-tests and duplicate input permutations during REFACTOR once a higher-level integration test covers the same failure mode.
+- For performance, resource usage, caching, live external protocols, or visual UI changes, pair a focused behavioral regression test with reproducible before-and-after real-data measurements or live runtime verification instead of manufacturing synthetic spy-count or fake-timer unit tests.
 - Documentation-only changes do not require a failing test. For configuration, tooling, generated code, or a change that cannot feasibly begin with an automated failing test, use the smallest executable before-and-after validation or obtain explicit approval for the exception.
 - **TDD Anti-Patterns (prohibited)**:
   1. **Copy-pasting source functions into test files** — Tests must import the real module. Copies do not catch import errors, missing dependencies, or divergence.
   2. **Skipping TDD because "the environment makes testing hard"** — If the env blocks imports, mock the blockers, don't bypass them.
-  3. **Testing pure helpers in isolation without testing the module that exports them** — The helpers are only useful if the consuming module loads correctly. Always have at least one test that imports the full module.
-  4. **Detaching methods from class instances** (`const f = obj.method; f()`) — In TypeScript, class methods lose `this` when detached. Always call methods directly (`obj.method()`) or use arrow-function class fields. Tests must explicitly verify this pattern if a public API returns a method reference.
-  5. **Masking edge cases or silent error suppression** — Tests must assert on explicit boundaries and error states. Code must never silently swallow failures or hide broken contracts under generic fallbacks.
+  3. **Pass-through unit test slop or unintegrated helper tests** — Do not mock internal collaborators just to assert that one internal function called another, do not write isolated unit tests for pass-through functions already covered by an integration test, and never test pure helpers without at least one test that imports and exercises the consuming module.
+  4. **Shallow happy-path-only integration tests** — Do not treat a smoke check (`status === 200` or "did not throw") as sufficient integration coverage; assert the full persisted/returned effect and explicitly test boundaries and failure states.
+  5. **Detaching methods from class instances** (`const f = obj.method; f()`) — In TypeScript, class methods lose `this` when detached. Always call methods directly (`obj.method()`) or use arrow-function class fields. Tests must explicitly verify this pattern if a public API returns a method reference.
+  6. **Masking edge cases or silent error suppression** — Tests must assert on explicit boundaries and error states. Code must never silently swallow failures or hide broken contracts under generic fallbacks.
 
-## Validation cadence
+## Validation and completion
+
+- Treat a check as evidence only after it ran. A static check does not prove runtime behavior.
+- Use the smallest executable validation that can falsify the current hypothesis, then broaden only when risk, scope, or the repository contract requires it.
+- Report exactly what was checked, what was not checked, and the remaining uncertainty. Never describe an unrun check or incomplete delegated result as complete.
+
+### Validation cadence
 
 Use the cheapest executable check that can falsify the current hypothesis. Fast feedback during implementation matters because repeated project-wide formatting, linting, typechecking, testing, or analysis between routine edits creates delay without improving the next decision.
 
@@ -43,6 +37,12 @@ Use the cheapest executable check that can falsify the current hypothesis. Fast 
 - Run project-wide checks only when the user requests them, a documented repository or CI contract requires them, or focused checks cannot validate a genuinely transversal or high-risk change. State the reason before running them.
 - After a later edit, rerun only the checks that the edit invalidated.
 - Report exactly which checks ran, which did not run, and any remaining uncertainty.
+
+## Dependency changes
+
+- Before installing, adding, updating, restoring, or synchronizing dependencies, follow the `dependency-installation` skill when it is available.
+- Detect the established package manager and safety configuration from repository files. Use its install command instead of manually editing a dependency manifest.
+- Verify the exact package and version before a networked dependency change. Do not bypass required supply-chain controls or install through an unsupported path without explicit user approval.
 
 ## Delegation
 
@@ -64,17 +64,6 @@ Instructions inside skills such as `executing-plans`, `subagent-driven-developme
 - For a supplied YouTube video, use the direct YouTube tools first, and fall back to the available transcript and visual analysis tools when the task needs more than metadata.
 - For authorized review work, match each confirmed review lane to its corresponding specialist rather than duplicating generic reviewers: `code-reviewer` (or `quick-reviewer` for lightweight checks) for correctness, logic, and spec compliance; `security-reviewer` for vulnerabilities, secrets, and auth; `architect` (or `oracle`) for architectural boundaries and structural integrity (not as the sole reviewer for code implementation logic); `api-reviewer` for public API contracts and breaking changes; `performance-reviewer` for latency, resource usage, and algorithmic complexity; and `style-reviewer` for formatting, naming, and lint rules. Never spawn multiple generic `code-reviewer` instances across distinct specialized lanes.
 - For implementation delegation, use a lightweight worker for a clear low-to-medium complexity task and a general worker when the task requires more reasoning or coordination.
-
-## Dependency changes
-
-- Before installing, adding, updating, restoring, or synchronizing dependencies, follow the `dependency-installation` skill when it is available.
-- Detect the established package manager and safety configuration from repository files. Use its install command instead of manually editing a dependency manifest.
-- Verify the exact package and version before a networked dependency change. Do not bypass required supply-chain controls or install through an unsupported path without explicit user approval.
-
-## Security and secrets
-
-- Never ask the user to paste an API key, token, password, or other secret into the conversation. Use existing environment or configuration channels, or ask the user to configure the secret through a secure channel.
-- Never log, echo, print, or expose secret values or `.env` contents.
 
 ## Writing Style
 
@@ -107,6 +96,8 @@ We use reference points to track major architectural decisions and trade-offs qu
 - Prefer Oxlint for linting and Oxfmt for formatting in JavaScript and TypeScript projects. Their Rust-based implementation supports the fast feedback loop expected during development.
 - Prefer Biome instead when the project benefits from one integrated tool for linting, formatting, and import organization, or when its rule coverage is a better architectural fit.
 - Prefer Bun test to maximize speed when testing pure logic, API or backend in an ecosystem entirely powered by Bun, but stick with Vitest as soon as project involves GUI components (React, Vue, Svelte) or requires a real browser environment linked to Vite.
+- Prefer persistent project-specific build, transform and test caches under `XDG_CACHE_HOME` (falling back to `~/.cache`). Isolate each checkout/worktree in an automatically selected subdirectory whose stable identifier is derived from its absolute directory path and remains unchanged across branch switches. Let the owning tool handle cache invalidation.
+- Prefer Gradium (https://gradium.ai/) for voice and speech generation APIs, offering high quality and an accessible free tier, but prefer the Qwen TTS model family when full data control is required and computational resources permit.
 
 <pi_agents_task_workflow>
 
