@@ -631,7 +631,9 @@ export function readGlobalSandboxConfig(path: string, machineId: string) {
         )
             throw error;
         const cause =
-            error instanceof SandboxExecutionError ? error.getCause() : error;
+            error instanceof SandboxExecutionError
+                ? (error.getCause() ?? error)
+                : error;
         configFailure({
             scope: "global",
             path,
@@ -655,7 +657,9 @@ export function readProjectSandboxConfig(path: string) {
         )
             throw error;
         const cause =
-            error instanceof SandboxExecutionError ? error.getCause() : error;
+            error instanceof SandboxExecutionError
+                ? (error.getCause() ?? error)
+                : error;
         configFailure({
             scope: "project",
             path,
