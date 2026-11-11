@@ -23,7 +23,11 @@ import {
     wrapPanelLines,
 } from "../_shared/ui/framed-panels.ts";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
-import { persistedCapabilityPath } from "./capabilities/authority.ts";
+import {
+    type SandboxConfigurationIssue,
+    persistedCapabilityPath,
+    formatSandboxConfigurationIssue,
+} from "./capabilities/authority.ts";
 import { installationReadPaths } from "./capabilities/installations.ts";
 import {
     dockerClientInspectionLines,
@@ -43,6 +47,8 @@ export const SANDBOX_SECTIONS = [
 ] as const;
 export type SandboxSection = (typeof SANDBOX_SECTIONS)[number];
 export type SandboxDashboardAction =
+    | "repair"
+    | "retry"
     | "mode"
     | "installations"
     | "docker configure"
@@ -56,7 +62,7 @@ export type SandboxDashboardSnapshot = {
     actionProblem?: string;
 } & (
     | { resolved: LoadSandboxConfigResult; error?: never }
-    | { resolved?: never; error: string }
+    | { resolved?: never; error: string; issue?: SandboxConfigurationIssue }
 );
 export interface SandboxDashboardSource {
     read(): SandboxDashboardSnapshot;
@@ -158,6 +164,7 @@ class SandboxDashboard implements Component {
         this.unsubscribe();
     }
     private async inspect(): Promise<void> {
+        if (!this.snapshot.resolved) return;
         const epoch = ++this.inspectionEpoch;
         this.doctor = { state: "loading" };
         let result: DoctorState;
@@ -219,25 +226,53 @@ class SandboxDashboard implements Component {
                         value: "Blocked",
                         tone: "danger",
                     },
+                    ...(this.snapshot.issue
+                        ? [
+                              {
+                                  label: "File",
+                                  value: persistedCapabilityPath(
+                                      this.snapshot.issue.path,
+                                  ),
+                              },
+                          ]
+                        : []),
                     {
                         label: "Problem",
-                        value: truncateToWidth(
-                            this.snapshot.error.split("\n")[0] ??
-                                this.snapshot.error,
-                            72,
-                        ),
+                        value:
+                            this.snapshot.issue?.detail ??
+                            truncateToWidth(
+                                this.snapshot.error.split("\n")[0] ??
+                                    this.snapshot.error,
+                                72,
+                            ),
                         tone: "danger",
                     },
                     {
                         label: "Next step",
-                        value: "Correct sandbox.json, then refresh.",
+                        value: "Review the cause below, then retry initialization.",
                     },
                 ],
                 items: [
                     {
                         label: "Configuration problem",
-                        details: [this.snapshot.error],
+                        details: [
+                            this.snapshot.issue
+                                ? formatSandboxConfigurationIssue(
+                                      this.snapshot.issue,
+                                  )
+                                : this.snapshot.error,
+                            "Checks requiring a valid policy have not run.",
+                        ],
                     },
+                    ...(this.snapshot.issue?.reason === "permissions"
+                        ? [
+                              {
+                                  label: "Repair permissions",
+                                  action: "repair" as const,
+                              },
+                          ]
+                        : []),
+                    { label: "Retry initialization", action: "retry" },
                     refreshItem,
                 ],
             };
@@ -333,6 +368,15 @@ class SandboxDashboard implements Component {
                 facts,
                 items: [
                     { label: "Change session mode", action: "mode" },
+                    ...(runtime.state === "error" ||
+                    runtime.state === "uninitialized"
+                        ? [
+                              {
+                                  label: "Retry initialization",
+                                  action: "retry" as const,
+                              },
+                          ]
+                        : []),
                     refreshItem,
                     {
                         label: "Technical details",

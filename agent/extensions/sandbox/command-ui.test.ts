@@ -280,7 +280,7 @@ describe("sandbox dashboard", () => {
         view.handleInput?.("\x1b[B");
         view.handleInput?.("\r");
         expect(text(view)).toContain("Blocked");
-        expect(text(view)).toContain("Correct sandbox.json");
+        expect(text(view)).toContain("Retry initialization");
         view.handleInput?.("\x1b[A");
         view.handleInput?.("\r");
         expect(text(view)).toContain("Invalid filesystem.allowWrite");
@@ -539,4 +539,23 @@ describe("action-oriented navigation", () => {
         expect(screen).not.toContain("Sections");
         expect(screen).not.toContain("Tab panes");
     });
+});
+
+it("offers recovery without a resolved policy and keeps the complete file path", async () => {
+ const f=fixture();const view=await f.opened;
+ f.change({runtime:{state:"error"},error:"Unsafe configuration",issue:{scope:"global",path:"/fixture/long configuration directory/sandbox.json",reason:"permissions",detail:"Group writes are forbidden",mode:0o664}});
+ view.handleInput?.("\x1b[C");
+ expect(text(view)).toContain("Repair permissions");
+ expect(text(view)).toContain("Retry initialization");
+ view.handleInput?.("\x1b[13u");
+ expect(text(view)).toContain("/fixture/long configuration directory/sandbox.json");
+ expect(text(view)).toContain("Group writes are forbidden");
+ for(const width of [40,60,100]) expect(view.render(width).every(line=>visibleWidth(line)<=width)).toBe(true);
+});
+
+it("offers retry when configuration is valid but initialization failed",async()=>{
+ const f=fixture();const view=await f.opened;
+ f.change({...f.data.snapshot,runtime:{state:"error"}});
+ view.handleInput?.("\x1b[B");
+ expect(text(view)).toContain("Retry initialization");
 });

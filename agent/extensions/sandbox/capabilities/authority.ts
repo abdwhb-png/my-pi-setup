@@ -1,4 +1,9 @@
 import {
+    closeSync,
+    constants,
+    fchmodSync,
+    fstatSync,
+    openSync,
     existsSync,
     lstatSync,
     readFileSync,
@@ -22,6 +27,7 @@ import {
     validateGlobalInstallations,
     parseInstallationSelection,
 } from "./installations.ts";
+import { withSandboxPublicationLockSync } from "./publication-lock.ts";
 export { localMachineId } from "../../_shared/sandbox-runtime/machine-identity.ts";
 
 export {
@@ -141,26 +147,175 @@ function ordinaryFilesystemFields(
     } = filesystem;
     return ordinary;
 }
-function safeFile(path: string, description: string): void {
-    const metadata = lstatSync(path);
-    const uid = process.getuid?.();
+export interface SandboxConfigurationIssue {
+    scope: "global" | "project";
+    path: string;
+    reason: "permissions" | "owner" | "file-type" | "read" | "json" | "schema";
+    detail: string;
+    mode?: number;
+    uid?: number;
+    identity?: string;
+}
+export function sandboxConfigurationIssue(
+    error: unknown,
+): SandboxConfigurationIssue | undefined {
     if (
-        !metadata.isFile() ||
-        metadata.isSymbolicLink() ||
-        (metadata.mode & 0o022) !== 0 ||
-        (uid !== undefined && metadata.uid !== uid)
+        typeof error !== "object" ||
+        error === null ||
+        !("configurationIssue" in error)
     )
-        invalid(`Untrusted ${description}`);
+        return undefined;
+    return isConfigurationIssue(error.configurationIssue)
+        ? error.configurationIssue
+        : undefined;
+}
+function isConfigurationIssue(
+    value: unknown,
+): value is SandboxConfigurationIssue {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "scope" in value &&
+        (value.scope === "global" || value.scope === "project") &&
+        "path" in value &&
+        typeof value.path === "string" &&
+        "detail" in value &&
+        typeof value.detail === "string" &&
+        "reason" in value &&
+        typeof value.reason === "string" &&
+        [
+            "permissions",
+            "owner",
+            "file-type",
+            "read",
+            "json",
+            "schema",
+        ].includes(value.reason) &&
+        (!("mode" in value) || typeof value.mode === "number") &&
+        (!("uid" in value) || typeof value.uid === "number") &&
+        (!("identity" in value) || typeof value.identity === "string")
+    );
+}
+export function formatSandboxConfigurationIssue(
+    issue: SandboxConfigurationIssue,
+): string {
+    const quotedPath = "'" + issue.path.replace(/'/g, "'\"'\"'") + "'";
+    const action =
+        issue.reason === "permissions"
+            ? ` Use /sandbox repair to review a targeted permission repair. Manual alternative: chmod ${issue.scope === "global" ? "go-w" : "o-w"} ${quotedPath}; then /sandbox retry.`
+            : " Correct this file, then use /sandbox retry.";
+    return `Cannot load ${issue.scope} sandbox configuration: ${issue.path}. ${issue.detail}${action}`;
+}
+function configFailure(issue: SandboxConfigurationIssue): never {
+    const detail = formatSandboxConfigurationIssue(issue);
+    throw Object.assign(
+        new SandboxExecutionError("invalid-policy", {
+            cause: new Error(detail),
+            diagnostic: detail,
+        }),
+        { configurationIssue: issue },
+    );
+}
+function fileIssue(
+    path: string,
+    scope: SandboxConfigurationIssue["scope"],
+): SandboxConfigurationIssue | undefined {
+    const m = lstatSync(path);
+    const mode = m.mode & 0o777;
+    const base = {
+        path,
+        scope,
+        mode,
+        uid: m.uid,
+        identity: `${m.dev}:${m.ino}:${m.mode}:${m.size}:${m.mtimeMs}:${m.ctimeMs}`,
+    };
+    if (!m.isFile() || m.isSymbolicLink())
+        return {
+            ...base,
+            reason: "file-type",
+            detail: "Expected a regular file, not a symbolic link or directory.",
+        };
+    if (process.getuid && m.uid !== process.getuid())
+        return {
+            ...base,
+            reason: "owner",
+            detail: `Owner UID ${m.uid} differs from current UID ${process.getuid()}.`,
+        };
+    const forbidden = scope === "global" ? 0o022 : 0o002;
+    if (mode & forbidden)
+        return {
+            ...base,
+            reason: "permissions",
+            detail: `Mode 0${mode.toString(8)} permits ${scope === "global" ? "group or public" : "public"} writes; expected no such write permissions.`,
+        };
+    return undefined;
+}
+export function repairSandboxConfigPermissions(
+    issue: SandboxConfigurationIssue,
+    globalPath: string,
+    projectPath: string,
+): void {
+    const path = issue.scope === "global" ? globalPath : projectPath;
+    if (path !== issue.path || issue.reason !== "permissions")
+        throw new Error(
+            "This configuration problem cannot be repaired automatically.",
+        );
+    withSandboxPublicationLockSync(globalPath, () => {
+        const current = fileIssue(path, issue.scope);
+        if (
+            !current ||
+            current.reason !== "permissions" ||
+            current.identity !== issue.identity
+        )
+            throw new Error(
+                "Configuration changed while reviewing permissions. Refresh and review again.",
+            );
+        const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+            const m = fstatSync(fd);
+            if (
+                `${m.dev}:${m.ino}:${m.mode}:${m.size}:${m.mtimeMs}:${m.ctimeMs}` !==
+                    issue.identity ||
+                !m.isFile() ||
+                !process.getuid ||
+                m.uid !== process.getuid()
+            )
+                throw new Error(
+                    "Configuration changed before repair; no permissions were modified.",
+                );
+            fchmodSync(
+                fd,
+                m.mode & 0o7777 & ~(issue.scope === "global" ? 0o022 : 0o002),
+            );
+        } finally {
+            closeSync(fd);
+        }
+    });
 }
 function readJson(path: string, description: string): unknown {
+    const scope = description.startsWith("global") ? "global" : "project";
     try {
-        safeFile(path, description);
-        return JSON.parse(readFileSync(path, "utf8"));
+        const issue = fileIssue(path, scope);
+        if (issue) configFailure(issue);
+        const bytes = readFileSync(path, "utf8");
+        try {
+            return JSON.parse(bytes);
+        } catch {
+            configFailure({
+                scope,
+                path,
+                reason: "json",
+                detail: "Invalid JSON. Edit the file to correct its syntax; configuration contents are hidden.",
+            });
+        }
     } catch (error) {
         if (error instanceof SandboxExecutionError) throw error;
-        invalid(
-            `Could not parse ${description}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        configFailure({
+            scope,
+            path,
+            reason: "read",
+            detail: `File could not be read (${typeof error === "object" && error && "code" in error ? String(error.code) : "I/O error"}).`,
+        });
     }
 }
 function validateLayer(
@@ -328,7 +483,7 @@ function validateLayer(
     });
     return layer as SandboxConfigLayer;
 }
-export function readGlobalSandboxConfig(
+function readGlobalSandboxConfigValue(
     path: string,
     machineId: string,
 ): GlobalSandboxConfig | undefined {
@@ -341,9 +496,12 @@ export function readGlobalSandboxConfig(
             error.code === "ENOENT"
         )
             return undefined;
-        invalid(
-            `Could not inspect global sandbox.json: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        configFailure({
+            scope: "global",
+            path,
+            reason: "read",
+            detail: `Could not inspect configuration: ${error instanceof Error ? error.message : String(error)}`,
+        });
     }
     const root = record(
         readJson(path, "global sandbox.json"),
@@ -381,7 +539,7 @@ export function readGlobalSandboxConfig(
     } = root;
     return { version: 2, machineId, ...validateLayer(layer, "global") };
 }
-export function readProjectSandboxConfig(
+function readProjectSandboxConfigValue(
     path: string,
 ): SandboxConfigLayer | undefined {
     try {
@@ -393,9 +551,12 @@ export function readProjectSandboxConfig(
             error.code === "ENOENT"
         )
             return undefined;
-        invalid(
-            `Could not inspect project sandbox.json: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        configFailure({
+            scope: "project",
+            path,
+            reason: "read",
+            detail: `Could not inspect configuration: ${error instanceof Error ? error.message : String(error)}`,
+        });
     }
     const root = record(
         readJson(path, "project sandbox.json"),
@@ -457,4 +618,52 @@ export function canonicalProjectPath(
             ? resolve(expanded)
             : resolve(projectRoot, expanded),
     );
+}
+
+export function readGlobalSandboxConfig(path: string, machineId: string) {
+    try {
+        return readGlobalSandboxConfigValue(path, machineId);
+    } catch (error) {
+        if (
+            sandboxConfigurationIssue(error) ||
+            (error instanceof SandboxExecutionError &&
+                error.code !== "invalid-policy")
+        )
+            throw error;
+        const cause =
+            error instanceof SandboxExecutionError ? error.getCause() : error;
+        configFailure({
+            scope: "global",
+            path,
+            reason: "schema",
+            detail:
+                cause instanceof Error
+                    ? cause.message
+                    : "Invalid configuration schema.",
+        });
+    }
+}
+
+export function readProjectSandboxConfig(path: string) {
+    try {
+        return readProjectSandboxConfigValue(path);
+    } catch (error) {
+        if (
+            sandboxConfigurationIssue(error) ||
+            (error instanceof SandboxExecutionError &&
+                error.code !== "invalid-policy")
+        )
+            throw error;
+        const cause =
+            error instanceof SandboxExecutionError ? error.getCause() : error;
+        configFailure({
+            scope: "project",
+            path,
+            reason: "schema",
+            detail:
+                cause instanceof Error
+                    ? cause.message
+                    : "Invalid configuration schema.",
+        });
+    }
 }

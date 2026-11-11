@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
@@ -60,4 +61,29 @@ test.each(["sandbox.json", "sandbox.json.migration", "config/sandbox.json.migrat
         if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = previous;
     }
+});
+
+test("a trusted Git worktree under umask 0002 loads its group-writable configuration unchanged",()=>{
+ const f=fixture();writeFileSync(f.projectPath,JSON.stringify({network:{allowedDomains:[]}}));
+ execFileSync("git",["init","-q",f.cwd]);execFileSync("git",["-C",f.cwd,"add","."]);
+ execFileSync("git",["-C",f.cwd,"-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","-qm","fixture"]);
+ const worktree=join(f.cwd,"..","checkout");
+ execFileSync("sh",["-c",'umask 002; exec git -C "$1" worktree add --detach "$2" HEAD',"fixture",f.cwd,worktree],{stdio:"pipe"});
+ const path=join(worktree,".pi/config/sandbox.json");const before=readFileSync(path,"utf8");expect(statSync(path).mode & 0o777).toBe(0o664);
+ new ProjectTrustStore(f.agentDir).set(worktree,true);
+ expect(loadSandboxConfig(worktree,{agentDir:f.agentDir,projectTrusted:true}).source).toBe("project-config");
+ expect(readFileSync(path,"utf8")).toBe(before);expect(statSync(path).mode & 0o777).toBe(0o664);
+});
+
+test("real Pi repair confirms a metadata change but keeps malformed configuration blocked",async()=>{
+ const f=fixture();const path=join(f.agentDir,"config/sandbox.json");const body='{"environment":{"variables":{"TOKEN":"fixture-private"}}';writeFileSync(path,body);chmodSync(path,0o664);
+ const previous=process.env.PI_CODING_AGENT_DIR;process.env.PI_CODING_AGENT_DIR=f.agentDir;
+ try{
+ const session=await createTestSession({cwd:f.cwd,extensionFactories:[sandboxExtension],mockUI:{confirm:true}});
+ try{
+ await session.session.prompt("/sandbox repair");
+ expect(session.events.uiCallsFor("confirm")).toHaveLength(1);expect(statSync(path).mode & 0o777).toBe(0o644);expect(readFileSync(path,"utf8")).toBe(body);
+ const notices=session.events.uiCallsFor("notify").map(c=>String(c.args[0]));expect(notices.some(m=>m.includes("Invalid JSON")&&m.includes(path))).toBe(true);expect(notices.join("\n")).not.toContain("fixture-private");expect(notices.join("\n")).not.toContain("initialization completed");
+ }finally{session.dispose();}
+ }finally{if(previous===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=previous;}
 });

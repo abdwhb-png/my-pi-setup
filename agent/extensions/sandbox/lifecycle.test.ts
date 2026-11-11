@@ -11,7 +11,7 @@ import {
     mock,
     spyOn,
 } from "bun:test";
-import { renameSync } from "node:fs";
+import { chmodSync,statSync,readFileSync, renameSync } from "node:fs";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import {
     DefaultResourceLoader,
@@ -690,6 +690,21 @@ describe("sandbox lifecycle", () => {
         };
         expect(candidate.config.network.allowedDomains).toEqual(["after.example"]);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("repairs configuration through the public command and resumes execution after confirmation", async()=>{
+        await writeGlobalConfig({docker:{allowed:false}});
+        const path=join(isolatedAgentDirectory,"config/sandbox.json");const before=readFileSync(path,"utf8");chmodSync(path,0o664);
+        const registered=registerSandbox();const ctx=context(cwd,undefined,"repair-session",true,{confirm:[false,true]});
+        await registered.handlers.get("session_start")?.({},ctx);
+        await sandboxCommand(registered).handler("doctor",ctx);
+        expect(notifyCalls(ctx).some(([message])=>message.includes(path)&&message.includes("Mode 0664"))).toBe(true);
+        await sandboxCommand(registered).handler("repair",ctx);
+        expect(statSync(path).mode & 0o777).toBe(0o664);
+        await sandboxCommand(registered).handler("repair",ctx);
+        expect(statSync(path).mode & 0o777).toBe(0o644);expect(readFileSync(path,"utf8")).toBe(before);
+        await expect(runOrdinaryBash(cwd,"printf repaired-runtime")).resolves.toBe("repaired-runtime");
+        await registered.handlers.get("session_shutdown")?.({},ctx);
     });
 
     it("blocks direct invalid policy, accepts its correction, and rebuilds after the config is removed", async () => {

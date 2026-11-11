@@ -76,7 +76,7 @@ describe('active sandbox files', () => {
     it('rejects invalid active files and never falls back to host', () => {
         writeGlobal({ mode: 'sandbox' }); writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ mode: 'host' }));
         expect(() => load()).toThrow('explicit current-session');
-        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), '{'); expect(() => load()).toThrow('Could not parse project');
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), '{'); expect(() => load()).toThrow('Invalid JSON');
     });
     it('blocks admission while a migration marker remains', () => {
         writeGlobal({});

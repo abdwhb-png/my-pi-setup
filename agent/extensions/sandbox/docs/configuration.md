@@ -264,3 +264,13 @@ The supplied development profile sets `systemLibraries: true`. Preview resolves 
 Exact shared-library selections beneath these roots are replaced, including references to versions removed by system upgrades. Other bindings and local configuration are preserved. Preview lists removed selections; apply rechecks directory identities and permissions and backs up the authority. Adding libraries inside an authorized directory requires no rediscovery. Profiles omitting the option keep their existing behavior; omitting it does not revoke previously published authority. Remove the named installation explicitly to revoke it, or narrow project selection.
 
 Real loader qualification is CI-only: the installed-tools contract executes a project-owned ELF requiring `libatomic.so.1` and verifies that system libraries cannot be opened for writing. Host metadata inspection alone does not qualify runtime execution.
+
+## Configuration file safety and recovery
+
+Project configuration requires saved Pi project trust; session-only approval does not authorize it. A regular project `sandbox.json` owned by the current user may be group-writable (for example, `0664` after a Git checkout with umask `0002`). Public write permission remains forbidden. Global configuration additionally forbids group writes. Both readers reject symbolic links and foreign ownership. Reading configuration never changes its permissions or contents, and project selections remain bounded by global authorizations.
+
+`/sandbox doctor` and the dashboard report the failing file, scope, cause and available recovery when configuration cannot load. Policy-dependent checks have not run in that state. JSON syntax errors never disclose configuration contents. Schema errors identify the source file.
+
+Use **Repair permissions** or `/sandbox repair` to review a targeted removal of forbidden write bits. The interactive confirmation shows the file and old/new modes. Repair refuses changed files, links and foreign ownership; it never changes ownership, directories or JSON content. Without interactive confirmation, no repair is performed. If another configuration problem remains after hardening, the sandbox stays blocked and reports it.
+
+Use **Retry initialization** or `/sandbox retry` after an external correction. A successful repair also revalidates configuration and attempts initialization through the ordinary runtime transition. Diagnostic refresh is read-only and does not itself initialize a runtime. Recovery never falls back to host execution.

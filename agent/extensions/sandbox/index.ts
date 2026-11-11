@@ -83,6 +83,8 @@ import {
     readGlobalSandboxConfig,
     readProjectSandboxConfig,
     sandboxConfigPath,
+    sandboxConfigurationIssue,
+    repairSandboxConfigPermissions,
     type SandboxConfigLayer,
     type SandboxMode,
 } from "./capabilities/authority.ts";
@@ -2143,6 +2145,8 @@ export function createSandboxExtension(
             "Inspect agent shell policy, run a command in Sandbox, or configure Docker access",
         getArgumentCompletions: (prefix: string) => {
             const values = [
+                "repair",
+                "retry",
                 "run",
                 "status",
                 "mode",
@@ -2179,6 +2183,90 @@ export function createSandboxExtension(
                 return;
             }
             let arg = args.trim().toLowerCase();
+            if (arg === "repair" || arg === "retry") {
+                const epoch = modeSessionEpoch;
+                const assertCurrent = () => {
+                    if (
+                        epoch !== modeSessionEpoch ||
+                        !ownsSandboxRuntime(runtimeOwner)
+                    )
+                        throw new Error(
+                            "Sandbox session changed during recovery. Open /sandbox again.",
+                        );
+                };
+                try {
+                    try {
+                        loadShell(ctx);
+                    } catch (error) {
+                        const issue = sandboxConfigurationIssue(error);
+                        if (
+                            arg !== "repair" ||
+                            !issue ||
+                            issue.reason !== "permissions"
+                        )
+                            throw error;
+                        if (
+                            issue.scope === "project" &&
+                            !isProjectConfigTrusted(
+                                ctx.cwd,
+                                getAgentDir(),
+                                ctx.isProjectTrusted(),
+                            )
+                        )
+                            throw new Error(
+                                "Project repair requires saved project trust. Use /trust first.",
+                            );
+                        const nextMode =
+                            (issue.mode ?? 0) &
+                            ~(issue.scope === "global" ? 0o022 : 0o002);
+                        if (!ctx.hasUI)
+                            throw new Error(
+                                configurationErrorMessage(error) +
+                                    " Permission repair requires an interactive confirmation.",
+                            );
+                        if (
+                            !(await ctx.ui.confirm(
+                                "Repair configuration permissions?",
+                                `${issue.path}\nMode 0${issue.mode?.toString(8)} → 0${nextMode.toString(8)}\nOnly excess write permissions will be removed. File contents and ownership are preserved.`,
+                            ))
+                        )
+                            return;
+                        if (
+                            issue.scope === "project" &&
+                            !isProjectConfigTrusted(
+                                ctx.cwd,
+                                getAgentDir(),
+                                ctx.isProjectTrusted(),
+                            )
+                        )
+                            throw new Error(
+                                "Project trust changed before repair.",
+                            );
+                        assertCurrent();
+                        repairSandboxConfigPermissions(
+                            issue,
+                            sandboxConfigPath(getAgentDir()),
+                            extensionConfigPath("sandbox", {
+                                scope: "project",
+                                cwd: ctx.cwd,
+                            }),
+                        );
+                    }
+                    assertCurrent();
+                    const resolved = loadShell(ctx);
+                    if (!(await reconfigureServices(ctx, resolved)))
+                        throw new Error(
+                            "Configuration is valid, but sandbox initialization did not complete. Use /sandbox doctor.",
+                        );
+                    ctx.ui.notify("Sandbox initialization completed.", "info");
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Sandbox configuration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                }
+                return;
+            }
             if (
                 ctx.mode === "tui" &&
                 (!arg ||
@@ -2202,6 +2290,7 @@ export function createSandboxExtension(
                             return {
                                 runtime,
                                 error: configurationErrorMessage(error),
+                                issue: sandboxConfigurationIssue(error),
                                 actionProblem,
                             };
                         }
@@ -2878,7 +2967,7 @@ export function createSandboxExtension(
                     return;
                 }
                 ctx.ui.notify(
-                    `Usage: /sandbox [run <command> | status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-${resolved.breakGlassMaxMinutes}m]]]`,
+                    `Usage: /sandbox [repair | retry | run <command> | status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-${resolved.breakGlassMaxMinutes}m]]]`,
                     "error",
                 );
             } catch (error) {
