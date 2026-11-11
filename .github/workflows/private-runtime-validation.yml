@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/zerobox
-          ref: 05118dd83ba581d0361df4d5915b76862a8d0d65
+          ref: 74b2bab4ea02a3a8f611ebebf866bb9778016dfc
           path: projects/zerobox
       - uses: actions/setup-node@v4
         with:

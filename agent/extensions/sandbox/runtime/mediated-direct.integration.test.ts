@@ -1,53 +1,53 @@
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
-import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { expect, test } from 'bun:test';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ProjectTrustStore } from '@earendil-works/pi-coding-agent';
+import { writeFixtureFileAsync as writeFile } from '../../_shared/testing/config-fixture.ts';
 
-import { createBashOperations } from "../../_shared/command-execution/exec.ts";
-import { localMachineId } from "../capabilities/authority.ts";
-import { loadSandboxConfig } from "../index.ts";
+import { createBashOperations } from '../../_shared/command-execution/exec.ts';
+import { localMachineId } from '../capabilities/authority.ts';
+import { loadSandboxConfig } from '../index.ts';
 import {
     candidateBackendOptions,
     hasCandidateRuntime,
     hostToolReadClosure,
-} from "./integration-fixtures.ts";
+} from './integration-fixtures.ts';
 import {
     createPrivateTempLease,
     recoverStalePrivateTempLeases,
-} from "./private-temp.ts";
-import { createSandboxService } from "./service.ts";
-import { PRIVATE_BASH } from "./shell-baseline.ts";
-import { createZeroboxBackend } from "./zerobox-backend.ts";
+} from './private-temp.ts';
+import { createSandboxService } from './service.ts';
+import { PRIVATE_BASH } from './shell-baseline.ts';
+import { createZeroboxBackend } from './zerobox-backend.ts';
 
 const projects = [
-    { name: "alpha", domain: "example.com", url: "https://example.com/" },
+    { name: 'alpha', domain: 'example.com', url: 'https://example.com/' },
     {
-        name: "beta",
-        domain: "registry.npmjs.org",
-        url: "https://registry.npmjs.org/-/ping",
+        name: 'beta',
+        domain: 'registry.npmjs.org',
+        url: 'https://registry.npmjs.org/-/ping',
     },
 ] as const;
 
 test.skipIf(
-    process.platform !== "linux" ||
-        process.env.PI_SANDBOX_MEDIATED_DIRECT_CONTRACT !== "1" ||
+    process.platform !== 'linux' ||
+        process.env.PI_SANDBOX_MEDIATED_DIRECT_CONTRACT !== '1' ||
         !hasCandidateRuntime(),
 )(
-    "two projects receive direct TCP only for their own domain grant",
+    'two projects receive direct TCP only for their own domain grant',
     async () => {
-        const root = await mkdtemp("/var/tmp/pi-direct-");
-        const leaseRoot = await mkdtemp("/var/tmp/z-");
-        const agentDir = join(root, "agent");
+        const root = await mkdtemp('/var/tmp/pi-direct-');
+        const leaseRoot = await mkdtemp('/var/tmp/z-');
+        const agentDir = join(root, 'agent');
         const machineId = localMachineId();
         try {
             await mkdir(agentDir, { recursive: true, mode: 0o700 });
             const curlRead = [
-                ...(await hostToolReadClosure("/usr/bin/curl")),
-                "/etc/ssl/certs/ca-certificates.crt",
+                ...(await hostToolReadClosure('/usr/bin/curl')),
+                '/etc/ssl/certs/ca-certificates.crt',
             ];
             await writeFile(
-                join(agentDir, "config", "sandbox.json"),
+                join(agentDir, 'config', 'sandbox.json'),
                 JSON.stringify({
                     version: 2,
                     machineId,
@@ -65,12 +65,12 @@ test.skipIf(
 
             for (const project of projects) {
                 const cwd = join(root, project.name);
-                await mkdir(join(cwd, ".pi"), {
+                await mkdir(join(cwd, '.pi'), {
                     recursive: true,
                     mode: 0o700,
                 });
                 await writeFile(
-                    join(cwd, ".pi", "config", "sandbox.json"),
+                    join(cwd, '.pi', 'config', 'sandbox.json'),
                     JSON.stringify({
                         network: {
                             allowedDomains: [project.domain],
@@ -115,11 +115,27 @@ test.skipIf(
                         prepareSpawn: ({ command }) =>
                             service.prepareBash({
                                 file: PRIVATE_BASH,
-                                args: ["-c", command],
+                                args: ['-c', command],
                                 cwd,
                             }),
                     });
-                    let output = "";
+                    let identity = '';
+                    const identityResult = await operations.exec(
+                        'id -u; id -g',
+                        cwd,
+                        {
+                            timeout: 10,
+                            onData: (chunk) => {
+                                identity += chunk.toString();
+                            },
+                        },
+                    );
+                    expect(identityResult.exitCode, identity).toBe(0);
+                    expect(identity.trim().split('\n')).toEqual([
+                        String(process.geteuid!()),
+                        String(process.getegid!()),
+                    ]);
+                    let output = '';
                     const allowed = await operations.exec(
                         `/usr/bin/curl --noproxy '*' --fail --silent --show-error --max-time 15 ${JSON.stringify(project.url)} >/dev/null`,
                         cwd,
@@ -135,7 +151,7 @@ test.skipIf(
                         `${project.name} direct request: ${output}`,
                     ).toBe(0);
 
-                    output = "";
+                    output = '';
                     const denied = await operations.exec(
                         `/usr/bin/curl --noproxy '*' --fail --silent --show-error --max-time 3 ${JSON.stringify(other.url)} >/dev/null`,
                         cwd,
