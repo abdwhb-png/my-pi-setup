@@ -159,3 +159,15 @@ Keep these contracts manual and opt-in:
 - `PI_SANDBOX_DEV_WORKFLOW_CWD` replays a developer's real workflow from a supplied checkout. It must not run in generic CI because it intentionally executes that checkout's commands.
 - `PI_BROWSER_TOOLS_RUNTIME_CONTRACT` needs a live native Agent Browser installation and a user-visible browser grant.
 - `PI_HERDR_RUNTIME_CONTRACT` needs a live Herdr pane and its current pane identity.
+
+### Mediated user identity release, 2026-11-11
+
+Runtime `native-42955556919-1` preserves the caller's effective UID/GID in mediated-direct setup instead of mapping the caller to namespace root. Its single-entry mappings add no users or groups. Bubblewrap capability removal, nested-user-namespace restrictions, seccomp, no-new-privileges and network mediation remain enforced. The change is generic; project launchers need no sandbox-specific logic.
+
+The engine source is `74b2bab4ea02a3a8f611ebebf866bb9778016dfc`; the engine/helper SHA-256 is `df20857259694e47584699e7ba677692c22f2e8bedcb146a86eb103ceec17a55`. [Engine qualification](https://github.com/abdwhb-png/zerobox/actions/runs/42955027288) passed 740 library tests and 198 kernel integrations, with one library test and four integrations explicitly ignored. The identity regression first failed against the previous installed engine with UID `0`, then passed with the corrected engine alongside all eight focused mediated-TCP tests.
+
+[Pi qualification](https://github.com/abdwhb-png/my-pi-setup/actions/runs/42955556919) on source `7a55e9d4bc305fbe0803098825ee5171c971f8cb` passed type checks, boundary regressions, explicit candidate contracts and atomic installation followed by a fresh Pi session. It also verifies the real sandbox service preserves caller identity with mediated TCP enabled. This qualification exposed and corrected a configuration-error diagnostic loss when a validator supplied a diagnostic without a nested cause; the six existing failing cases passed after that correction.
+
+The exact qualified archive was verified and installed through the existing atomic operator. Disposable local installation and rollback passed before activation. In the Ownertek localization worktree, the installed sandbox service returned UID/GID `1000:1000` and successfully executed the read-only `./sail ps` command. Global and project sandbox configurations remained byte-identical. This smoke check does not qualify service startup, migrations or the project's test suite.
+
+The preceding runtime is retained. Local activation evidence and a guarded Bun rollback script live under `~/.pi/deliveries/zerobox-identity-42955556919/`. Restart existing Pi sessions to load the newly installed engine; their already-pinned runtimes are not replaced in place. No binary or package release was published.
