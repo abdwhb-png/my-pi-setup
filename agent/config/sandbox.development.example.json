@@ -1,4 +1,5 @@
 {
+    "systemLibraries": true,
     "environment": {
         "variables": {
             "XDG_CACHE_HOME": "~/.cache/pi/dev-tools/xdg",

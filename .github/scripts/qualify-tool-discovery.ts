@@ -25,6 +25,7 @@ const profile = json(
     join(source, 'agent/config/sandbox.development.example.json'),
 );
 const discovered = resolveDevelopmentTools(profile.tools, {
+    systemLibraries: profile.systemLibraries,
     variables: object(profile.environment).variables,
 });
 writeJson(join(evidence, 'tool-discovery.json'), {
@@ -60,6 +61,7 @@ for (const tool of discovered.tools) {
 }
 discovered.assertUnchanged();
 const retained = resolveDevelopmentTools(profile.tools, {
+    systemLibraries: profile.systemLibraries,
     existing: discovered.installations,
     path: join(evidence, 'no-ambient-tools'),
 });
@@ -108,6 +110,7 @@ for (const [command, args, marker] of checks) {
     );
 }
 const absent = resolveDevelopmentTools(profile.tools, {
+    systemLibraries: profile.systemLibraries,
     path: join(evidence, 'missing-bin'),
 });
 assert.equal(

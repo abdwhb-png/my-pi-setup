@@ -61,6 +61,8 @@ export function configureSandbox(args: string[]): number {
             console.log(
                 `Tool ${tool.command}: ${tool.version} at ${tool.executable} (${tool.source})`,
             );
+        for (const path of setup.discovery.removedLibraryFiles)
+            console.log(`Replace exact library selection: ${path}`);
         for (const item of setup.unavailable)
             console.log(`Unavailable: ${item.name}: ${item.reason}`);
         const environment = setup.next.environment as {

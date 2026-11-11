@@ -270,7 +270,7 @@ export async function installBundle(
     let resolvedBindings: Record<string, unknown> | undefined;
     if (existsSync(profilePath)) {
         const profile = json(profilePath);
-        if (profile.tools !== undefined) {
+        if (profile.tools !== undefined || profile.systemLibraries === true) {
             const { resolveDevelopmentTools } =
                 await import('../../extensions/sandbox/development-tools.ts');
             const storedPath = join(root, 'agent/config/setup-bindings.json');
@@ -295,6 +295,7 @@ export async function installBundle(
             );
             discovery = await setupStep(options.progress, 'tools', () =>
                 resolveDevelopmentTools(profile.tools, {
+                    systemLibraries: profile.systemLibraries,
                     variables: object(profile.environment ?? {}).variables,
                     existing: stored,
                     overrides: { ...declarations, ...supplied },

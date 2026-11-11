@@ -24,6 +24,11 @@ import {
     executableDependencies,
     executableLibraryDirectories,
 } from "./executable-inspection.ts";
+import {
+    discoverSystemLibraries,
+    reconcileSystemLibraries,
+    systemLoaderAliases,
+} from "./system-libraries.ts";
 
 export interface DiscoveredTool {
     name: string;
@@ -35,6 +40,7 @@ export interface DiscoveredTool {
 export interface ToolDiscovery {
     installations: GlobalInstallations;
     tools: DiscoveredTool[];
+    removedLibraryFiles: string[];
     unavailable: { name: string; reason: string }[];
     assertUnchanged(): void;
 }
@@ -85,6 +91,7 @@ function firstExecutable(candidates: string[]): string | undefined {
 export function resolveDevelopmentTools(
     requirements: unknown,
     options: {
+        systemLibraries?: unknown;
         overrides?: unknown;
         existing?: unknown;
         rediscover?: boolean;
@@ -102,8 +109,13 @@ export function resolveDevelopmentTools(
             ]),
         ),
     );
+    if (
+        options.systemLibraries !== undefined &&
+        typeof options.systemLibraries !== "boolean"
+    )
+        throw new Error("systemLibraries must be a boolean");
     const overrides = validateGlobalInstallations(options.overrides);
-    const existing = validateGlobalInstallations(options.existing);
+    let existing = validateGlobalInstallations(options.existing);
     const variables = object(options.variables ?? {});
     const corepackHome = variables.COREPACK_HOME;
     if (
@@ -161,7 +173,31 @@ export function resolveDevelopmentTools(
         if ((mode & 0o002) !== 0 || ((mode & 0o020) !== 0 && !privateAncestor))
             throw new Error(`Untrusted writable executable: ${candidate}`);
     };
-    const installations: GlobalInstallations = {};
+    const systemRoots = options.systemLibraries
+        ? discoverSystemLibraries(watch)
+        : [];
+    const reconciled = systemRoots.length
+        ? reconcileSystemLibraries(existing, systemRoots)
+        : { installations: existing, removed: [] };
+    existing = reconciled.installations;
+    const installations: GlobalInstallations = systemRoots.length
+        ? {
+              ...existing,
+              "system-libraries": [
+                  ...systemRoots,
+                  ...systemLoaderAliases(systemRoots, watch),
+              ],
+          }
+        : {};
+    const suppliedResult = systemRoots.length
+        ? reconcileSystemLibraries(overrides, systemRoots)
+        : { installations: overrides, removed: [] };
+    const suppliedReconciled = suppliedResult.installations;
+    if (systemRoots.length) Object.assign(installations, suppliedReconciled);
+    const removedLibraryFiles = [
+        ...new Set([...reconciled.removed, ...suppliedResult.removed]),
+    ];
+
     const tools: DiscoveredTool[] = [];
     const unavailable: ToolDiscovery["unavailable"] = [];
     for (const [name, request] of Object.entries(requests)) {
@@ -176,16 +212,24 @@ export function resolveDevelopmentTools(
         }
         try {
             const supplied =
-                overrides[name] ??
+                suppliedReconciled[name] ??
                 (!options.rediscover ? existing[name] : undefined);
             if (supplied) {
                 installations[name] = parseGlobalInstallations(
                     { [name]: supplied },
                     !!overrides[name],
                 )[name];
-                selectInstallations({ [name]: installations[name] });
+                selectInstallations({
+                    ...installations,
+                    [name]: installations[name],
+                });
                 for (const entry of installations[name]) {
-                    watch(entry.root);
+                    watch(
+                        entry.root,
+                        systemRoots.some((root) =>
+                            installationContains(root.root, entry.root),
+                        ),
+                    );
                     for (const file of entry.files ?? [])
                         watch(join(entry.root, file));
                 }
@@ -220,8 +264,15 @@ export function resolveDevelopmentTools(
             const addFile = (path: string, command = false) => {
                 if (!isAbsolute(path))
                     throw new Error("Tool reported a relative resource");
-                watch(path);
                 const real = realpathSync(path);
+                if (
+                    !command &&
+                    systemRoots.some((root) =>
+                        installationContains(root.root, real),
+                    )
+                )
+                    return;
+                watch(path);
                 if (!statSync(real).isFile())
                     throw new Error(`Tool resource is not a file: ${path}`);
                 if (files.has(path)) return;
@@ -551,7 +602,10 @@ export function resolveDevelopmentTools(
                 { [name]: compact },
                 true,
             )[name];
-            selectInstallations({ [name]: installations[name] });
+            selectInstallations({
+                ...installations,
+                [name]: installations[name],
+            });
         } catch (error) {
             delete installations[name];
             const stale =
@@ -564,6 +618,7 @@ export function resolveDevelopmentTools(
     }
     return {
         installations,
+        removedLibraryFiles,
         tools,
         unavailable,
         assertUnchanged() {

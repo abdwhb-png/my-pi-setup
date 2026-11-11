@@ -387,6 +387,7 @@ let bindings: string | undefined;
 let expectedTools: ReturnType<typeof resolveDevelopmentTools>['tools'] = [];
 if (logicalTools) {
     const discovered = resolveDevelopmentTools(profile.tools, {
+    systemLibraries: profile.systemLibraries,
         variables:
             profile.environment && typeof profile.environment === 'object'
                 ? (profile.environment as Record<string, unknown>).variables

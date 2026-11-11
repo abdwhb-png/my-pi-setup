@@ -87,7 +87,7 @@ export function prepareDevelopmentSetup(options: {
         : { version: 2, machineId };
     const next = object(parsed);
     const profile = object(options.profile);
-    keys(profile, ["environment", "filesystem", "tools"]);
+    keys(profile, ["environment", "filesystem", "tools", "systemLibraries"]);
     const env = object(profile.environment ?? {});
     keys(env, ["installations", "variables"]);
     const fs = object(profile.filesystem ?? {});
@@ -101,13 +101,15 @@ export function prepareDevelopmentSetup(options: {
     for (const name of Object.keys(overrides)) {
         if (
             !Object.hasOwn(declarations, name) &&
-            !Object.hasOwn(object(profile.tools ?? {}), name)
+            !Object.hasOwn(object(profile.tools ?? {}), name) &&
+            !(profile.systemLibraries === true && name === "system-libraries")
         )
             throw new Error(`Unknown installation binding: ${name}`);
         declarations[name] = overrides[name];
     }
     const discovery = resolveDevelopmentTools(profile.tools, {
         overrides,
+        systemLibraries: profile.systemLibraries,
         variables: env.variables,
         existing: object(object(next.environment ?? {}).installations ?? {}),
         rediscover: options.rediscover,
