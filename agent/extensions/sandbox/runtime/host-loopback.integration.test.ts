@@ -93,6 +93,8 @@ for (const mediated of [false, true])
                                 deniedDomains: deny,
                                 ...(mediated
                                     ? {
+                                          // Keep the external proxy independent of the host permission.
+                                          allowedDomains: ["external.invalid"],
                                           mediatedDirectTcp: {
                                               allowed: true,
                                               ports: [443],
