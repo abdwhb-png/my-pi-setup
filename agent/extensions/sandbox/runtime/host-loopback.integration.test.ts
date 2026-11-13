@@ -164,7 +164,7 @@ for (const mediated of [false, true])
                 const ready = join(cwd, "late-port");
                 let output = "";
                 const script = `set -eu
-(printf PRIVATE | /usr/bin/nc -N -l 127.0.0.1 ${port}) & private_server=$!
+(printf PRIVATE | /usr/bin/nc -N -l 127.0.0.1 ${port} >/dev/null) & private_server=$!
 trap 'kill "$private_server" 2>/dev/null || true' EXIT
 private_result=''
 for attempt in {1..50}; do
