@@ -17,6 +17,24 @@ ALIAS = "host.localhost"
 ADDRESS = "198.18.0.1"
 
 
+class CapabilityHeader(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+
+class CapabilityData(ctypes.Structure):
+    _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
+
+
+def network_capability():
+    libc = ctypes.CDLL(None, use_errno=True)
+    header, data = CapabilityHeader(0x20080522, 0), (CapabilityData * 2)()
+    if libc.capget(ctypes.byref(header), ctypes.byref(data)) != 0:
+        raise OSError(ctypes.get_errno(), "capget")
+    data[0].inheritable |= 1 << 12
+    if libc.capset(ctypes.byref(header), ctypes.byref(data)) != 0 or libc.prctl(47, 2, 12, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "ambient CAP_NET_ADMIN")
+
+
 def receive_exact(stream, count):
     data = bytearray()
     while len(data) < count:
@@ -76,13 +94,14 @@ def serve_echo(ip, reply, hits):
 def child(control_path, host_port, denied_port, host_namespace):
     with socket.socket(socket.AF_UNIX) as control:
         control.connect(control_path)
-        subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
-        subprocess.run(["ip", "address", "add", ADDRESS + "/32", "dev", "lo"], check=True)
+        subprocess.run(["ip", "link", "set", "lo", "up"], preexec_fn=network_capability, check=True)
+        subprocess.run(["ip", "address", "add", ADDRESS + "/32", "dev", "lo"], preexec_fn=network_capability, check=True)
         with tempfile.NamedTemporaryFile(mode="w") as hosts:
             hosts.write(f"127.0.0.1 localhost\n::1 localhost\n{ADDRESS} {ALIAS}\n")
             hosts.flush()
-            subprocess.run(["mount", "--bind", hosts.name, "/etc/hosts"], check=True)
-            subprocess.run(["mount", "-o", "remount,bind,ro", "/etc/hosts"], check=True)
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.mount(hosts.name.encode(), b"/etc/hosts", None, 4096, None) != 0 or libc.mount(None, b"/etc/hosts", None, 4096 | 32 | 1, None) != 0:
+                raise OSError(ctypes.get_errno(), "private hosts mount")
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -93,14 +112,10 @@ def child(control_path, host_port, denied_port, host_namespace):
  }}
 }}
 """
-        subprocess.run(["nft", "-f", "-"], input=rules, text=True, check=True)
+        subprocess.run(["nft", "-f", "-"], input=rules, text=True, preexec_fn=network_capability, check=True)
         control.sendmsg([b"R"], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [listener.fileno()]))])
         listener.close()
         # The eventual target must not retain the privilege to alter routing.
-        class Header(ctypes.Structure):
-            _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
-        class Data(ctypes.Structure):
-            _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
         libc = ctypes.CDLL(None, use_errno=True)
         # Clear the bounding set before clearing CAP_SETPCAP, so exec cannot
         # restore privileges merely because the namespace UID is zero.
@@ -109,7 +124,7 @@ def child(control_path, host_port, denied_port, host_namespace):
                 raise OSError(ctypes.get_errno(), "PR_CAPBSET_DROP")
         if libc.prctl(38, 1, 0, 0, 0) != 0:
             raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS")
-        header, data = Header(0x20080522, 0), (Data * 2)()
+        header, data = CapabilityHeader(0x20080522, 0), (CapabilityData * 2)()
         if libc.capset(ctypes.byref(header), ctypes.byref(data)) != 0:
             raise OSError(ctypes.get_errno(), "capset")
         if subprocess.run(["nft", "list", "ruleset"], capture_output=True).returncode == 0:
@@ -146,7 +161,7 @@ def child(control_path, host_port, denied_port, host_namespace):
             if result:
                 raise RuntimeError("Denied destination returned data")
         control.sendall(b"D")
-        print(json.dumps({"transport": "namespace-nat-single-listener", "alias": ALIAS, "privateLocalhost": True, "lateHostService": True, "ipv6HostService": True, "brokerDenial": True, "targetCapabilitiesDropped": True}))
+        print(json.dumps({"transport": "namespace-nat-single-listener", "alias": ALIAS, "privateLocalhost": True, "lateHostService": True, "ipv6HostService": True, "brokerDenial": True, "targetCapabilitiesDropped": True, "namespaceUid": os.getuid()}))
 
 
 def parent():
@@ -160,7 +175,8 @@ def parent():
             server.bind(path)
             server.listen()
             server.settimeout(30)
-            proc = subprocess.Popen(["unshare", "--user", "--map-root-user", "--mount", "--net", sys.executable, __file__, "--child", path, str(host_port), str(denied_port), os.readlink("/proc/self/ns/net")])
+            mapping = ["--map-root-user"] if os.environ.get("HOST_LOOPBACK_MAP_USER") != "current" else [f"--map-user={os.getuid()}", f"--map-group={os.getgid()}"]
+            proc = subprocess.Popen(["unshare", "--user", *mapping, "--mount", "--net", sys.executable, __file__, "--child", path, str(host_port), str(denied_port), os.readlink("/proc/self/ns/net")])
             try:
                 with server.accept()[0] as control:
                     control.settimeout(30)

@@ -33,7 +33,9 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
       - name: Prove host alias routing preserves private localhost
-        run: python3 .github/fixtures/host-loopback/probe.py
+        run: |
+          python3 .github/fixtures/host-loopback/probe.py
+          HOST_LOOPBACK_MAP_USER=current python3 .github/fixtures/host-loopback/probe.py
   resource-policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
