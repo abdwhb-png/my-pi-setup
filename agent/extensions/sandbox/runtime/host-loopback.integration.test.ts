@@ -31,6 +31,7 @@ for (const mediated of [false, true])
             const root = await mkdtemp("/var/tmp/hl-");
             const leases = await mkdtemp("/var/tmp/z-");
             const services: SandboxService[] = [];
+            const failures: Error[] = [];
             const servers: Server[] = [];
             const requests: string[] = [];
             const cwd = join(root, "project"),
@@ -174,14 +175,14 @@ done
 test "$private_result" = PRIVATE
 wait "$private_server"
 printf '%s\\n' "$private_result"
-printf probe | /usr/bin/nc -N -w 5 host.localhost ${port}
+printf probe | /usr/bin/nc -N -w 5 host.zerobox.internal ${port}
 printf '\\nHOST_ALIAS_READY\\n'
 for attempt in {1..100}; do test -s ${quote(ready)} && break; /usr/bin/sleep 0.05; done
 test -s ${quote(ready)}
 late_port=$(< ${quote(ready)})
-printf probe | /usr/bin/nc -N -w 5 host.localhost "$late_port"
+printf probe | /usr/bin/nc -N -w 5 host.zerobox.internal "$late_port"
 printf '\\n'
-/usr/bin/curl --fail --silent --show-error --max-time 5 http://host.localhost:${httpAddress.port}`;
+/usr/bin/curl --fail --silent --show-error --max-time 5 http://host.zerobox.internal:${httpAddress.port}`;
                 const result = await enabled.exec(script, cwd, {
                     timeout: 40,
                     onData: (chunk) => {
@@ -206,7 +207,7 @@ printf '\\n'
                 const denied = await client(true, [`localhost:${port}`]);
                 let deniedOutput = "";
                 await denied.exec(
-                    `printf probe | /usr/bin/nc -N -w 2 host.localhost ${port}`,
+                    `printf probe | /usr/bin/nc -N -w 2 host.zerobox.internal ${port}`,
                     cwd,
                     {
                         timeout: 10,
@@ -219,11 +220,19 @@ printf '\\n'
                 expect(requests).toEqual(["HOST", "LATE_HOST", "HTTP_HOST"]);
                 const disabled = await client(false);
                 await disabled.exec(
-                    `printf probe | /usr/bin/nc -N -w 2 host.localhost ${port}`,
+                    `printf probe | /usr/bin/nc -N -w 2 host.zerobox.internal ${port}`,
                     cwd,
                     { timeout: 10, onData: () => {} },
                 );
                 expect(requests).toEqual(["HOST", "LATE_HOST", "HTTP_HOST"]);
+            } catch (error) {
+                failures.push(
+                    error instanceof Error
+                        ? error
+                        : new Error("Host loopback qualification failed", {
+                              cause: error,
+                          }),
+                );
             } finally {
                 const cleanup = [
                     ...(await Promise.allSettled(late ? [late] : [])),
@@ -251,15 +260,21 @@ printf '\\n'
                         rm(leases, { recursive: true, force: true }),
                     ])),
                 );
-                const failed = cleanup
-                    .filter((result) => result.status === "rejected")
-                    .map((result) => result.reason);
-                if (failed.length)
-                    throw new AggregateError(
-                        failed,
-                        "Host loopback qualification cleanup failed",
-                    );
+                for (const result of cleanup) {
+                    if (result.status === "rejected")
+                        failures.push(
+                            new Error("Host loopback fixture cleanup failed", {
+                                cause: result.reason,
+                            }),
+                        );
+                }
             }
+            if (failures.length === 1) throw failures[0];
+            if (failures.length)
+                throw new AggregateError(
+                    failures,
+                    "Host loopback qualification and cleanup failed",
+                );
         },
         180000,
     );

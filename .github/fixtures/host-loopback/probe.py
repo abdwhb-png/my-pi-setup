@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 
-ALIAS = "host.localhost"
+ALIAS = "host.zerobox.internal"
 ADDRESS = "198.18.0.1"
 
 

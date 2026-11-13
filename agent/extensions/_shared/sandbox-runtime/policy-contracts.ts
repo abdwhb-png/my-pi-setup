@@ -1,4 +1,4 @@
-export const HOST_LOOPBACK_ALIAS = "host.localhost";
+export const HOST_LOOPBACK_ALIAS = "host.zerobox.internal";
 
 export type SandboxProfileName =
     | "bash-general"

@@ -106,17 +106,17 @@ test("host alias grants arbitrary ports without external egress and explicit den
     ).toBeUndefined();
     for (const port of [1, 3216, 5173, 65000, 65535])
         expect(
-            isNetworkDestinationAllowed(policy.network, "host.localhost", port),
+            isNetworkDestinationAllowed(policy.network, "host.zerobox.internal", port),
         ).toBe(true);
     expect(
         isNetworkDestinationAllowed(policy.network, "example.org", 443),
     ).toBe(false);
     expect(
-        isNetworkDestinationAllowed(policy.network, "HOST.LOCALHOST", 3216),
+        isNetworkDestinationAllowed(policy.network, "HOST.ZEROBOX.INTERNAL", 3216),
     ).toBe(true);
     for (const port of [0, 65536])
         expect(
-            isNetworkDestinationAllowed(policy.network, "host.localhost", port),
+            isNetworkDestinationAllowed(policy.network, "host.zerobox.internal", port),
         ).toBe(false);
     const restricted = {
         ...config,
@@ -125,10 +125,10 @@ test("host alias grants arbitrary ports without external egress and explicit den
     expect(sandboxAccessRemoved(config, restricted)).toBe(true);
     const denied = createBashPolicy({ cwd: f.cwd, config: restricted, lease });
     expect(
-        isNetworkDestinationAllowed(denied.network, "host.localhost", 3216),
+        isNetworkDestinationAllowed(denied.network, "host.zerobox.internal", 3216),
     ).toBe(false);
     expect(
-        isNetworkDestinationAllowed(denied.network, "host.localhost", 5173),
+        isNetworkDestinationAllowed(denied.network, "host.zerobox.internal", 5173),
     ).toBe(true);
 });
 

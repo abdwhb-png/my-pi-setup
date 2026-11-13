@@ -84,7 +84,7 @@
                   "default": false
                 }
               },
-              "description": "Global-only permission for host.localhost on all host loopback TCP ports. localhost stays private."
+              "description": "Global-only permission for host.zerobox.internal on all host loopback TCP ports. localhost stays private."
             }
           }
         },

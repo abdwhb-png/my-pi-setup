@@ -6,6 +6,7 @@ import {
     type SandboxExecutionContext,
     type SandboxExecutionContextV3,
 } from "../_shared/sandbox-runtime/execution-context.ts";
+import { HOST_LOOPBACK_ALIAS } from "../_shared/sandbox-runtime/policy-contracts.ts";
 import { shellPolicyLines } from "./capabilities/runtime.ts";
 import {
     inspectDockerClients,
@@ -151,7 +152,7 @@ export function sandboxDoctorLines(
         {
             label: "Configured host alias",
             value: config.network.hostLoopback
-                ? "host.localhost: all TCP ports (requires native ip and nft)"
+                ? `${HOST_LOOPBACK_ALIAS}: all TCP ports (requires native ip and nft)`
                 : "(off)",
         },
         {
