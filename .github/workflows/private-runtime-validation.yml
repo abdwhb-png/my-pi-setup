@@ -110,8 +110,10 @@ jobs:
             bun test --isolate scripts/configure-sandbox.test.ts extensions/_shared/package-install/finalizer.test.ts extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
       - name: Run setup and extension regression suites
         working-directory: .pi/agent
+        env:
+          PI_LAUNCH_PROFILES_RUNTIME_BINARY: ${{ github.workspace }}/.pi/agent/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
         run: |
-          bun test --isolate bin/setup extensions/slow-mode \
+          bun test --isolate bin/setup bin/launch-profiles.test.ts extensions/launch-profiles extensions/slow-mode \
             extensions/_shared/fancy-footer.test.ts extensions/_shared/runtime-storage.test.ts \
             extensions/brainstorm-forcer/index.test.ts extensions/__tests__/coverage.test.ts \
             extensions/__tests__/pi-subagents-runtime.integration.test.ts

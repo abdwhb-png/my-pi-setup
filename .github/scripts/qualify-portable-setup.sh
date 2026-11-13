@@ -66,9 +66,9 @@ test "$(bun --version)" = 1.3.14
 sfw --version
 qualification_bun=$(command -v bun)
 if [[ "$QUALIFICATION_TOOL_LAYOUT" == mise ]]; then
-  # Reuse a published, qualified developer-tool revision; Pi does not depend on this installer.
+  # Reuse an exact developer-tool revision; Pi does not depend on this installer.
   git clone --no-checkout https://github.com/abdwhb-png/dev-tools.git "$qualification_root/dev-tools"
-  git -C "$qualification_root/dev-tools" checkout --detach 8d4972dacefca9c95bfd6d374d9e51c35fbafb7b
+  git -C "$qualification_root/dev-tools" checkout --detach ab9f6ce22e8b20c41d564c6ed0db10e1228d7166
   sh "$qualification_root/dev-tools/bootstrap.sh" --yes
   export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 elif [[ "$QUALIFICATION_TOOL_LAYOUT" == system ]]; then
