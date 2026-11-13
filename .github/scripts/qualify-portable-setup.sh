@@ -113,5 +113,7 @@ BUN_CONFIG
 export PI_CODING_AGENT_DIR="$source_root/agent"
 export PI_OFFLINE=1
 export PI_PACKAGE_FINALIZER_ACTIVE=1
+# Bun resolves the existing lockfile while replacing the producer runtime pins.
+python3 .github/scripts/restore-pi-runtime.py --agent-root agent --fixture-root .github/fixtures/pi-core-1.5.0
 bun bin/pi-fork import .github/fixtures/pi-core-1.5.0
 bun .github/scripts/qualify-portable-setup.ts "$source_root"
