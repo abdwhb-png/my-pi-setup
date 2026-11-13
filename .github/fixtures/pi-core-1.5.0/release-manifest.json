@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "source": {
-    "repository": "/home/abdwhb/engineering/pi-core",
+    "repository": "~/engineering/pi-core",
     "commit": "7722134adab83cbf5d491db7142f10644d23a011",
     "dirty": true
   },
