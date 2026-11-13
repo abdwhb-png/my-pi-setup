@@ -28,6 +28,8 @@ class CapabilityData(ctypes.Structure):
 def network_capability():
     libc = ctypes.CDLL(None, use_errno=True)
     header, data = CapabilityHeader(0x20080522, 0), (CapabilityData * 2)()
+    if libc.prctl(47, 4, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "clear ambient capabilities")
     if libc.capget(ctypes.byref(header), ctypes.byref(data)) != 0:
         raise OSError(ctypes.get_errno(), "capget")
     data[0].inheritable |= 1 << 12
@@ -176,13 +178,17 @@ def parent():
             server.listen()
             server.settimeout(30)
             mapping = ["--map-root-user"] if os.environ.get("HOST_LOOPBACK_MAP_USER") != "current" else [f"--map-user={os.getuid()}", f"--map-group={os.getgid()}"]
-            proc = subprocess.Popen(["unshare", "--user", *mapping, "--mount", "--net", sys.executable, __file__, "--child", path, str(host_port), str(denied_port), os.readlink("/proc/self/ns/net")])
+            proc = subprocess.Popen(["unshare", "--user", "--keep-caps", *mapping, "--mount", "--net", sys.executable, __file__, "--child", path, str(host_port), str(denied_port), os.readlink("/proc/self/ns/net")])
             try:
                 with server.accept()[0] as control:
                     control.settimeout(30)
                     payload, ancillary, flags, _ = control.recvmsg(1, socket.CMSG_SPACE(array.array("i").itemsize))
                     if payload != b"R" or flags & socket.MSG_CTRUNC or len(ancillary) != 1:
-                        raise RuntimeError("Invalid listener transfer")
+                        try:
+                            proc.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        raise RuntimeError(f"Invalid listener transfer: payload={payload!r}, flags={flags}, controls={[(level, kind, len(raw)) for level, kind, raw in ancillary]}")
                     level, kind, raw = ancillary[0]
                     if (level, kind) != (socket.SOL_SOCKET, socket.SCM_RIGHTS):
                         raise RuntimeError("Missing listener descriptor")
