@@ -68,7 +68,7 @@ qualification_bun=$(command -v bun)
 if [[ "$QUALIFICATION_TOOL_LAYOUT" == mise ]]; then
   # Reuse an exact developer-tool revision; Pi does not depend on this installer.
   git clone --no-checkout https://github.com/abdwhb-png/dev-tools.git "$qualification_root/dev-tools"
-  git -C "$qualification_root/dev-tools" checkout --detach ab9f6ce22e8b20c41d564c6ed0db10e1228d7166
+  git -C "$qualification_root/dev-tools" checkout --detach a6d31770f48f7317caf6bf3432043ab78a58db56
   sh "$qualification_root/dev-tools/bootstrap.sh" --yes
   export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 elif [[ "$QUALIFICATION_TOOL_LAYOUT" == system ]]; then
