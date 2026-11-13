@@ -359,7 +359,7 @@ function resourceDisposition(path: string): ResourceDisposition | undefined {
     )
         return 'code';
     if (
-        /^(docs\/|\.github\/|\.agents\/prompts\/|pi-prompts\/|agent\/extensions-legacy\/)/.test(
+        /^(docs\/|deliveries\/|\.github\/|\.agents\/prompts\/|pi-prompts\/|agent\/extensions-legacy\/)/.test(
             path,
         ) ||
         [

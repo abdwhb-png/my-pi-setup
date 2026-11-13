@@ -77,6 +77,11 @@ test('machine authority and development exclusions have explicit dispositions', 
     );
 });
 
+test('delivery evidence has a development-only policy', () => {
+    expect(distribution.classifySetupResource('deliveries/runtime/activation.json')).toBe('development');
+    expect(allowedCodePath('deliveries/runtime/rollback.ts')).toBe(false);
+});
+
 test('unclassified versioned resources cannot be silently excluded', () => {
     expect(() => allowedCodePath('agent/workflows/fixture.md')).toThrow(
         'Unclassified setup resource: agent/workflows/fixture.md',

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePiInstallationPaths } from "../agent/bin/pi-installation-paths.ts";
 import { assertSetupLaunchAllowed } from "../agent/bin/setup/gate.ts";
+import { launchProfilesHelp, prepareLaunchProfile } from "../agent/extensions/_shared/launch-profiles.ts";
 import {
   acquireRuntimeStorageLock,
   pinRuntimeEntry,
@@ -25,7 +26,13 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const args = process.argv.slice(2);
+let args: string[];
+try {
+  args = prepareLaunchProfile(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 const cwd = process.cwd();
 const updatePolicy = classifyUpdateCommand(args);
 if (!updatePolicy.allowed) {
@@ -68,6 +75,9 @@ try {
     isToolGroupsPackageConfigured(cwd, paths.agentDir),
   );
   exitCode = runRealPi(realPi, prepared.args, cwd, prepared.requestedTools);
+
+  const profileHelp = exitCode === 0 ? launchProfilesHelp(args) : undefined;
+  if (profileHelp) console.log(profileHelp);
 
   if (exitCode === 0 && process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1" && isPackageMutationCommand(args)) {
     await runPackageFinalizer(cwd, {

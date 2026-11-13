@@ -54,6 +54,7 @@ export const CONFIG_OWNERS = {
     },
     roles: { file: 'pi-roles.json', settingsKey: 'pi-roles' },
     skillGate: { file: 'skill-gate.json', globalOnly: true },
+    launchProfiles: { file: 'launch-profiles.json', globalOnly: true },
     subagentsAddons: {
         file: 'pi-subagents-addons.json',
         legacyFile: 'extensions/pi-subagents-addons/config.json',

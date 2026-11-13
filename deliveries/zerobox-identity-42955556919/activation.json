@@ -1,0 +1,14 @@
+{
+  "previous": "~/.pi/runtimes/zerobox/native-42676495778-1",
+  "installed": "~/.pi/runtimes/zerobox/native-42955556919-1",
+  "engineCommit": "74b2bab4ea02a3a8f611ebebf866bb9778016dfc",
+  "binarySha256": "df20857259694e47584699e7ba677692c22f2e8bedcb146a86eb103ceec17a55",
+  "piCommit": "7a55e9d4bc305fbe0803098825ee5171c971f8cb",
+  "engineRun": "https://github.com/abdwhb-png/zerobox/actions/runs/42955027288",
+  "piRun": "https://github.com/abdwhb-png/my-pi-setup/actions/runs/42955556919",
+  "rollbackVerified": true,
+  "configurationUnchanged": true,
+  "ownertekSandboxIdentity": "1000:1000",
+  "ownertekCommand": "./sail ps",
+  "ownertekCommandExitCode": 0
+}

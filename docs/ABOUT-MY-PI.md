@@ -43,6 +43,8 @@ The fork source lives separately under `~/engineering/pi-core`. Editing or build
 
 Bare/self `pi update` is blocked by this installation's launcher. `PI_REAL_BIN` is an explicit development override for testing another executable. These are local policies, not general Pi requirements. [ADR-026](./adr/ADR-026-immutable-local-pi-fork-releases.md) records the runtime isolation and promotion decision.
 
+Launch profiles add named, per-process extension exclusions: `pi --profile no-permissions` starts without the permission system and its addons; `pi --profile standard` keeps the configured extensions. Put the profile before other Pi options. `/profiles` lists profiles and `/profiles edit` edits `~/.pi/agent/config/launch-profiles.json` for future processes. The launcher expands profiles into the fork's native `--exclude-extension` options before extension loading; neither mechanism changes saved extension selection. See the [launch profiles reference](../agent/extensions/launch-profiles/README.md) to add profiles and review their limits.
+
 ### Runtime management versus complete setup management
 
 `pi-fork` and `pi-setup` are repository-managed commands. They operate at different scopes:

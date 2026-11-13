@@ -1,0 +1,50 @@
+{
+  "skill_name": "pi-setup-development",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a configurable launch profile named lean that excludes selected extensions in this Pi setup. Keep changes to the Pi fork minimal. Make it usable from the daily launcher; do not publish anything.",
+      "expected_output": "A launcher-integrated profile change with working configuration, visible CLI help and a verification of the daily launch boundary, while preserving publication authority.",
+      "files": [],
+      "assertions": [
+        "The implementation inspects and reuses existing profile, parser and resource-selection owners rather than introducing a parallel resolver.",
+        "A launcher invocation verifies that profile syntax is discoverable in help even when extensions are disabled.",
+        "Tests exercise exclusion before entrypoint execution and reject invalid configuration without silently using another profile.",
+        "The report distinguishes verified daily behavior from source-only checks and performs no publication."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Improve the fast-mode footer so I can identify enabled providers. Keep the icon and use the setup's text colors. It also needs to stay correct after switching models and reloading.",
+      "expected_output": "A change to the existing footer contribution with provider identity, the retained icon, semantic colors and lifecycle verification.",
+      "files": [],
+      "assertions": [
+        "The existing fast-mode extension and shared footer/color contracts are inspected before editing.",
+        "The resulting footer retains the icon and identifies providers; an extension status message is not substituted for the requested footer.",
+        "Verification covers model changes and reload through the consuming extension, together with real rendering evidence or an explicit statement that visual verification remains incomplete."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "An agent says a workflow tool is unavailable after switching roles, although /context shows it. Investigate this session and correct the confirmed defect without widening all role permissions.",
+      "expected_output": "An evidence-led diagnosis that distinguishes current visibility, request-time tools and execution policy, followed by a narrowly scoped fix only when supported.",
+      "files": [],
+      "assertions": [
+        "The investigation inspects the relevant session and actual runtime/catalogue evidence rather than treating the current /context display as proof about an earlier request.",
+        "Any fix preserves role-specific visibility and execution gates, with affected activation and cleanup transitions tested.",
+        "If the incident cannot be reproduced or its request recovered, the report states that limitation instead of asserting a root cause."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I want a simpler Pi startup experience. Propose options only, without changing files or deploying anything. I have not decided whether I want launch profiles or interactive session commands.",
+      "expected_output": "A grounded comparison using the existing setup and execution order, with one focused question if a material preference remains undecided; no implementation or deployment.",
+      "files": [],
+      "assertions": [
+        "Existing launcher and extension mechanisms are inspected before recommending a new component.",
+        "The answer distinguishes pre-load selection from changes possible inside a running session.",
+        "No files, runtime activation, commits or publication are performed."
+      ]
+    }
+  ]
+}

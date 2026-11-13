@@ -1,0 +1,4 @@
+Sandbox identity: 1000:1000
+NAME                                                   IMAGE                 COMMAND                  SERVICE       CREATED       STATUS                 PORTS
+ownertek-refactor-localization-quality-laravel.app-1   ownertek-php:8.5.12   "start-container php…"   laravel.app   2 hours ago   Up 2 hours (healthy)   127.0.0.1:8485->8080/tcp
+Ownertek Sail ps passed through the admitted sandbox

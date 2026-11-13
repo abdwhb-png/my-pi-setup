@@ -8,6 +8,8 @@ Write repository implementation artifacts and documentation in English, even whe
 
 ## Context
 
+For features, fixes and refactors of this personal setup, use [pi-setup-development](.agents/skills/pi-setup-development/SKILL.md) to cover user-facing discovery, configuration, runtime integration and delivery verification alongside the specialized skills below.
+
 This is the local installation of my pi harness.
 Interpret `pi` as the [https://pi.dev/](https://pi.dev/) agent harness, not Raspberry Pi.
 I'm working on it to customize it for my needs. This file contains instructions for how to use and modify the harness, as well as guidelines for code style, testing, and inter-agent communication.

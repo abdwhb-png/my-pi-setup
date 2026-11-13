@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "source": {
-    "repository": "/tmp/pi-core-v1.5.0-candidate",
+    "repository": "/home/abdwhb/engineering/pi-core",
     "commit": "7722134adab83cbf5d491db7142f10644d23a011",
-    "dirty": false
+    "dirty": true
   },
   "packages": [
     {
@@ -21,8 +21,8 @@
     {
       "name": "@earendil-works/pi-ai",
       "version": "1.5.0",
-      "tarball": "tarballs/earendil-works-pi-ai-1.5.0-70dceb7f3f6b.tgz",
-      "sha256": "63d4f5a28e86b56e9db0056ca118faa51d71f9b4aec806a8f92b861c08bd3d69"
+      "tarball": "tarballs/earendil-works-pi-ai-1.5.0-19655fde5975.tgz",
+      "sha256": "498226b466c847433eff89bdc4dcc9bc9252aeb8dada2554738185b82b6fcf77"
     },
     {
       "name": "@earendil-works/pi-codemode",
@@ -33,8 +33,8 @@
     {
       "name": "@earendil-works/pi-coding-agent",
       "version": "1.5.0",
-      "tarball": "tarballs/earendil-works-pi-coding-agent-1.5.0-363a3a59eeac.tgz",
-      "sha256": "14405077dceafbd85c6069de5882753462855d13ba830d09532579c7ef2b3c3d"
+      "tarball": "tarballs/earendil-works-pi-coding-agent-1.5.0-13d366e60266.tgz",
+      "sha256": "c149b87030bdee9ab81ce50a99f20dda669b610b78e560e2c2c901b2c080bd09"
     },
     {
       "name": "@earendil-works/pi-durable",
