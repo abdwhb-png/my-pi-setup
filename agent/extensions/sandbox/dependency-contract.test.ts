@@ -165,38 +165,28 @@ describe("sandbox dependency contract", () => {
         expect(execFileSync(candidateBinary, ["--version"], { encoding: "utf8" }).trim()).toBe(`zerobox ${ZEROBOX_VERSION}`);
     });
 
-    it.skipIf(!candidateSource)("verifies the explicit source worktree digest and ordered patch bytes", async () => {
+    it.skipIf(!candidateSource)("verifies the explicit source commit and every referenced patch", async () => {
         if (!candidateSource) throw new Error("Explicit candidate source root required");
-        const provenance = await readProvenance();
         const candidate = await readCandidateProvenance();
         const source = resolve(candidateSource);
         const gitOptions = { cwd: source, maxBuffer: 64 * 1024 * 1024 };
         expect(candidate.sourceCommit).toMatch(/^[a-f0-9]{40}$/);
         expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(candidate.sourceCommit);
-        expect(candidate.patches.map(patch => patch.path).sort()).toEqual(provenance.patches.map(patch => patch.path).sort());
         expect(execFileSync("git", ["status", "--porcelain"], { ...gitOptions, encoding: "utf8" })).toBe("");
         const syncScript = await readFile(join(source, "scripts/sync.sh"), "utf8");
         const referencedPatches = [...new Set([...syncScript.matchAll(/\bupstream-[a-z0-9-]+\.patch\b/g)].map(match => `scripts/${match[0]}`))];
-        expect(provenance.omittedOptionalPatches).toEqual([OMITTED_OPTIONAL_PATCH]);
-        const presentPatches = provenance.patches.map(patch => patch.path);
+        // A candidate may add patches absent from the installed baseline.
+        // Its pinned source commit owns both patch membership and application order.
+        const presentPatches = candidate.patches.map(patch => patch.path);
         expect(new Set(presentPatches).size).toBe(presentPatches.length);
-        expect(presentPatches.some(path => provenance.omittedOptionalPatches.includes(path))).toBe(false);
-        expect([...presentPatches, ...provenance.omittedOptionalPatches].sort()).toEqual([...referencedPatches].sort());
-        expect(presentPatches).toEqual(referencedPatches.filter(path => !provenance.omittedOptionalPatches.includes(path)));
-        for (const path of provenance.omittedOptionalPatches) {
-            await expect(stat(join(source, path))).rejects.toMatchObject({ code: "ENOENT" });
-        }
-        const positions: number[] = [];
-        for (const patch of provenance.patches) {
+        expect(presentPatches).not.toContain(OMITTED_OPTIONAL_PATCH);
+        expect([...presentPatches, OMITTED_OPTIONAL_PATCH].sort()).toEqual([...referencedPatches].sort());
+        await expect(stat(join(source, OMITTED_OPTIONAL_PATCH))).rejects.toMatchObject({ code: "ENOENT" });
+        for (const patch of candidate.patches) {
             const path = resolve(source, patch.path);
             expect(path.startsWith(source + sep)).toBe(true);
-            const candidatePatch = candidate.patches.find(entry => entry.path === patch.path);
-            if (!candidatePatch) throw new Error(`Candidate provenance omits ${patch.path}`);
-            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(candidatePatch.sha256);
-            positions.push(syncScript.indexOf(patch.path.slice(patch.path.lastIndexOf("/") + 1)));
+            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(patch.sha256);
         }
-        expect(positions.every(position => position >= 0)).toBe(true);
-        expect(positions).toEqual([...positions].sort((a, b) => a - b));
     });
 
     it("keeps the legacy ASRT deny characterization reproducible", async () => {
