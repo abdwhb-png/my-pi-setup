@@ -16,6 +16,24 @@ permissions:
   actions: read
 
 jobs:
+  host-loopback-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare namespace routing experiment
+        run: |
+          sudo apt-get update
+          apt-cache policy nftables iproute2 util-linux
+          sudo apt-get install --no-install-recommends -y nftables iproute2 util-linux
+          sudo modprobe nf_tables
+          sudo modprobe nft_chain_nat
+          sudo modprobe nft_redir
+          if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Prove host alias routing preserves private localhost
+        run: python3 .github/fixtures/host-loopback/probe.py
   resource-policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
