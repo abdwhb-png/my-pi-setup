@@ -13,6 +13,7 @@
         "denyWrite": [".env"]
     },
     "network": {
+        "hostLoopback": { "allowed": false },
         "allowedDomains": [],
         "allowedHostDomains": [],
         "deniedDomains": [],

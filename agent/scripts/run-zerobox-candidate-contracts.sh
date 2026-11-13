@@ -85,6 +85,7 @@ export PI_SANDBOX_SHELL_BASELINE_CONTRACT=1
 export PI_SANDBOX_INSTALLATIONS_CONTRACT=1
 export PI_SANDBOX_DEVELOPMENT_COMPATIBILITY_CONTRACT=1
 export PI_SANDBOX_GENERIC_COMMAND_CONTRACT=1
+export PI_SANDBOX_HOST_LOOPBACK_CONTRACT=1
 export PI_SANDBOX_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_SFW_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_CONTRACT=1
@@ -117,6 +118,7 @@ for contract in \
     extensions/sandbox/runtime/revocation.integration.test.ts \
     extensions/sandbox/runtime/linux-contract.integration.test.ts \
     extensions/sandbox/runtime/generic-command.integration.test.ts \
+    extensions/sandbox/runtime/host-loopback.integration.test.ts \
     extensions/sandbox/runtime/mediated-direct.integration.test.ts \
     extensions/sandbox/runtime/sfw-mediated-direct.integration.test.ts \
     extensions/sandbox/runtime/profiles.integration.test.ts \

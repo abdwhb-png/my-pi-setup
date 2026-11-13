@@ -120,7 +120,10 @@ export function parseSandboxAdmissionReport(
 ): SandboxAdmissionReport {
     if (
         !record(value) ||
-        (value.schema !== 1 && value.schema !== 2 && value.schema !== 3)
+        (value.schema !== 1 &&
+            value.schema !== 2 &&
+            value.schema !== 3 &&
+            value.schema !== 4)
     )
         throw failure("unsupported schema");
     const {
@@ -161,7 +164,7 @@ export function parseSandboxAdmissionReport(
     } catch (error) {
         throw failure("invalid scoped write exceptions", error);
     }
-    if ((value.schema === 3) !== exceptions.length > 0)
+    if (value.schema !== 4 && (value.schema === 3) !== exceptions.length > 0)
         throw failure("write exceptions require schema 3");
     if (
         !record(network) ||
@@ -170,6 +173,12 @@ export function parseSandboxAdmissionReport(
         typeof network.allowLocalBinding !== "boolean"
     )
         throw failure("invalid network rules");
+    if (
+        (value.schema === 4) !== (network.hostLoopback === true) ||
+        (network.hostLoopback !== undefined &&
+            typeof network.hostLoopback !== "boolean")
+    )
+        throw failure("invalid host loopback permission");
     const mediatedDirectTcp = network.mediatedDirectTcp;
     const validDirectPorts =
         record(mediatedDirectTcp) &&
@@ -187,7 +196,7 @@ export function parseSandboxAdmissionReport(
     if (
         (value.schema === 1 && mediatedDirectTcp !== undefined) ||
         (value.schema === 2 && !validDirectPorts) ||
-        (value.schema === 3 &&
+        (value.schema >= 3 &&
             mediatedDirectTcp !== undefined &&
             !validDirectPorts)
     )
@@ -381,7 +390,8 @@ export function assertAdmissionMatchesPolicy(
             expectedExceptions.map(exceptionKey),
             reportedExceptions.map(exceptionKey),
         ) ||
-        (report.schema === 3) !== expectedExceptions.length > 0
+        (report.schema !== 4 &&
+            (report.schema === 3) !== expectedExceptions.length > 0)
     )
         throw failure(
             "scoped write exceptions differ from the submitted policy",
@@ -416,6 +426,27 @@ export function assertAdmissionMatchesPolicy(
             mount.access === "ro",
     );
     const internalRoot = control ? dirname(dirname(control.source)) : undefined;
+    const hostMappings = report.mounts.filter(
+        (mount) =>
+            mount.origin === "internal" && mount.destination === "/etc/hosts",
+    );
+    const hostMapping = hostMappings[0];
+    if (
+        policy.network.hostLoopback &&
+        (hostMappings.length !== 1 ||
+            !hostMapping ||
+            !internalRoot ||
+            hostMapping.access !== "ro" ||
+            !within(hostMapping.source, join(internalRoot, "p")) ||
+            basename(hostMapping.source) !== "host-loopback.hosts" ||
+            !report.kernelMounts.some(
+                (mount) =>
+                    mount.destination === "/etc/hosts" && mount.access === "ro",
+            ))
+    )
+        throw failure(
+            "host loopback requires a private read-only hosts mapping observed by the kernel",
+        );
     const publicGrants = [
         ...policy.filesystem.allowRead,
         ...policy.filesystem.allowWrite,
@@ -498,7 +529,8 @@ export function assertAdmissionMatchesPolicy(
                 !view &&
                 !resourceView &&
                 !targetEnvironment &&
-                !shellAlias
+                !shellAlias &&
+                !(policy.network.hostLoopback && mount === hostMapping)
             )
                 throw failure(
                     "internal mount exceeds the submitted filesystem grants",
@@ -532,13 +564,27 @@ export function assertAdmissionMatchesPolicy(
             throw failure(`network.${key} differs from the submitted policy`);
     if (report.network.mode !== policy.network.mode)
         throw failure("network mode differs from the submitted policy");
+    if (
+        (report.network.hostLoopback ?? false) !==
+        (policy.network.hostLoopback ?? false)
+    )
+        throw failure("host loopback differs from the submitted policy");
     const submittedDirect = policy.network.mediatedDirectTcp;
     const reportedDirect = report.network.mediatedDirectTcp;
     if (
         submittedDirect === undefined
-            ? report.schema !== (expectedExceptions.length ? 3 : 1) ||
-              reportedDirect !== undefined
-            : report.schema !== (expectedExceptions.length ? 3 : 2) ||
+            ? report.schema !==
+                  (policy.network.hostLoopback
+                      ? 4
+                      : expectedExceptions.length
+                        ? 3
+                        : 1) || reportedDirect !== undefined
+            : report.schema !==
+                  (policy.network.hostLoopback
+                      ? 4
+                      : expectedExceptions.length
+                        ? 3
+                        : 2) ||
               reportedDirect === undefined ||
               !equalPorts(reportedDirect.ports, submittedDirect.ports)
     )

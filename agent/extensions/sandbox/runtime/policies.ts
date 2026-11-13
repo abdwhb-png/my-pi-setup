@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { extensionConfigPath } from "../../_shared/config-loader.ts";
+import { HOST_LOOPBACK_ALIAS } from "../../_shared/sandbox-runtime/policy-contracts.ts";
 
 import type { SandboxWriteException } from "../../_shared/sandbox-runtime/policy-contracts.ts";
 import { parseWriteExceptions } from "../../_shared/sandbox-runtime/write-exceptions.ts";
@@ -63,6 +64,7 @@ interface PiFilesystemConfig {
 }
 
 interface PiNetworkConfig {
+    hostLoopback?: boolean;
     allowedDomains: string[];
     allowedHostDomains: string[];
     deniedDomains: string[];
@@ -522,9 +524,15 @@ export function validatePiSandboxConfig(
         "allowedHostDomains",
         "deniedDomains",
         "allowLocalBinding",
+        "hostLoopback",
         "allowAllUnixSockets",
         "mediatedDirectTcp",
     ]);
+    if (
+        network.hostLoopback !== undefined &&
+        typeof network.hostLoopback !== "boolean"
+    )
+        invalid(new Error("network.hostLoopback must be boolean"));
     if (network.allowAllUnixSockets === true) {
         unsupported(new Error("Host Unix socket access requested"));
     }
@@ -586,6 +594,9 @@ export function validatePiSandboxConfig(
         deniedDomains: normalizeNetworkRules(
             stringArray(network.deniedDomains, "network.deniedDomains"),
         ),
+        ...(network.hostLoopback === undefined
+            ? {}
+            : { hostLoopback: network.hostLoopback === true }),
         mediatedDirectTcp: {
             enabled: mediatedDirectTcpEnabled,
             ports: mediatedDirectTcpEnabled ? mediatedDirectTcpPorts : [],
@@ -864,13 +875,18 @@ function createShellPolicy(
         },
         network: {
             mode:
-                allow.length === 0 && allowHost.length === 0
+                allow.length === 0 &&
+                allowHost.length === 0 &&
+                !input.config.network.hostLoopback
                     ? "deny-all"
                     : "domain-allowlist",
             allow,
             allowHost,
             deny: input.config.network.deniedDomains,
             allowLocalBinding: input.config.network.allowLocalBinding,
+            ...(input.config.network.hostLoopback
+                ? { hostLoopback: true }
+                : {}),
             ...(input.config.network.mediatedDirectTcp.enabled
                 ? {
                       mediatedDirectTcp: {
@@ -982,15 +998,33 @@ function networkRuleMatches(
     return candidateHost === parsed.host;
 }
 
+export function hostLoopbackDenialMatches(
+    rule: string,
+    port = parseNetworkRule(rule).port ?? 1,
+): boolean {
+    return [HOST_LOOPBACK_ALIAS, "localhost", "127.0.0.1", "::1"].some((host) =>
+        networkRuleMatches(rule, host, port),
+    );
+}
+
 export function isNetworkDestinationAllowed(
     policy: SandboxNetworkPolicy,
     hostname: string,
     port: number,
 ): boolean {
-    if (policy.deny.some((rule) => networkRuleMatches(rule, hostname, port))) {
+    const hostAlias = hostname.toLowerCase() === HOST_LOOPBACK_ALIAS;
+    if (
+        policy.deny.some((rule) =>
+            hostAlias
+                ? hostLoopbackDenialMatches(rule, port)
+                : networkRuleMatches(rule, hostname, port),
+        )
+    ) {
         return false;
     }
     if (policy.mode === "deny-all") return false;
+    if (hostAlias && policy.hostLoopback === true)
+        return Number.isInteger(port) && port > 0 && port <= 65535;
     return policy.allow.some((rule) =>
         networkRuleMatches(rule, hostname, port),
     );

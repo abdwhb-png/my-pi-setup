@@ -305,3 +305,113 @@ test("engine-information authority cannot enter an admission with a malformed va
         { mode: "full", endpoint: "unix:///fixture.sock", engineInfo: true },
     ]) expect(() => parseSandboxAdmissionReport({ ...receipt(), docker })).toThrow("invalid Docker rules");
 });
+
+function hostLoopbackReceipt(): SandboxAdmissionReport {
+    const original = receipt();
+    return {
+        ...original,
+        schema: 4,
+        network: { ...original.network, hostLoopback: true },
+        mounts: [
+            ...original.mounts,
+            {
+                source: "/private/e/control",
+                destination: "/__zerobox",
+                access: "ro",
+                origin: "internal",
+            },
+            {
+                source: "/private/p/p-random/host-loopback.hosts",
+                destination: "/etc/hosts",
+                access: "ro",
+                origin: "internal",
+            },
+        ],
+        kernelMounts: [
+            ...original.kernelMounts,
+            {
+                destination: "/etc/hosts",
+                root: "/private/p/p-random/host-loopback.hosts",
+                source: "/dev/test",
+                filesystem: "ext4",
+                access: "ro",
+            },
+        ],
+    };
+}
+
+test("host loopback admission requires schema 4 and an exact submitted permission", () => {
+    const report = hostLoopbackReceipt();
+    const policy = policyFor(report);
+    expect(() => parseSandboxAdmissionReport(report)).not.toThrow();
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            { report, sha256: digest },
+            policy,
+            pinned,
+        ),
+    ).not.toThrow();
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            {
+                report: {
+                    ...report,
+                    network: { ...report.network, hostLoopback: false },
+                },
+                sha256: digest,
+            },
+            policy,
+            pinned,
+        ),
+    ).toThrow();
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            { report, sha256: digest },
+            policyFor(receipt()),
+            pinned,
+        ),
+    ).toThrow();
+    expect(() =>
+        parseSandboxAdmissionReport({ ...report, schema: 1 }),
+    ).toThrow();
+});
+
+test("host alias admission requires a private read-only hosts mapping observed by the kernel", () => {
+    const report = hostLoopbackReceipt();
+    const policy = policyFor(report);
+    for (const invalid of [
+        { ...report, mounts: report.mounts.slice(0, -1) },
+        {
+            ...report,
+            kernelMounts: report.kernelMounts.filter(
+                (m) => m.destination !== "/etc/hosts",
+            ),
+        },
+        {
+            ...report,
+            kernelMounts: report.kernelMounts.map((m) =>
+                m.destination === "/etc/hosts"
+                    ? { ...m, access: "rw" as const }
+                    : m,
+            ),
+        },
+        ...[
+            { source: "/etc/hosts" },
+            { source: "/private/p/p-random/secret" },
+            { destination: "/etc/passwd" },
+            { access: "rw" as const },
+        ].map((change) => ({
+            ...report,
+            mounts: report.mounts.map((m) =>
+                m.destination === "/etc/hosts" ? { ...m, ...change } : m,
+            ),
+        })),
+    ])
+        expect(() =>
+            assertAdmissionMatchesPolicy(
+                { report: invalid, sha256: digest },
+                policy,
+                pinned,
+            ),
+        ).toThrow();
+});

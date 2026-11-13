@@ -182,3 +182,14 @@ test("native ELF interpreter aliases retain exact access beside canonical direct
         elf = Buffer.alloc(0);
     }
 });
+
+test("missing executables never discard independently authorized system library roots", async () => {
+    const { resolveDevelopmentTools } = await import("../development-tools.ts");
+    const result = resolveDevelopmentTools(
+        { node: ["node"] },
+        { systemLibraries: true, path: join(root, "missing-bin") },
+    );
+    expect(result.tools).toEqual([]);
+    expect(result.unavailable.map((item) => item.name)).toEqual(["node"]);
+    expect(Object.keys(result.installations)).toEqual(["system-libraries"]);
+});

@@ -1,3 +1,5 @@
+export const HOST_LOOPBACK_ALIAS = "host.localhost";
+
 export type SandboxProfileName =
     | "bash-general"
     | "think-strict"
@@ -70,6 +72,7 @@ export interface SandboxNetworkPolicy {
     allowHost: string[];
     deny: string[];
     allowLocalBinding?: boolean;
+    hostLoopback?: boolean;
     mediatedDirectTcp?: { ports: number[] };
 }
 

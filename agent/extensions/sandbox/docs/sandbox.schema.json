@@ -71,6 +71,20 @@
             },
             "mediatedDirectTcp": {
               "$ref": "#/$defs/globalMediatedDirectTcp"
+            },
+            "hostLoopback": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "allowed"
+              ],
+              "properties": {
+                "allowed": {
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "description": "Global-only permission for host.localhost on all host loopback TCP ports. localhost stays private."
             }
           }
         },

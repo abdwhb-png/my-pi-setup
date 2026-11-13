@@ -11,6 +11,7 @@ import {
     normalizeSandboxResources,
 } from "../runtime/policies.ts";
 import { expandShellPathEntry } from "../runtime/shell-baseline.ts";
+import { parseHostLoopback } from "./authority.ts";
 import {
     canonicalProjectPath,
     canonicalPotentialPath,
@@ -438,6 +439,14 @@ function mergeLayers(input: ShellPolicyInput): {
             ) ??
             baseline.network.allowedHostDomains,
     );
+    if (
+        projectNetwork.hostLoopback !== undefined ||
+        sessionNetwork.hostLoopback !== undefined
+    )
+        throw new Error(
+            "network.hostLoopback belongs only in the global sandbox configuration",
+        );
+    const hostLoopback = parseHostLoopback(globalNetwork.hostLoopback);
     const globalLocalBinding =
         boolean(
             globalNetwork.allowLocalBinding,
@@ -494,6 +503,8 @@ function mergeLayers(input: ShellPolicyInput): {
               "session network.mediatedDirectTcp.ports",
           )
         : [];
+    const { hostLoopback: _baselineHostLoopback, ...baselineNetwork } =
+        baseline.network;
     const baselineRead = [
         projectRoot,
         ...baseline.filesystem.allowRead.map((path) =>
@@ -842,7 +853,8 @@ function mergeLayers(input: ShellPolicyInput): {
         enabled: true,
         tmpNamespace: tmp,
         network: {
-            ...baseline.network,
+            ...baselineNetwork,
+            ...(hostLoopback ? { hostLoopback: true } : {}),
             allowLocalBinding,
             allowedDomains: allowedDomains.filter(
                 (d) => !deniedDomains.includes(d),

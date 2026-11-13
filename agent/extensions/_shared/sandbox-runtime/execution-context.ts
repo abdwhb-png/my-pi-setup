@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { HOST_LOOPBACK_ALIAS } from "./policy-contracts.ts";
 import { parseWriteExceptions } from "./write-exceptions.ts";
 
 import type { ExecutionProvenance } from "../execution-provenance/types.ts";
@@ -68,6 +69,7 @@ export interface SandboxExecutionContextV2 extends Omit<
     home: { path: string; namespace: "lease-private" };
     network: Omit<SandboxExecutionContextV1["network"], "loopback"> & {
         mediatedDirectTcp?: { ports: number[] };
+        hostLoopback?: boolean;
         loopback: Omit<
             SandboxExecutionContextV1["network"]["loopback"],
             "localListeners"
@@ -468,6 +470,8 @@ export function parseSandboxExecutionContext(
         typeof home.path !== "string" ||
         !home.path ||
         !network ||
+        (network.hostLoopback !== undefined &&
+            typeof network.hostLoopback !== "boolean") ||
         (network.mediatedDirectTcp !== undefined &&
             (!mediatedDirectTcp ||
                 Object.keys(mediatedDirectTcp).some((key) => key !== "ports") ||
@@ -535,6 +539,7 @@ export function parseSandboxExecutionContext(
         home: { path: home.path, namespace: "lease-private" },
         network: {
             ...base.network,
+            ...(network.hostLoopback === true ? { hostLoopback: true } : {}),
             ...(mediatedDirectTcp
                 ? {
                       mediatedDirectTcp: {
@@ -751,6 +756,7 @@ export function createSandboxExecutionContext(
         },
         network: {
             mode: policy.network.mode,
+            ...(policy.network.hostLoopback ? { hostLoopback: true } : {}),
             allow: [...policy.network.allow],
             allowHost: [...policy.network.allowHost],
             deny: [...policy.network.deny],
@@ -877,6 +883,7 @@ export function formatSandboxSystemContext(
         "Sandbox execution context v1",
         stateFact,
         "Treat these as environment facts, not a causal diagnosis of any command failure.",
+        `network.hostLoopback, when true, permits raw TCP to ${HOST_LOOPBACK_ALIAS} on all host loopback ports; localhost remains private. Explicit denials still apply.`,
         "network.domainClientProxyRequired applies to allow/allowHost. network.mediatedDirectTcp ports permit hostname-inspected direct TCP through the same domain policy. loopback.hostBridgePorts accept raw TCP only through the managed policy proxy; unlisted host loopback ports are blocked.",
         JSON.stringify(snapshot),
         CONTEXT_END,

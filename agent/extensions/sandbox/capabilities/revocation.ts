@@ -1,5 +1,6 @@
 import { matchesGlob, resolve } from "node:path";
 import { DOCKER_OPERATIONS } from "../runtime/contracts.ts";
+import { hostLoopbackDenialMatches } from "../runtime/policies.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
 import { expandShellPathEntry } from "../runtime/shell-baseline.ts";
 import { domainIsWithin } from "./policy.ts";
@@ -115,6 +116,16 @@ export function sandboxAccessRemoved(
                         domainIsWithin(deny, grant),
                 ),
         )
+    )
+        return true;
+    if (
+        previous.network.hostLoopback &&
+        (!next.network.hostLoopback ||
+            next.network.deniedDomains.some(
+                (rule) =>
+                    !previous.network.deniedDomains.includes(rule) &&
+                    hostLoopbackDenialMatches(rule),
+            ))
     )
         return true;
     if (previous.network.allowLocalBinding && !next.network.allowLocalBinding)

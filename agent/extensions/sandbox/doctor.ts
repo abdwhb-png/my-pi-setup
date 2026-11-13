@@ -149,6 +149,12 @@ export function sandboxDoctorLines(
             value: list(config.filesystem.denyWrite),
         },
         {
+            label: "Configured host alias",
+            value: config.network.hostLoopback
+                ? "host.localhost: all TCP ports (requires native ip and nft)"
+                : "(off)",
+        },
+        {
             label: "Configured direct TCP",
             value: config.network.mediatedDirectTcp.enabled
                 ? list(config.network.mediatedDirectTcp.ports.map(String))

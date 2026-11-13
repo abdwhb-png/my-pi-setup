@@ -247,6 +247,14 @@ Docker target selection belongs to each project. Global Docker configuration aut
 
 Git metadata inside a writable project follows ordinary filesystem rules. Explicitly deny `.git` writes when required. Git pointers and symlinks do not grant write access to external directories. Zerobox still protects `.agents` and `.codex` by default.
 
+## Dedicated host loopback alias
+
+Only `~/.pi/agent/config/sandbox.json` may declare `"network": { "hostLoopback": { "allowed": true } }`. The permission is off when omitted or false. Any declaration in a project or session is rejected, including `allowed: false`. Projects and sessions can restrict access with ordinary explicit domain denials, such as `host.localhost` or `host.localhost:3216`; denials for the equivalent host loopback endpoint also win. Removing the permission or adding a relevant denial revokes affected active runtimes.
+
+When enabled, use `host.localhost:<port>` to reach a TCP service on the host. All nonzero TCP ports are supported, including ports opened after sandbox startup. `localhost`, `127.0.0.1` and `::1` continue to address the private sandbox; existing exact host-port bridges retain their existing behavior. The alias exposes host services from every project, not only the current project. It neither starts a backend nor permits external destinations, UDP, LAN access or incoming publication.
+
+This capability requires the matching Zerobox native runtime and root-owned system `ip` and `nft` executables. The native helper installs one namespace-local NAT rule before filesystem and capability lockdown, then transfers one private listener to the host broker. Only the reserved alias address is redirected. Every connection is checked against the managed proxy's live domain policy, and the broker connects only to literal host loopback addresses. Unsupported kernels, missing tools and setup failures block execution; they never fall back to host shell mode. `/sandbox doctor` shows the configured host alias permission. An older runtime rejects the new request rather than ignoring it. Native activation must follow qualification of the exact runtime artifact in disposable CI.
+
 ## Portable development tool discovery
 
 A development profile may declare `tools`, mapping installation names to supported commands, instead of embedding producer-specific roots. For example, `{"tools":{"python":["python3"],"php":["php","composer"]}}` requests discovery of those local installations. Supported commands are `node`, `bun`, `python3`, `go`, `php`, `composer` and `pnpm`. Explicit `environment.installations` declarations remain supported; the runtime authority schema itself is unchanged.

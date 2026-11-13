@@ -757,6 +757,7 @@ class ZeroboxBackend implements SandboxBackend {
                         ? [`--private-tmp=${lease.tmpDir}`]
                         : ["--host-tmp"]),
                     `--private-home=${lease.homeDir}`,
+                    ...(policy.network.hostLoopback ? ["--host-loopback"] : []),
                     ...(policy.network.allowLocalBinding
                         ? ["--allow-local-binding"]
                         : []),

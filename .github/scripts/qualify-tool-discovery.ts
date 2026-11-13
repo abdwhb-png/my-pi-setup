@@ -117,7 +117,10 @@ assert.equal(
     absent.unavailable.length,
     Object.keys(object(profile.tools)).length,
 );
-assert.deepEqual(absent.installations, {});
+const { ['system-libraries']: systemLibraries, ...missingExecutables } = absent.installations;
+assert.deepEqual(missingExecutables, {});
+assert.deepEqual(systemLibraries, discovered.installations['system-libraries']);
+assert.deepEqual(absent.tools, []);
 writeJson(join(evidence, 'tool-contracts.json'), {
     status: 'passed',
     layout,

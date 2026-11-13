@@ -318,6 +318,15 @@ function readJson(path: string, description: string): unknown {
         });
     }
 }
+export function parseHostLoopback(value: unknown): boolean {
+    if (value === undefined) return false;
+    const config = record(value, "global.network.hostLoopback");
+    known(config, ["allowed"], "global.network.hostLoopback");
+    if (typeof config.allowed !== "boolean")
+        invalid("global.network.hostLoopback.allowed must be a boolean");
+    return config.allowed;
+}
+
 function validateLayer(
     layer: Record<string, unknown>,
     scope: "global" | "project",
@@ -370,9 +379,12 @@ function validateLayer(
                 "deniedDomains",
                 "allowLocalBinding",
                 "mediatedDirectTcp",
+                ...(scope === "global" ? ["hostLoopback"] : []),
             ],
             scope + ".network",
         );
+        if (scope === "global")
+            parseHostLoopback(configuredNetwork.hostLoopback);
         if (configuredNetwork.mediatedDirectTcp !== undefined) {
             const direct = record(
                 configuredNetwork.mediatedDirectTcp,
@@ -471,8 +483,11 @@ function validateLayer(
     else parseInstallationSelection(environment?.installations, scope);
     const { installations: _installations, ...ordinaryEnvironment } =
         environment ?? {};
-    const { mediatedDirectTcp: _mediatedDirectTcp, ...ordinaryNetwork } =
-        configuredNetwork ?? {};
+    const {
+        mediatedDirectTcp: _mediatedDirectTcp,
+        hostLoopback: _hostLoopback,
+        ...ordinaryNetwork
+    } = configuredNetwork ?? {};
     validatePiSandboxConfig({
         ...generic,
         network: ordinaryNetwork,
